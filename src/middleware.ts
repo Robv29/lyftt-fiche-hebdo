@@ -10,9 +10,26 @@ import { NextResponse, type NextRequest } from "next/server";
 export async function middleware(request: NextRequest) {
   let response = NextResponse.next({ request });
 
+  // Ces deux variables sont figées au build. Si elles manquaient à ce
+  // moment-là, elles valent `undefined` ici et `createServerClient` lève une
+  // exception — ce qui, dans un middleware, fait échouer *toutes* les routes
+  // avec un 500 opaque. On préfère un message explicite.
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    return new NextResponse(
+      "Configuration incomplète.\n\n" +
+        "NEXT_PUBLIC_SUPABASE_URL et NEXT_PUBLIC_SUPABASE_ANON_KEY doivent être " +
+        "définies dans les variables d'environnement, puis l'application " +
+        "redéployée : ces valeurs sont intégrées au moment du build.\n",
+      { status: 503, headers: { "content-type": "text/plain; charset=utf-8" } },
+    );
+  }
+
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    supabaseUrl,
+    supabaseAnonKey,
     {
       cookies: {
         getAll() {
@@ -31,9 +48,15 @@ export async function middleware(request: NextRequest) {
     },
   );
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // Une indisponibilité réseau côté Supabase ne doit pas rendre tout le site
+  // inaccessible : on retombe sur la page de connexion.
+  let user = null;
+  try {
+    const result = await supabase.auth.getUser();
+    user = result.data.user;
+  } catch {
+    user = null;
+  }
 
   if (!user && !request.nextUrl.pathname.startsWith("/login")) {
     const redirect = request.nextUrl.clone();
