@@ -11,6 +11,8 @@ import { checkExportBeforeSend } from "@/lib/domain/edge-cases";
 import { normalizeHashtags, sanitizeText } from "@/lib/security/sanitize";
 import type { TicketStatus } from "@/lib/domain/types";
 import { whatsappLink } from "@/lib/domain/templates";
+import { sheetCompletion } from "@/lib/domain/planning";
+import type { MediaFormat } from "@/lib/domain/types";
 
 export interface InternalActionResult {
   ok: boolean;
@@ -44,11 +46,24 @@ export async function generateReviewLink(
   // La lecture passe par RLS : on vérifie ainsi que l'utilisateur a bien accès.
   const { data: sheet } = await supabase
     .from("weekly_sheets")
-    .select("id, current_version_id, status")
+    .select(`id, current_version_id, status,
+      weekly_sheet_items ( caption, hashtags, format, media_asset_id, media_external_url, is_cancelled )`)
     .eq("id", sheetId)
     .maybeSingle();
 
   if (!sheet) return { ok: false, message: "Fiche introuvable ou accès refusé." };
+
+  const completion = sheetCompletion((sheet.weekly_sheet_items ?? []).map((item) => ({
+    caption: item.caption,
+    hashtags: item.hashtags,
+    format: item.format as MediaFormat,
+    mediaAssetId: item.media_asset_id,
+    mediaExternalUrl: item.media_external_url,
+    isCancelled: item.is_cancelled,
+  })));
+  if (completion.percentage < 100) {
+    return { ok: false, message: `Complétez la fiche à 100 % avant de générer le lien client (${completion.percentage} % actuellement).` };
+  }
 
   const admin = createSupabaseAdminClient();
 

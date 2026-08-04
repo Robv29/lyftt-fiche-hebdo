@@ -5,6 +5,12 @@ import { useMemo, useState, useTransition } from "react";
 import { createSheet, type SheetActionResult } from "./actions";
 import { isoWeekStart } from "@/lib/domain/deadline";
 import {
+  isoWeekIdentity,
+  selectHashtags,
+  weeklyFormatsForCadence,
+  type MonthlyCadence,
+} from "@/lib/domain/planning";
+import {
   MEDIA_FORMAT_LABELS,
   SOCIAL_NETWORKS,
   SOCIAL_NETWORK_LABELS,
@@ -14,6 +20,14 @@ import {
 } from "@/lib/domain/types";
 import { Icon } from "@/components/Icon";
 
+interface ClientPreset {
+  id: string;
+  name: string;
+  defaultNetworks: string[];
+  defaultHashtags: string[];
+  monthlyCadence: MonthlyCadence;
+}
+
 interface DraftItem {
   key: string;
   scheduledDate: string;
@@ -21,9 +35,9 @@ interface DraftItem {
   format: MediaFormat;
   caption: string;
   hashtags: string;
+  mediaFile: File | null;
 }
 
-/** Le format choisi suffit à déterminer le type technique attendu en base. */
 function publicationTypeForFormat(format: MediaFormat): PublicationType {
   switch (format) {
     case "reels": return "reel";
@@ -33,117 +47,139 @@ function publicationTypeForFormat(format: MediaFormat): PublicationType {
   }
 }
 
-function hashtagsForItem(tags: string[], index: number): string {
-  if (tags.length <= 8) return tags.join(" ");
-  const core = tags.slice(0, 3);
-  const variable = tags.slice(3);
-  const rotated = [...variable.slice(index % variable.length), ...variable.slice(0, index % variable.length)];
-  return [...new Set([...core, ...rotated.slice(0, 5)])].join(" ");
+function mediaAccept(format: MediaFormat): string {
+  if (["video", "reels"].includes(format)) return "video/mp4,video/quicktime";
+  if (format === "texte_seul") return "";
+  return "image/jpeg,image/png,image/webp,image/heic";
 }
 
-/** Semaine ISO courante, pour proposer par défaut la semaine suivante. */
-function currentIsoWeek(): { year: number; week: number } {
-  const now = new Date();
-  const target = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
-  const day = target.getUTCDay() === 0 ? 7 : target.getUTCDay();
-  target.setUTCDate(target.getUTCDate() + 4 - day);
-  const yearStart = new Date(Date.UTC(target.getUTCFullYear(), 0, 1));
-  const week = Math.ceil(((target.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
-  return { year: target.getUTCFullYear(), week };
+function createDraftItems(client: ClientPreset, isoYear: number, isoWeek: number): DraftItem[] {
+  return weeklyFormatsForCadence(client.monthlyCadence, isoWeek).map((format, index) => ({
+    key: `${client.id}-${isoYear}-${isoWeek}-${format}-${index}`,
+    scheduledDate: "",
+    scheduledTime: "18:00",
+    format,
+    caption: "",
+    hashtags: selectHashtags(client.defaultHashtags, `${client.id}-${isoYear}-${isoWeek}-${index}`).join(" "),
+    mediaFile: null,
+  }));
+}
+
+function MediaDropzone({ item, index, onFile }: { item: DraftItem; index: number; onFile: (file: File | null) => void }) {
+  const [dragging, setDragging] = useState(false);
+  const requiresMedia = item.format !== "texte_seul";
+  if (!requiresMedia) return <p className="rounded-xl bg-canvas px-4 py-3 text-xs text-ink-faint">Aucun média nécessaire pour un texte seul.</p>;
+
+  const expected = ["video", "reels"].includes(item.format) ? "une vidéo MP4 ou MOV" : "une photo JPG, PNG, WEBP ou HEIC";
+  return (
+    <label
+      className={`group flex min-h-28 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed px-4 py-5 text-center transition-[border-color,background-color,transform] duration-150 active:scale-[.99] ${dragging ? "border-[#1468ff] bg-[#edf4ff]" : item.mediaFile ? "border-state-approved/50 bg-state-approved/5" : "border-[#cdd5df] bg-canvas hover:border-[#8bb5ff] hover:bg-[#f5f9ff]"}`}
+      onDragEnter={(event) => { event.preventDefault(); setDragging(true); }}
+      onDragOver={(event) => event.preventDefault()}
+      onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false); }}
+      onDrop={(event) => {
+        event.preventDefault();
+        setDragging(false);
+        onFile(event.dataTransfer.files[0] ?? null);
+      }}
+    >
+      <input
+        type="file"
+        name={`media-${index}`}
+        className="sr-only"
+        accept={mediaAccept(item.format)}
+        onChange={(event) => onFile(event.target.files?.[0] ?? null)}
+      />
+      <span className={`grid h-9 w-9 place-items-center rounded-xl ${item.mediaFile ? "bg-state-approved/10 text-state-approved" : "bg-white text-[#0759e6] shadow-sm"}`}><Icon name={item.mediaFile ? "check" : "upload"} className="h-4 w-4"/></span>
+      <strong className="mt-2 max-w-full truncate text-xs">{item.mediaFile?.name ?? `Déposer ${expected}`}</strong>
+      <span className="mt-1 text-[11px] text-ink-faint">Glisser-déposer ou cliquer · 10 Mo maximum</span>
+    </label>
+  );
 }
 
 export function SheetBuilder({
   clients,
   preselectedClientId,
+  preselectedIsoYear,
+  preselectedIsoWeek,
 }: {
-  clients: { id: string; name: string; defaultNetworks: string[]; defaultHashtags: string[]; monthlyContents: number }[];
+  clients: ClientPreset[];
   preselectedClientId: string | null;
+  preselectedIsoYear?: number;
+  preselectedIsoWeek?: number;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<SheetActionResult | null>(null);
-
-  const nextWeek = useMemo(() => {
-    const { year, week } = currentIsoWeek();
-    return week >= 52 ? { year: year + 1, week: 1 } : { year, week: week + 1 };
+  const defaultWeek = useMemo(() => {
+    const nextWeekDate = new Date();
+    nextWeekDate.setUTCDate(nextWeekDate.getUTCDate() + 7);
+    return isoWeekIdentity(nextWeekDate);
   }, []);
-
-  const [isoYear, setIsoYear] = useState(nextWeek.year);
-  const [isoWeek, setIsoWeek] = useState(nextWeek.week);
-  const initialClient = clients.find((client) => client.id === preselectedClientId) ?? clients[0];
-  const [selectedClientId, setSelectedClientId] = useState(initialClient?.id ?? "");
+  const [isoYear] = useState(preselectedIsoYear ?? defaultWeek.year);
+  const [isoWeek] = useState(preselectedIsoWeek ?? defaultWeek.week);
+  const initialClient = clients.find((client) => client.id === preselectedClientId) ?? clients[0]!;
+  const [selectedClientId, setSelectedClientId] = useState(initialClient.id);
   const [selectedNetworks, setSelectedNetworks] = useState<SocialNetwork[]>(
-    (initialClient?.defaultNetworks.filter((network): network is SocialNetwork => SOCIAL_NETWORKS.includes(network as SocialNetwork)) ?? ["instagram", "facebook"]),
+    initialClient.defaultNetworks.filter((network): network is SocialNetwork => SOCIAL_NETWORKS.includes(network as SocialNetwork)),
   );
+  const [items, setItems] = useState<DraftItem[]>(() => createDraftItems(initialClient, isoYear, isoWeek));
 
   const monday = useMemo(() => isoWeekStart(isoYear, isoWeek), [isoYear, isoWeek]);
-
   const dayOffset = (offset: number) => {
-    const d = new Date(monday);
-    d.setUTCDate(monday.getUTCDate() + offset);
-    return d.toISOString().slice(0, 10);
+    const date = new Date(monday);
+    date.setUTCDate(monday.getUTCDate() + offset);
+    return date.toISOString().slice(0, 10);
   };
+  const resolvedItems = items.map((item, index) => ({ ...item, scheduledDate: item.scheduledDate || dayOffset(Math.min(index * 2, 6)) }));
+  const totalRequirements = resolvedItems.reduce((total, item) => total + (item.format === "texte_seul" ? 2 : 3), 0);
+  const completedRequirements = resolvedItems.reduce((total, item) => total
+    + Number(Boolean(item.caption.trim()))
+    + Number(Boolean(item.hashtags.trim()))
+    + Number(item.format !== "texte_seul" && Boolean(item.mediaFile)), 0);
+  const progress = totalRequirements ? Math.round((completedRequirements / totalRequirements) * 100) : 0;
+  const periodLabel = `${dayOffset(0)} → ${dayOffset(6)}`;
 
-  // Par défaut : une publication par jour ouvré à 18 h, comme la fiche actuelle.
-  const [items, setItems] = useState<DraftItem[]>(() =>
-    Array.from({ length: 5 }, (_, index) => ({
-      key: `init-${index}`,
-      scheduledDate: "",
-      scheduledTime: "18:00",
-      format: "photo" as MediaFormat,
-      caption: "",
-      hashtags: hashtagsForItem(initialClient?.defaultHashtags ?? [], index),
-    })),
+  const update = (key: string, patch: Partial<DraftItem>) => setItems((currentItems) =>
+    currentItems.map((item) => item.key === key ? { ...item, ...patch } : item),
   );
 
-  // Les dates suivent la semaine choisie tant qu'elles n'ont pas été modifiées.
-  const resolvedItems = items.map((item, index) => ({
-    ...item,
-    scheduledDate: item.scheduledDate || dayOffset(Math.min(index, 6)),
-  }));
-
-  const update = (key: string, patch: Partial<DraftItem>) =>
-    setItems((prev) => prev.map((i) => (i.key === key ? { ...i, ...patch } : i)));
-
-  const resizeSchedule = (size: number, requestedHashtags?: string[]) => setItems((current) => {
-    if (current.length >= size) return current.slice(0, size);
-    const activeHashtags = requestedHashtags ?? clients.find((client) => client.id === selectedClientId)?.defaultHashtags ?? [];
-    return [...current, ...Array.from({ length: size - current.length }, (_, index) => ({
-      key: `preset-${Date.now()}-${index}`, scheduledDate:"", scheduledTime:"18:00",
-      format:"photo" as MediaFormat, caption:"", hashtags:hashtagsForItem(activeHashtags, current.length + index),
-    }))];
-  });
-
   const selectClient = (clientId: string) => {
-    setSelectedClientId(clientId);
     const client = clients.find((candidate) => candidate.id === clientId);
     if (!client) return;
-    const defaults = client.defaultNetworks.filter((network): network is SocialNetwork => SOCIAL_NETWORKS.includes(network as SocialNetwork));
-    setSelectedNetworks(defaults.length ? defaults : ["instagram", "facebook"]);
-    setItems((current) => current.map((item, index) => ({ ...item, hashtags:hashtagsForItem(client.defaultHashtags, index) })));
-    if (client.monthlyContents > 0) resizeSchedule(Math.max(1, Math.round(client.monthlyContents / 4)), client.defaultHashtags);
+    setSelectedClientId(clientId);
+    const networks = client.defaultNetworks.filter((network): network is SocialNetwork => SOCIAL_NETWORKS.includes(network as SocialNetwork));
+    setSelectedNetworks(networks.length ? networks : ["instagram", "facebook"]);
+    setItems(createDraftItems(client, isoYear, isoWeek));
   };
 
-  const periodLabel = `${monday.toISOString().slice(0, 10)} → ${dayOffset(6)}`;
-  const completedItems = resolvedItems.filter((item) => item.caption.trim()).length;
-  const progress = resolvedItems.length ? Math.round((completedItems / resolvedItems.length) * 100) : 0;
+  const addPublication = () => {
+    const client = clients.find((candidate) => candidate.id === selectedClientId) ?? initialClient;
+    setItems((currentItems) => [...currentItems, {
+      key: `manual-${Date.now()}`,
+      scheduledDate: "",
+      scheduledTime: "18:00",
+      format: "photo",
+      caption: "",
+      hashtags: selectHashtags(client.defaultHashtags, `${client.id}-${isoYear}-${isoWeek}-${currentItems.length}`).join(" "),
+      mediaFile: null,
+    }]);
+  };
 
   return (
     <form
       action={(formData) => {
-        formData.set(
-          "items",
-          JSON.stringify(
-            resolvedItems.map((i) => ({
-              scheduledDate: i.scheduledDate,
-              scheduledTime: i.scheduledTime,
-              publicationType: publicationTypeForFormat(i.format),
-              format: i.format,
-              caption: i.caption,
-              hashtags: i.hashtags,
-            })),
-          ),
-        );
+        formData.set("items", JSON.stringify(resolvedItems.map((item) => ({
+          scheduledDate: item.scheduledDate,
+          scheduledTime: item.scheduledTime,
+          publicationType: publicationTypeForFormat(item.format),
+          format: item.format,
+          caption: item.caption,
+          hashtags: item.hashtags,
+        }))));
+        resolvedItems.forEach((item, index) => {
+          if (item.mediaFile) formData.set(`media-${index}`, item.mediaFile);
+        });
         startTransition(async () => {
           const result = await createSheet(formData);
           setFeedback(result);
@@ -152,78 +188,34 @@ export function SheetBuilder({
       }}
       className="space-y-5"
     >
-      {feedback?.message && !feedback.ok && (
-        <p className="rounded-md border border-state-changes/30 bg-state-changes/5 px-4 py-3 text-sm text-state-changes">
-          {feedback.message}
-        </p>
-      )}
+      {feedback?.message && !feedback.ok && <p className="rounded-md border border-state-changes/30 bg-state-changes/5 px-4 py-3 text-sm text-state-changes">{feedback.message}</p>}
 
       <div className="card overflow-hidden">
-        <div className="flex flex-col items-start gap-3 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5"><div><p className="eyebrow">Étape 1</p><h2 className="mt-1 font-semibold">Cadre de la semaine</h2></div><span className="max-w-full break-words rounded-full bg-[#edf4ff] px-3 py-1 text-xs font-semibold text-[#0759e6]">{periodLabel}</span></div>
+        <div className="flex flex-col items-start gap-3 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+          <div><p className="eyebrow">Fiche préprogrammée</p><h2 className="mt-1 font-semibold">Cadre de la semaine</h2></div>
+          <span className="rounded-full bg-[#edf4ff] px-3 py-1 text-xs font-semibold text-[#0759e6]">{periodLabel}</span>
+        </div>
         <div className="grid gap-4 p-5 sm:grid-cols-3">
-        <div>
-          <label className="label" htmlFor="clientId">
-            Client
-          </label>
-          <select
-            id="clientId"
-            name="clientId"
-            className="field"
-            value={selectedClientId}
-            onChange={(event) => selectClient(event.target.value)}
-          >
-            {clients.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="label" htmlFor="isoWeek">
-            Semaine ISO
-          </label>
-          <input
-            id="isoWeek"
-            name="isoWeek"
-            type="number"
-            min={1}
-            max={53}
-            className="field"
-            value={isoWeek}
-            onChange={(e) => setIsoWeek(Number(e.target.value))}
-          />
-        </div>
-        <div>
-          <label className="label" htmlFor="isoYear">
-            Année
-          </label>
-          <input
-            id="isoYear"
-            name="isoYear"
-            type="number"
-            min={2020}
-            max={2100}
-            className="field"
-            value={isoYear}
-            onChange={(e) => setIsoYear(Number(e.target.value))}
-          />
-        </div>
+          <div className="sm:col-span-2">
+            <label className="label" htmlFor="clientId">Client</label>
+            <select id="clientId" name="clientId" className="field" value={selectedClientId} onChange={(event) => selectClient(event.target.value)}>
+              {clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <span className="label">Semaine</span>
+            <div className="field flex items-center bg-canvas text-sm font-medium">Semaine {isoWeek} · {isoYear}</div>
+            <input type="hidden" name="isoWeek" value={isoWeek}/><input type="hidden" name="isoYear" value={isoYear}/>
+          </div>
         </div>
       </div>
 
       <fieldset className="card p-5">
-        <legend className="eyebrow px-1">Étape 2 · Réseaux de diffusion</legend>
+        <legend className="eyebrow px-1">Réseaux de diffusion</legend>
         <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {SOCIAL_NETWORKS.map((network) => (
             <label key={network} className="choice-chip">
-              <input
-                type="checkbox"
-                name="networks"
-                value={network}
-                checked={selectedNetworks.includes(network)}
-                onChange={(event) => setSelectedNetworks((current) => event.target.checked ? [...current, network] : current.filter((value) => value !== network))}
-              />
+              <input type="checkbox" name="networks" value={network} checked={selectedNetworks.includes(network)} onChange={(event) => setSelectedNetworks((currentNetworks) => event.target.checked ? [...currentNetworks, network] : currentNetworks.filter((value) => value !== network))}/>
               {SOCIAL_NETWORK_LABELS[network]}
             </label>
           ))}
@@ -231,103 +223,55 @@ export function SheetBuilder({
       </fieldset>
 
       <section className="space-y-4">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="eyebrow">Étape 3</p><h2 className="mt-1 text-lg font-semibold">Contenus à produire</h2><p className="mt-1 text-sm text-ink-faint">Choisissez un rythme, puis ajustez chaque publication.</p></div><div className="grid grid-cols-2 gap-2" aria-label="Rythme de publication"><button type="button" className="btn-secondary text-xs" onClick={()=>resizeSchedule(3)}>Léger · 3</button><button type="button" className="btn-secondary text-xs" onClick={()=>resizeSchedule(5)}>Standard · 5</button></div></div>
-        <div className="h-1.5 overflow-hidden rounded-full bg-[#e9edf3]" aria-label={`${progress}% des textes renseignés`} role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}><span className="block h-full rounded-full bg-[#1468ff] transition-[transform] duration-200" style={{ transform:`translateX(${progress - 100}%)` }}/></div>
-        <div className="space-y-3">
-        {resolvedItems.map((item, index) => (
-          <div key={item.key} className="card reveal-panel space-y-4 p-4 sm:p-5">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-3"><span className="grid h-8 w-8 place-items-center rounded-lg bg-[#edf4ff] text-xs font-bold text-[#0759e6]">{index + 1}</span><div><span className="text-sm font-semibold">Publication {index + 1}</span><p className="text-xs text-ink-faint">{item.caption.trim() ? "Texte renseigné" : "À compléter"}</p></div></div>
-              {items.length > 1 && (
-                <button
-                  type="button"
-                  className="mobile-inline-btn min-h-11 shrink-0 px-2 text-xs text-state-changes hover:underline"
-                  onClick={() => setItems((prev) => prev.filter((i) => i.key !== item.key))}
-                >
-                  Retirer
-                </button>
-              )}
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-3">
-              <input
-                type="date"
-                className="field"
-                aria-label={`Date de la publication ${index + 1}`}
-                value={item.scheduledDate}
-                onChange={(e) => update(item.key, { scheduledDate: e.target.value })}
-              />
-              <input
-                type="time"
-                className="field"
-                aria-label={`Heure de la publication ${index + 1}`}
-                value={item.scheduledTime}
-                onChange={(e) => update(item.key, { scheduledTime: e.target.value })}
-              />
-              <select
-                className="field"
-                aria-label={`Format de la publication ${index + 1}`}
-                value={item.format}
-                onChange={(e) => update(item.key, { format: e.target.value as MediaFormat })}
-              >
-                {Object.entries(MEDIA_FORMAT_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <textarea
-              rows={3}
-              className="field"
-              aria-label={`Texte de la publication ${index + 1}`}
-              placeholder="Rédaction — texte de la publication"
-              value={item.caption}
-              onChange={(e) => update(item.key, { caption: e.target.value })}
-            />
-            <input
-              className="field"
-              aria-label={`Hashtags de la publication ${index + 1}`}
-              placeholder="Les hashtags recommandés du client apparaîtront ici"
-              value={item.hashtags}
-              onChange={(e) => update(item.key, { hashtags: e.target.value })}
-            />
-            <p className="-mt-2 flex items-center gap-1.5 text-xs text-ink-faint"><Icon name="spark" className="h-3.5 w-3.5 text-[#0759e6]"/>{item.hashtags ? "Sélection automatique issue du profil client — modifiable pour ce contenu." : "Ajoutez une bibliothèque de hashtags dans le dossier client."}</p>
+        <div className="card sticky top-3 z-10 overflow-hidden p-4 shadow-[0_8px_30px_rgba(31,41,55,.08)] sm:p-5">
+          <div className="flex items-center justify-between gap-3">
+            <div><p className="eyebrow">Avancement</p><h2 className="mt-1 font-semibold">Préparation de la semaine prochaine</h2></div>
+            <span className={`text-lg font-bold tracking-[-.03em] ${progress === 100 ? "text-state-approved" : "text-[#0759e6]"}`}>{progress}%</span>
           </div>
-        ))}
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-[#e8edf4]" role="progressbar" aria-label={`${progress}% de la fiche complétée`} aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}>
+            <span className={`block h-full origin-left rounded-full transition-transform duration-300 ${progress === 100 ? "bg-state-approved" : "bg-[#1468ff]"}`} style={{ transform: `scaleX(${progress / 100})` }}/>
+          </div>
+          <p className="mt-2 text-xs text-ink-faint">Pour atteindre 100 %, chaque contenu doit avoir son texte, ses hashtags et son média.</p>
+        </div>
+
+        <div className="space-y-3">
+          {resolvedItems.map((item, index) => {
+            const itemComplete = Boolean(item.caption.trim()) && Boolean(item.hashtags.trim()) && (item.format === "texte_seul" || Boolean(item.mediaFile));
+            return (
+              <article key={item.key} className="card reveal-panel space-y-4 p-4 sm:p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl text-xs font-bold ${itemComplete ? "bg-state-approved/10 text-state-approved" : "bg-[#edf4ff] text-[#0759e6]"}`}>{itemComplete ? <Icon name="check" className="h-4 w-4"/> : index + 1}</span>
+                    <div className="min-w-0"><h3 className="truncate text-sm font-semibold">Publication {index + 1} · {MEDIA_FORMAT_LABELS[item.format]}</h3><p className="text-xs text-ink-faint">{itemComplete ? "Contenu complet" : "Texte et média à préparer"}</p></div>
+                  </div>
+                  {items.length > 1 && <button type="button" className="min-h-11 shrink-0 px-2 text-xs text-state-changes hover:underline" onClick={() => setItems((currentItems) => currentItems.filter((candidate) => candidate.key !== item.key))}>Retirer</button>}
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <input type="date" className="field" aria-label={`Date de la publication ${index + 1}`} value={item.scheduledDate} onChange={(event) => update(item.key, { scheduledDate: event.target.value })}/>
+                  <input type="time" className="field" aria-label={`Heure de la publication ${index + 1}`} value={item.scheduledTime} onChange={(event) => update(item.key, { scheduledTime: event.target.value })}/>
+                  <select className="field" aria-label={`Format de la publication ${index + 1}`} value={item.format} onChange={(event) => update(item.key, { format: event.target.value as MediaFormat, mediaFile: null })}>
+                    {Object.entries(MEDIA_FORMAT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                  </select>
+                </div>
+
+                <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(17rem,.8fr)]">
+                  <div className="space-y-3">
+                    <div><label className="label" htmlFor={`caption-${item.key}`}>Texte de la publication</label><textarea id={`caption-${item.key}`} rows={5} className="field" placeholder="Écrivez librement le texte à publier…" value={item.caption} onChange={(event) => update(item.key, { caption: event.target.value })}/></div>
+                    <div><label className="label" htmlFor={`hashtags-${item.key}`}>Hashtags sélectionnés automatiquement</label><textarea id={`hashtags-${item.key}`} rows={2} className="field" value={item.hashtags} onChange={(event) => update(item.key, { hashtags: event.target.value })}/><p className="mt-1 flex items-center gap-1.5 text-xs text-ink-faint"><Icon name="layers" className="h-3.5 w-3.5 text-[#0759e6]"/>Sélection variée issue des 20 hashtags enregistrés dans le dossier client.</p></div>
+                  </div>
+                  <div><span className="label">Média prévu · {MEDIA_FORMAT_LABELS[item.format]}</span><MediaDropzone item={item} index={index} onFile={(mediaFile) => update(item.key, { mediaFile })}/></div>
+                </div>
+              </article>
+            );
+          })}
         </div>
       </section>
 
       <div className="grid gap-2 sm:flex sm:flex-wrap">
-        <button
-          type="button"
-          className="btn-secondary"
-          onClick={() =>
-            setItems((prev) => [
-              ...prev,
-              {
-                key: `add-${Date.now()}`,
-                scheduledDate: "",
-                scheduledTime: "18:00",
-                format: "photo",
-                caption: "",
-                hashtags: hashtagsForItem(clients.find((client) => client.id === selectedClientId)?.defaultHashtags ?? [], prev.length),
-              },
-            ])
-          }
-        >
-          <Icon name="plus" className="h-4 w-4"/>Ajouter une publication
-        </button>
-        <button type="submit" className="btn-primary" disabled={pending}>
-          {pending ? "Création…" : "Créer la fiche et continuer"}<Icon name="arrow" className="h-4 w-4"/>
-        </button>
+        <button type="button" className="btn-secondary" onClick={addPublication}><Icon name="plus" className="h-4 w-4"/>Ajouter une publication</button>
+        <button type="submit" className="btn-primary" disabled={pending || selectedNetworks.length === 0}>{pending ? "Enregistrement…" : progress === 100 ? "Enregistrer la fiche complète" : "Enregistrer et continuer plus tard"}<Icon name="arrow" className="h-4 w-4"/></button>
       </div>
-
-      <p className="text-xs text-ink-faint">
-        Les visuels se déposent ensuite depuis la fiche. Le lien client ne peut être
-        généré qu&apos;une fois la fiche prête.
-      </p>
     </form>
   );
 }

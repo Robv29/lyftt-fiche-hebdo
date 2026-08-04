@@ -7,6 +7,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isoWeekStart } from "@/lib/domain/deadline";
 import { normalizeHashtags, sanitizeText } from "@/lib/security/sanitize";
 import { SOCIAL_NETWORKS } from "@/lib/domain/types";
+import { uploadSheetMedia } from "@/lib/media/internal-upload";
 
 export interface SheetActionResult {
   ok: boolean;
@@ -117,10 +118,47 @@ export async function createSheet(formData: FormData): Promise<SheetActionResult
       : null,
   }));
 
-  const { error: itemsError } = await admin.from("weekly_sheet_items").insert(rows);
-  if (itemsError) {
+  const { data: insertedItems, error: itemsError } = await admin
+    .from("weekly_sheet_items")
+    .insert(rows)
+    .select("id, position");
+  if (itemsError || !insertedItems) {
     await admin.from("weekly_sheets").delete().eq("id", sheet.id);
-    return { ok: false, message: `Publications non enregistrées : ${itemsError.message}` };
+    return { ok: false, message: `Publications non enregistrées : ${itemsError?.message ?? "erreur"}` };
+  }
+
+  const uploaded: { assetId: string; storagePath: string }[] = [];
+  for (const [index, insertedItem] of insertedItems.sort((a, b) => a.position - b.position).entries()) {
+    const file = formData.get(`media-${index}`);
+    if (!(file instanceof File) || file.size === 0) continue;
+
+    const upload = await uploadSheetMedia({
+      file,
+      clientId: input.clientId,
+      sheetId: sheet.id,
+      uploadedBy: profile.id,
+      expectedKind: ["video", "reels"].includes(input.items[index]?.format ?? "") ? "video" : "image",
+    });
+    if (!upload.data) {
+      if (uploaded.length) {
+        await admin.storage.from("media").remove(uploaded.map((media) => media.storagePath));
+        await admin.from("media_assets").delete().in("id", uploaded.map((media) => media.assetId));
+      }
+      await admin.from("weekly_sheets").delete().eq("id", sheet.id);
+      return { ok: false, message: upload.error ?? "Média non enregistré." };
+    }
+
+    uploaded.push(upload.data);
+    const { error: linkError } = await admin
+      .from("weekly_sheet_items")
+      .update({ media_asset_id: upload.data.assetId })
+      .eq("id", insertedItem.id);
+    if (linkError) {
+      await admin.storage.from("media").remove(uploaded.map((media) => media.storagePath));
+      await admin.from("media_assets").delete().in("id", uploaded.map((media) => media.assetId));
+      await admin.from("weekly_sheets").delete().eq("id", sheet.id);
+      return { ok: false, message: `Média non rattaché : ${linkError.message}` };
+    }
   }
 
   revalidatePath("/fiches");

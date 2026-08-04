@@ -42,6 +42,7 @@ export function SendPanel({
   context,
   recipientPhone,
   recipientLabel,
+  canSend,
 }: {
   sheetId: string;
   hasActiveLink: boolean;
@@ -50,6 +51,7 @@ export function SendPanel({
   context: TemplateContext;
   recipientPhone?: string;
   recipientLabel?: string;
+  canSend: boolean;
 }) {
   const [pending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<InternalActionResult | null>(null);
@@ -117,7 +119,7 @@ export function SendPanel({
         <button
           type="button"
           className="btn-primary"
-          disabled={pending}
+          disabled={pending || !canSend}
           onClick={() => run(() => generateReviewLink(sheetId))}
         >
           {activeLink ? "Régénérer le lien" : "Générer le lien client"}
@@ -136,6 +138,8 @@ export function SendPanel({
           </button>
         )}
       </div>
+
+      {!canSend && <p className="mt-2 text-xs leading-relaxed text-state-progress">Le lien client sera disponible lorsque la préparation atteindra 100 %.</p>}
 
       {reviewUrl && (
         <div className="mt-3 rounded-md border border-state-approved/30 bg-state-approved/5 px-3 py-2">

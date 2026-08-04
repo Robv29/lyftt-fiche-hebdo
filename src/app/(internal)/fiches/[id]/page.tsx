@@ -14,6 +14,8 @@ import {
 } from "@/lib/domain/types";
 import { DEFAULT_TEMPLATES } from "@/lib/domain/templates";
 import { SendPanel } from "./SendPanel";
+import { SheetContentEditor } from "./SheetContentEditor";
+import { sheetCompletion } from "@/lib/domain/planning";
 
 /** §21 — Onglet « Retours et validations » d'une fiche. */
 export default async function SheetDetailPage({
@@ -31,7 +33,9 @@ export default async function SheetDetailPage({
        sent_to_client_at, first_viewed_at, current_version_id,
        clients ( id, name, timezone, approval_policy ),
        profiles:community_manager_id ( full_name ),
-       weekly_sheet_items ( id, position, scheduled_date, caption, approval_status, is_cancelled ),
+       weekly_sheet_items ( id, position, scheduled_date, scheduled_time, format, caption, hashtags,
+         media_asset_id, media_external_url, approval_status, is_cancelled,
+         media_assets:media_asset_id ( id, file_name, kind ) ),
        weekly_sheet_versions!weekly_sheet_versions_weekly_sheet_id_fkey (
          id, version_number, status, change_summary, created_at, sent_to_client_at
        ),
@@ -62,7 +66,13 @@ export default async function SheetDetailPage({
     id: string;
     position: number;
     scheduled_date: string;
+    scheduled_time: string | null;
+    format: "visuel" | "photo" | "reels" | "video" | "carrousel" | "texte_seul";
     caption: string;
+    hashtags: string[];
+    media_asset_id: string | null;
+    media_external_url: string | null;
+    media_assets: { id: string; file_name: string; kind: string } | null;
     approval_status: string;
     is_cancelled: boolean;
   }[];
@@ -116,6 +126,15 @@ export default async function SheetDetailPage({
     : null;
   const deadlineInfo = deadline ? deadlineState(deadline) : null;
   const primaryContact = contacts?.[0];
+  const sheetIsEditable = ["draft", "internal_review", "ready_to_send"].includes(sheet.status);
+  const preparation = sheetCompletion(items.map((item) => ({
+    caption: item.caption,
+    hashtags: item.hashtags,
+    format: item.format,
+    mediaAssetId: item.media_asset_id,
+    mediaExternalUrl: item.media_external_url,
+    isCancelled: item.is_cancelled,
+  })));
 
   return (
     <div className="space-y-6">
@@ -169,7 +188,25 @@ export default async function SheetDetailPage({
 
       <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
         <div className="space-y-6">
-          <section className="card">
+          {sheetIsEditable ? (
+            <SheetContentEditor
+              sheetId={sheet.id}
+              initialItems={items
+                .filter((item) => !item.is_cancelled)
+                .sort((a, b) => a.position - b.position)
+                .map((item) => ({
+                  id: item.id,
+                  position: item.position,
+                  scheduledDate: item.scheduled_date,
+                  scheduledTime: item.scheduled_time ?? "18:00",
+                  format: item.format,
+                  caption: item.caption,
+                  hashtags: item.hashtags.join(" "),
+                  mediaFileName: item.media_assets?.file_name ?? null,
+                  mediaExternalUrl: item.media_external_url,
+                }))}
+            />
+          ) : <section className="card">
             <h2 className="border-b border-line px-4 py-3 text-sm font-semibold">
               Contenus ({items.filter((i) => !i.is_cancelled).length})
             </h2>
@@ -190,7 +227,7 @@ export default async function SheetDetailPage({
                   </li>
                 ))}
             </ul>
-          </section>
+          </section>}
 
           <section className="card">
             <h2 className="border-b border-line px-4 py-3 text-sm font-semibold">
@@ -318,6 +355,7 @@ export default async function SheetDetailPage({
                 ? `${primaryContact.first_name} ${primaryContact.last_name ?? ""}`.trim()
                 : undefined
             }
+            canSend={preparation.percentage === 100}
           />
         </aside>
       </div>

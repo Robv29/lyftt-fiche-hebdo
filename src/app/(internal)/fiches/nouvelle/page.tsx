@@ -6,12 +6,12 @@ import { SheetBuilder } from "./SheetBuilder";
 export default async function NewSheetPage({
   searchParams,
 }: {
-  searchParams: Promise<{ client?: string }>;
+  searchParams: Promise<{ client?: string; isoYear?: string; isoWeek?: string }>;
 }) {
   const profile = await getCurrentProfile();
   if (!profile) redirect("/login");
 
-  const { client } = await searchParams;
+  const { client, isoYear, isoWeek } = await searchParams;
   const supabase = await createSupabaseServerClient();
 
   const { data: clients } = await supabase
@@ -48,17 +48,19 @@ export default async function NewSheetPage({
 
       <SheetBuilder
         clients={clients.map((c) => {
-          let settings: { defaultNetworks?: string[]; monthlyCadence?: Record<string, number>; recommendedHashtags?: string[] } = {};
+          let settings: { defaultNetworks?: string[]; monthlyCadence?: { photo?: number; video?: number; visual?: number }; recommendedHashtags?: string[] } = {};
           try { settings = typeof c.notes === "string" ? JSON.parse(c.notes) : {}; } catch { settings = {}; }
           return {
             id: c.id,
             name: c.name,
             defaultNetworks: settings.defaultNetworks ?? ["instagram", "facebook"],
             defaultHashtags: settings.recommendedHashtags ?? [],
-            monthlyContents: Object.values(settings.monthlyCadence ?? {}).reduce((sum, value) => sum + Number(value || 0), 0),
+            monthlyCadence: settings.monthlyCadence ?? {},
           };
         })}
         preselectedClientId={client ?? null}
+        preselectedIsoYear={isoYear ? Number(isoYear) : undefined}
+        preselectedIsoWeek={isoWeek ? Number(isoWeek) : undefined}
       />
     </div>
   );
