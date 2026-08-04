@@ -177,14 +177,14 @@ export default async function SheetDetailPage({
               {items
                 .sort((a, b) => a.position - b.position)
                 .map((item) => (
-                  <li key={item.id} className="flex gap-3 px-4 py-3">
-                    <span className="w-24 shrink-0 text-xs text-ink-faint">
+                  <li key={item.id} className="grid gap-1 px-4 py-3 sm:grid-cols-[96px_1fr_auto] sm:items-center sm:gap-3">
+                    <span className="text-xs text-ink-faint">
                       {item.scheduled_date}
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-sm">
+                    <span className="min-w-0 text-sm sm:truncate">
                       {item.caption || "—"}
                     </span>
-                    <span className="badge shrink-0 bg-canvas text-xs text-ink-soft">
+                    <span className="badge mt-1 w-fit shrink-0 bg-canvas text-xs text-ink-soft sm:mt-0">
                       {itemApprovalStatusLabel(item.approval_status)}
                     </span>
                   </li>
@@ -231,7 +231,7 @@ export default async function SheetDetailPage({
                 {exports.map((file) => (
                   <li
                     key={file.id}
-                    className="flex items-baseline justify-between gap-2 px-4 py-3 text-sm"
+                    className="flex flex-col gap-2 px-4 py-3 text-sm sm:flex-row sm:items-baseline sm:justify-between"
                   >
                     <span>{file.file_name}</span>
                     {file.is_obsolete ? (

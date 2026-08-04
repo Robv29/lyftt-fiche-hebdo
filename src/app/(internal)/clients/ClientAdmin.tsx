@@ -66,7 +66,7 @@ export function ClientAdmin({
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-ink-faint">{clients.filter((client) => client.isActive).length} client{clients.length > 1 ? "s" : ""} actif{clients.length > 1 ? "s" : ""}</p>
-        <button type="button" className={showForm ? "btn-secondary" : "btn-primary"} aria-expanded={showForm} onClick={() => { setShowForm(!showForm); setFeedback(null); }}>
+        <button type="button" className={`${showForm ? "btn-secondary" : "btn-primary"} sm:w-auto`} aria-expanded={showForm} onClick={() => { setShowForm(!showForm); setFeedback(null); }}>
           <Icon name={showForm ? "check" : "plus"} className="h-4 w-4"/>{showForm ? "Fermer" : "Nouveau client"}
         </button>
       </div>
@@ -251,14 +251,14 @@ export function ClientAdmin({
                   </div>
                 </div>
 
-                <div className="mt-auto flex items-center gap-2 border-t pt-4">
-                  <Link href={`/clients/${client.id}`} className="btn-secondary flex-1 text-xs">Voir le dossier</Link>
-                  <Link href={`/fiches/nouvelle?client=${client.id}`} className="btn-primary flex-1 text-xs">
+                <div className="mt-auto grid grid-cols-[1fr_44px] gap-2 border-t pt-4 sm:grid-cols-[1fr_1fr_44px]">
+                  <Link href={`/clients/${client.id}`} className="btn-secondary order-2 text-xs sm:order-1">Voir le dossier</Link>
+                  <Link href={`/fiches/nouvelle?client=${client.id}`} className="btn-primary col-span-2 order-1 text-xs sm:col-span-1 sm:order-2">
                     <Icon name="plus" className="h-3.5 w-3.5"/>Créer la fiche
                   </Link>
                   <button
                     type="button"
-                    className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border bg-surface text-ink-faint transition-colors hover:text-state-changes"
+                    className="order-3 grid h-11 w-11 shrink-0 place-items-center rounded-xl border bg-surface text-ink-faint transition-colors hover:text-state-changes"
                     disabled={pending}
                     onClick={() => run(() => setClientActive(client.id, !client.isActive))}
                     aria-label={client.isActive ? `Archiver ${client.name}` : `Réactiver ${client.name}`}

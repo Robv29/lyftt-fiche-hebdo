@@ -115,7 +115,7 @@ export function UserAdmin({
       <ul className="space-y-2">
         {members.map((member) => (
           <li key={member.id} className="card px-4 py-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
               <div className="min-w-0">
                 <p className="text-sm font-medium">
                   {member.fullName}
@@ -126,12 +126,12 @@ export function UserAdmin({
                     <span className="ml-2 badge bg-canvas text-ink-faint">Désactivé</span>
                   )}
                 </p>
-                <p className="text-xs text-ink-faint">{member.email}</p>
+                <p className="break-all text-xs text-ink-faint">{member.email}</p>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="grid w-full gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
                 <select
-                  className="field w-auto py-1 text-xs"
+                  className="field w-full py-1 text-xs sm:w-auto"
                   value={member.role}
                   disabled={pending}
                   onChange={(event) =>

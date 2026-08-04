@@ -159,7 +159,7 @@ export function SheetBuilder({
       )}
 
       <div className="card overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-4 border-b px-5 py-4"><div><p className="eyebrow">Étape 1</p><h2 className="mt-1 font-semibold">Cadre de la semaine</h2></div><span className="rounded-full bg-[#edf4ff] px-3 py-1 text-xs font-semibold text-[#0759e6]">{periodLabel}</span></div>
+        <div className="flex flex-col items-start gap-3 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5"><div><p className="eyebrow">Étape 1</p><h2 className="mt-1 font-semibold">Cadre de la semaine</h2></div><span className="max-w-full break-words rounded-full bg-[#edf4ff] px-3 py-1 text-xs font-semibold text-[#0759e6]">{periodLabel}</span></div>
         <div className="grid gap-4 p-5 sm:grid-cols-3">
         <div>
           <label className="label" htmlFor="clientId">
@@ -231,17 +231,17 @@ export function SheetBuilder({
       </fieldset>
 
       <section className="space-y-4">
-        <div className="flex flex-wrap items-end justify-between gap-4"><div><p className="eyebrow">Étape 3</p><h2 className="mt-1 text-lg font-semibold">Contenus à produire</h2><p className="mt-1 text-sm text-ink-faint">Choisissez un rythme, puis ajustez chaque publication.</p></div><div className="flex gap-2" aria-label="Rythme de publication"><button type="button" className="btn-secondary text-xs" onClick={()=>resizeSchedule(3)}>Léger · 3</button><button type="button" className="btn-secondary text-xs" onClick={()=>resizeSchedule(5)}>Standard · 5</button></div></div>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="eyebrow">Étape 3</p><h2 className="mt-1 text-lg font-semibold">Contenus à produire</h2><p className="mt-1 text-sm text-ink-faint">Choisissez un rythme, puis ajustez chaque publication.</p></div><div className="grid grid-cols-2 gap-2" aria-label="Rythme de publication"><button type="button" className="btn-secondary text-xs" onClick={()=>resizeSchedule(3)}>Léger · 3</button><button type="button" className="btn-secondary text-xs" onClick={()=>resizeSchedule(5)}>Standard · 5</button></div></div>
         <div className="h-1.5 overflow-hidden rounded-full bg-[#e9edf3]" aria-label={`${progress}% des textes renseignés`} role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}><span className="block h-full rounded-full bg-[#1468ff] transition-[transform] duration-200" style={{ transform:`translateX(${progress - 100}%)` }}/></div>
         <div className="space-y-3">
         {resolvedItems.map((item, index) => (
           <div key={item.key} className="card reveal-panel space-y-4 p-4 sm:p-5">
-            <div className="flex items-center justify-between">
+            <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-3"><span className="grid h-8 w-8 place-items-center rounded-lg bg-[#edf4ff] text-xs font-bold text-[#0759e6]">{index + 1}</span><div><span className="text-sm font-semibold">Publication {index + 1}</span><p className="text-xs text-ink-faint">{item.caption.trim() ? "Texte renseigné" : "À compléter"}</p></div></div>
               {items.length > 1 && (
                 <button
                   type="button"
-                  className="text-xs text-state-changes hover:underline"
+                  className="mobile-inline-btn min-h-11 shrink-0 px-2 text-xs text-state-changes hover:underline"
                   onClick={() => setItems((prev) => prev.filter((i) => i.key !== item.key))}
                 >
                   Retirer
@@ -299,7 +299,7 @@ export function SheetBuilder({
         </div>
       </section>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="grid gap-2 sm:flex sm:flex-wrap">
         <button
           type="button"
           className="btn-secondary"
