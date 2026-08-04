@@ -24,6 +24,7 @@ export default async function InternalLayout({
     ? [{ href: "/production", label: "Corrections clients", icon: "layers", badge: null }]
     : [
         { href: "/", label: "Vue d’ensemble", icon: "dashboard", badge: null },
+        { href: "/publications", label: "Publications", icon: "send", badge: null },
         { href: "/fiches", label: "Planning", icon: "calendar", badge: null },
         { href: "/clients", label: "Clients", icon: "users", badge: null },
         { href: "/retours", label: "Tickets clients", icon: "message", badge: openTickets ?? 0 },
