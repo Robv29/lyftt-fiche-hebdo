@@ -5,22 +5,38 @@
 
 -- Comptes de démonstration. En production, les profils sont créés via
 -- l'inscription Supabase Auth ; ici on insère directement pour pouvoir tester.
+--
+-- Les colonnes de jetons doivent valoir '' et non NULL : GoTrue les lit en Go
+-- comme des `string` non nullables et renvoie sinon une erreur 500
+-- « converting NULL to string is unsupported » à la connexion.
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password,
-                        email_confirmed_at, created_at, updated_at)
-values
-  ('11111111-1111-1111-1111-111111111111', '00000000-0000-0000-0000-000000000000',
-   'authenticated', 'authenticated', 'elena@lyftt.fr',
-   crypt('demo1234', gen_salt('bf')), now(), now(), now()),
-  ('22222222-2222-2222-2222-222222222222', '00000000-0000-0000-0000-000000000000',
-   'authenticated', 'authenticated', 'graphiste@lyftt.fr',
-   crypt('demo1234', gen_salt('bf')), now(), now(), now()),
-  ('33333333-3333-3333-3333-333333333333', '00000000-0000-0000-0000-000000000000',
-   'authenticated', 'authenticated', 'production@lyftt.fr',
-   crypt('demo1234', gen_salt('bf')), now(), now(), now()),
-  ('44444444-4444-4444-4444-444444444444', '00000000-0000-0000-0000-000000000000',
-   'authenticated', 'authenticated', 'videaste@lyftt.fr',
-   crypt('demo1234', gen_salt('bf')), now(), now(), now())
+                        email_confirmed_at, created_at, updated_at,
+                        raw_app_meta_data, raw_user_meta_data,
+                        confirmation_token, recovery_token,
+                        email_change_token_new, email_change_token_current,
+                        email_change, phone_change, phone_change_token,
+                        reauthentication_token)
+select
+  u.id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+  u.email, crypt('demo1234', gen_salt('bf')), now(), now(), now(),
+  '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb,
+  '', '', '', '', '', '', '', ''
+from (values
+  ('11111111-1111-1111-1111-111111111111'::uuid, 'elena@lyftt.fr'),
+  ('22222222-2222-2222-2222-222222222222'::uuid, 'graphiste@lyftt.fr'),
+  ('33333333-3333-3333-3333-333333333333'::uuid, 'production@lyftt.fr'),
+  ('44444444-4444-4444-4444-444444444444'::uuid, 'videaste@lyftt.fr')
+) as u(id, email)
 on conflict (id) do nothing;
+
+insert into auth.identities (id, user_id, provider_id, provider, identity_data,
+                             last_sign_in_at, created_at, updated_at)
+select u.id, u.id, u.id::text, 'email',
+       jsonb_build_object('sub', u.id::text, 'email', u.email, 'email_verified', true),
+       now(), now(), now()
+from auth.users u
+where u.email like '%@lyftt.fr'
+on conflict do nothing;
 
 insert into profiles (id, full_name, email, role) values
   ('11111111-1111-1111-1111-111111111111', 'Élena Nguyen', 'elena@lyftt.fr', 'community_manager'),

@@ -32,7 +32,9 @@ export default async function SheetDetailPage({
        clients ( id, name, timezone, approval_policy ),
        profiles:community_manager_id ( full_name ),
        weekly_sheet_items ( id, position, scheduled_date, caption, approval_status, is_cancelled ),
-       weekly_sheet_versions ( id, version_number, status, change_summary, created_at, sent_to_client_at ),
+       weekly_sheet_versions!weekly_sheet_versions_weekly_sheet_id_fkey (
+         id, version_number, status, change_summary, created_at, sent_to_client_at
+       ),
        client_review_links ( id, token_prefix, expires_at, revoked_at, last_accessed_at, access_count ),
        client_message_dispatches ( id, template_type, channel, sent_at, recipient_label ),
        sheet_exports ( id, file_name, is_obsolete, generated_at )`,
