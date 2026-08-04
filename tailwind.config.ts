@@ -6,13 +6,13 @@ export default {
     extend: {
       colors: {
         ink: {
-          DEFAULT: "#111111",
-          soft: "#4a4a4a",
-          faint: "#8a8a8a",
+          DEFAULT: "#131722",
+          soft: "#5d6573",
+          faint: "#697180",
         },
-        line: "#e4e4e4",
+        line: "#e8eaee",
         surface: "#ffffff",
-        canvas: "#fafaf9",
+        canvas: "#f7f8fa",
         accent: {
           DEFAULT: "#111111",
           contrast: "#ffffff",

@@ -9,9 +9,9 @@ export function PrivacyNotice() {
       </p>
       <p className="mt-2">
         Nous conservons ces éléments le temps de la prestation, puis pendant la durée
-        prévue à votre contrat. Vous disposez d'un droit d'accès, de rectification et de
+        prévue à votre contrat. Vous disposez d&apos;un droit d&apos;accès, de rectification et de
         suppression, que vous pouvez exercer auprès de votre community manager ou à
-        l'adresse <a className="underline" href="mailto:contact@lyftt.fr">contact@lyftt.fr</a>.
+        l&apos;adresse <a className="underline" href="mailto:contact@lyftt.fr">contact@lyftt.fr</a>.
       </p>
       <p className="mt-2">
         <a className="underline" href="https://lyftt.fr/politique-de-confidentialite">
