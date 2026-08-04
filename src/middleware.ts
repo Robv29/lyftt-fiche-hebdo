@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { normalizeKey, normalizeSupabaseUrl } from "@/lib/supabase/url";
 
 /**
  * Rafraîchit la session Supabase et protège les écrans internes.
@@ -14,16 +15,13 @@ export async function middleware(request: NextRequest) {
   // moment-là, elles valent `undefined` ici et `createServerClient` lève une
   // exception — ce qui, dans un middleware, fait échouer *toutes* les routes
   // avec un 500 opaque. On préfère un message explicite.
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const supabaseUrl = normalizeSupabaseUrl(process.env.NEXT_PUBLIC_SUPABASE_URL);
+  const supabaseAnonKey = normalizeKey(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
 
   if (!supabaseUrl || !supabaseAnonKey) {
-    return new NextResponse(
-      "Configuration incomplète.\n\n" +
-        "NEXT_PUBLIC_SUPABASE_URL et NEXT_PUBLIC_SUPABASE_ANON_KEY doivent être " +
-        "définies dans les variables d'environnement, puis l'application " +
-        "redéployée : ces valeurs sont intégrées au moment du build.\n",
-      { status: 503, headers: { "content-type": "text/plain; charset=utf-8" } },
+    return configurationError(
+      "NEXT_PUBLIC_SUPABASE_URL et NEXT_PUBLIC_SUPABASE_ANON_KEY doivent être " +
+        "définies, la première sous la forme https://votre-projet.supabase.co",
     );
   }
 
@@ -68,12 +66,22 @@ export async function middleware(request: NextRequest) {
   return response;
 }
 
+/** Message explicite plutôt qu'un 500 opaque sur l'ensemble du site. */
+function configurationError(detail: string): NextResponse {
+  return new NextResponse(
+    `Configuration incomplète.\n\n${detail}\n\n` +
+      "Après correction, redéployez en désactivant le cache de build : les " +
+      "variables NEXT_PUBLIC_* sont intégrées au moment de la compilation.\n",
+    { status: 503, headers: { "content-type": "text/plain; charset=utf-8" } },
+  );
+}
+
 export const config = {
   matcher: [
     /*
      * Tout sauf : le portail client, la page de connexion, les fichiers
      * statiques et les images.
      */
-    "/((?!client-review|login|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!client-review|login|api/diagnostic|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

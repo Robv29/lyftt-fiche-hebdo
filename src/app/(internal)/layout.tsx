@@ -29,6 +29,9 @@ export default async function InternalLayout({
         { href: "/retours", label: "Tickets clients", icon: "message", badge: openTickets ?? 0 },
         { href: "/production", label: "Production", icon: "layers", badge: null },
         { href: "/indicateurs", label: "Indicateurs", icon: "chart", badge: null },
+        ...(profile.role === "super_admin"
+          ? [{ href: "/utilisateurs", label: "Équipe", icon: "settings", badge: null }]
+          : []),
       ];
 
   return <InternalShell profile={{ name: profile.full_name, role: appRoleLabel(profile.role) }} links={links}>{children}</InternalShell>;

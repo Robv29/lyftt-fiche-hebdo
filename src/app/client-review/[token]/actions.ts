@@ -24,6 +24,15 @@ import {
   safeFileName,
 } from "@/lib/security/attachments";
 import { rateLimit } from "@/lib/security/rate-limit";
+import { env } from "@/lib/supabase/env";
+import { formatDeadline } from "@/lib/domain/deadline";
+import { sendEmail } from "@/lib/notifications/resend";
+import {
+  buildHtmlBody,
+  buildSubject,
+  buildTextBody,
+  type TicketEmailInput,
+} from "@/lib/notifications/ticket-email";
 
 /**
  * Actions du portail client.
@@ -411,8 +420,35 @@ export async function createTicket(
       .eq("weekly_sheet_id", link.context.sheetId);
   }
 
-  await assignAndNotify(ticket.id, link.context.clientId, routing, title);
+  const recipients = await assignAndNotify(
+    ticket.id,
+    link.context.clientId,
+    routing,
+    title,
+  );
   await handleAttachment(formData, ticket.id, link.context);
+
+  // L'alerte e-mail est un rappel, pas la source de vérité : un échec d'envoi
+  // ne doit jamais empêcher l'enregistrement de la demande.
+  await sendTicketAlert({
+    recipients,
+    email: {
+      ticketNumber: ticket.ticket_number,
+      clientName: sheet.clientName,
+      ticketType: input.ticketType,
+      priority: escalateForTiming ? "high" : "normal",
+      description,
+      clientSuggestion: input.suggestion ? sanitizeText(input.suggestion) : null,
+      itemLabel: item ? formatItemLabel(item.scheduledDate) : null,
+      authorName: input.clientName ? sanitizeText(input.clientName, 120) : null,
+      ticketUrl: `${env.appUrl}/retours/${ticket.id}`,
+      deadlineLabel: sheet.validationDeadlineAt
+        ? formatDeadline(new Date(sheet.validationDeadlineAt), sheet.timezone)
+        : null,
+      escalationReasons: routing.escalation.reasons,
+      afterDeadline: deadlinePassed,
+    },
+  });
 
   await logReviewEvent(link.context.linkId, "ticket_created", {
     ticketId: ticket.id,
@@ -443,32 +479,36 @@ async function assignAndNotify(
   clientId: string,
   routing: ReturnType<typeof routeTicket>,
   title: string,
-): Promise<void> {
+): Promise<string[]> {
   const supabase = createSupabaseAdminClient();
+  const recipients: string[] = [];
 
   for (const target of routing.targets) {
     // On cherche d'abord la personne rattachée au client pour ce rôle.
     const { data: assigned } = await supabase
       .from("client_assignments")
-      .select("profile_id")
+      .select("profile_id, profiles ( id, email )")
       .eq("client_id", clientId)
       .eq("role", target.role)
       .limit(1);
 
-    let profileId = assigned?.[0]?.profile_id;
+    let profileId = assigned?.[0]?.profile_id as string | undefined;
+    let email = (assigned?.[0]?.profiles as unknown as { email: string } | null)?.email;
 
     // À défaut, on retombe sur un membre actif du rôle (responsable de production).
     if (!profileId) {
       const { data: fallback } = await supabase
         .from("profiles")
-        .select("id")
+        .select("id, email")
         .eq("role", target.role)
         .eq("is_active", true)
         .limit(1);
       profileId = fallback?.[0]?.id;
+      email = fallback?.[0]?.email;
     }
 
     if (!profileId) continue;
+    if (email) recipients.push(email);
 
     await supabase.from("client_ticket_assignments").upsert(
       {
@@ -489,6 +529,35 @@ async function assignAndNotify(
 
   // Le ticket est affecté dès sa création, mais reste à qualifier (§10).
   await supabase.from("client_tickets").update({ status: "new" }).eq("id", ticketId);
+
+  return recipients;
+}
+
+/**
+ * §8 — Alerte e-mail vers les personnes concernées par la demande.
+ *
+ * Destinataires : le community manager référent, le graphiste ou le vidéaste
+ * quand une correction visuelle est nécessaire, et le responsable de production
+ * lorsqu'une escalade est déclenchée — c'est exactement le routage calculé
+ * par `routeTicket`.
+ */
+async function sendTicketAlert(params: {
+  recipients: string[];
+  email: TicketEmailInput;
+}): Promise<void> {
+  if (params.recipients.length === 0) return;
+
+  try {
+    await sendEmail({
+      to: params.recipients,
+      subject: buildSubject(params.email),
+      html: buildHtmlBody(params.email),
+      text: buildTextBody(params.email),
+    });
+  } catch (error) {
+    // Volontairement absorbé : la demande client est déjà enregistrée.
+    console.error("[alerte ticket] envoi impossible", error);
+  }
 }
 
 /** §6 / §19 — pièce jointe éventuelle, contrôlée avant stockage. */

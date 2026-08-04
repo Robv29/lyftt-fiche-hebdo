@@ -8,6 +8,7 @@ import {
 } from "@/lib/domain/types";
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
 import { requiresProduction } from "@/lib/domain/routing";
+import { Icon } from "@/components/Icon";
 
 /** §21 — Tableau de bord du community manager. */
 export default async function DashboardPage() {
@@ -46,11 +47,11 @@ export default async function DashboardPage() {
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-xl font-semibold">Bonjour {profile?.full_name}</h1>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div><p className="eyebrow">Aujourd’hui</p><h1 className="page-title mt-1">Bonjour {profile?.full_name?.split(" ")[0]}</h1>
         <p className="mt-1 text-sm text-ink-soft">
           Voici ce qui attend une action de votre part.
-        </p>
+        </p></div><Link href="/fiches/nouvelle" className="btn-primary"><Icon name="plus" className="h-4 w-4"/>Préparer une fiche</Link>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

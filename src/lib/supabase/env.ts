@@ -1,3 +1,5 @@
+import { normalizeKey, normalizeSupabaseUrl } from "./url";
+
 /** Lecture centralisée de la configuration : une variable manquante échoue au démarrage. */
 function required(name: string): string {
   const value = process.env[name];
@@ -11,14 +13,21 @@ function required(name: string): string {
 
 export const env = {
   get supabaseUrl() {
-    return required("NEXT_PUBLIC_SUPABASE_URL");
+    const url = normalizeSupabaseUrl(required("NEXT_PUBLIC_SUPABASE_URL"));
+    if (!url) {
+      throw new Error(
+        "NEXT_PUBLIC_SUPABASE_URL n'est pas exploitable. Forme attendue : " +
+          "https://votre-projet.supabase.co",
+      );
+    }
+    return url;
   },
   get supabaseAnonKey() {
-    return required("NEXT_PUBLIC_SUPABASE_ANON_KEY");
+    return normalizeKey(required("NEXT_PUBLIC_SUPABASE_ANON_KEY"))!;
   },
   /** Jamais exposée au navigateur : uniquement dans du code serveur. */
   get supabaseServiceRoleKey() {
-    return required("SUPABASE_SERVICE_ROLE_KEY");
+    return normalizeKey(required("SUPABASE_SERVICE_ROLE_KEY"))!;
   },
   /** Sel d'anonymisation des IP (§20). */
   get ipHashSalt() {
