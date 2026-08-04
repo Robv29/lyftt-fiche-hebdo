@@ -6,6 +6,7 @@ import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/se
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sanitizeText } from "@/lib/security/sanitize";
 import { SOCIAL_NETWORKS } from "@/lib/domain/types";
+import { recommendHashtags } from "@/lib/domain/hashtags";
 
 export interface ClientActionResult {
   ok: boolean;
@@ -24,17 +25,24 @@ async function requireEditorial() {
 const clientSchema = z.object({
   name: z.string().trim().min(2, "Le nom du client est requis."),
   contactFirstName: z.string().trim().min(1, "Le prénom du contact est requis."),
-  contactLastName: z.string().trim().optional(),
-  contactPhone: z.string().trim().max(30).optional(),
-  contactEmail: z.string().trim().email("E-mail invalide.").optional().or(z.literal("")),
+  contactLastName: z.string().trim().min(1, "Le nom du contact est requis."),
+  contactPhone: z.string().trim().min(8, "Le téléphone du contact est requis.").max(30),
+  contactEmail: z.string().trim().email("E-mail invalide."),
+  activity: z.string().trim().min(2, "L’activité est requise.").max(120),
+  website: z.string().trim().url("L’adresse du site internet est invalide."),
+  city: z.string().trim().min(2, "La ville est requise.").max(100),
+  postalCode: z.string().regex(/^\d{5}$/, "Le code postal doit contenir 5 chiffres."),
+  audience: z.string().trim().min(3, "La clientèle cible est requise.").max(300),
+  brandTone: z.enum(["chaleureux", "premium", "expert", "dynamique", "institutionnel"]),
+  keywords: z.string().trim().min(3, "Ajoutez au moins un mot-clé.").max(1000),
   networks: z.array(z.enum(SOCIAL_NETWORKS as unknown as [string, ...string[]])).min(1,
     "Sélectionnez au moins un réseau."),
   deadlineWeekday: z.coerce.number().int().min(1).max(7),
   deadlineTime: z.string().regex(/^\d{2}:\d{2}$/, "Heure invalide."),
   approvalPolicy: z.enum(["explicit_required", "tacit_allowed"]),
   tacitNotice: z.string().trim().max(500).optional(),
-  whatsappGroup: z.string().trim().max(120).optional(),
-  communityManagerId: z.string().uuid().optional().or(z.literal("")),
+  whatsappGroup: z.string().trim().min(2, "Le nom du groupe WhatsApp est requis.").max(120),
+  communityManagerId: z.string().uuid("Sélectionnez un community manager."),
   photoPerMonth: z.coerce.number().int().min(0).max(31),
   videoPerMonth: z.coerce.number().int().min(0).max(31),
   visualPerMonth: z.coerce.number().int().min(0).max(31),
@@ -61,6 +69,13 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
     contactLastName: formData.get("contactLastName") ?? undefined,
     contactPhone: formData.get("contactPhone") ?? undefined,
     contactEmail: formData.get("contactEmail") ?? undefined,
+    activity: formData.get("activity"),
+    website: formData.get("website"),
+    city: formData.get("city"),
+    postalCode: formData.get("postalCode"),
+    audience: formData.get("audience"),
+    brandTone: formData.get("brandTone"),
+    keywords: formData.get("keywords"),
     networks: formData.getAll("networks").map(String),
     deadlineWeekday: formData.get("deadlineWeekday"),
     deadlineTime: formData.get("deadlineTime"),
@@ -118,18 +133,36 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
 
   // Rattachement du community manager : c'est ce qui lui donne accès au client
   // et ce qui alimente le routage des tickets (§7).
-  const managerId = input.communityManagerId || profile.id;
+  const managerId = input.communityManagerId;
   await admin.from("client_assignments").insert({
     client_id: client.id,
     profile_id: managerId,
     role: "community_manager",
   });
 
-  // Les réseaux du client servent de valeur par défaut aux nouvelles fiches.
+  const recommendedHashtags = recommendHashtags({
+    brand: input.name,
+    activity: input.activity,
+    city: input.city,
+    audience: input.audience,
+    keywords: input.keywords,
+  });
+
+  // Le profil éditorial alimente automatiquement les prochaines fiches.
   await admin
     .from("clients")
     .update({ notes: JSON.stringify({
       defaultNetworks: input.networks,
+      brandProfile: {
+        activity: sanitizeText(input.activity, 120),
+        website: input.website,
+        city: sanitizeText(input.city, 100),
+        postalCode: input.postalCode,
+        audience: sanitizeText(input.audience, 300),
+        tone: input.brandTone,
+        keywords: sanitizeText(input.keywords, 1000),
+      },
+      recommendedHashtags,
       monthlyCadence: {
         photo: input.photoPerMonth,
         video: input.videoPerMonth,

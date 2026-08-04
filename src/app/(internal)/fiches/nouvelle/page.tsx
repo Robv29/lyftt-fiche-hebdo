@@ -48,12 +48,13 @@ export default async function NewSheetPage({
 
       <SheetBuilder
         clients={clients.map((c) => {
-          let settings: { defaultNetworks?: string[]; monthlyCadence?: Record<string, number> } = {};
+          let settings: { defaultNetworks?: string[]; monthlyCadence?: Record<string, number>; recommendedHashtags?: string[] } = {};
           try { settings = typeof c.notes === "string" ? JSON.parse(c.notes) : {}; } catch { settings = {}; }
           return {
             id: c.id,
             name: c.name,
             defaultNetworks: settings.defaultNetworks ?? ["instagram", "facebook"],
+            defaultHashtags: settings.recommendedHashtags ?? [],
             monthlyContents: Object.values(settings.monthlyCadence ?? {}).reduce((sum, value) => sum + Number(value || 0), 0),
           };
         })}

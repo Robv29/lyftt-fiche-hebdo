@@ -33,6 +33,14 @@ function publicationTypeForFormat(format: MediaFormat): PublicationType {
   }
 }
 
+function hashtagsForItem(tags: string[], index: number): string {
+  if (tags.length <= 8) return tags.join(" ");
+  const core = tags.slice(0, 3);
+  const variable = tags.slice(3);
+  const rotated = [...variable.slice(index % variable.length), ...variable.slice(0, index % variable.length)];
+  return [...new Set([...core, ...rotated.slice(0, 5)])].join(" ");
+}
+
 /** Semaine ISO courante, pour proposer par défaut la semaine suivante. */
 function currentIsoWeek(): { year: number; week: number } {
   const now = new Date();
@@ -48,7 +56,7 @@ export function SheetBuilder({
   clients,
   preselectedClientId,
 }: {
-  clients: { id: string; name: string; defaultNetworks: string[]; monthlyContents: number }[];
+  clients: { id: string; name: string; defaultNetworks: string[]; defaultHashtags: string[]; monthlyContents: number }[];
   preselectedClientId: string | null;
 }) {
   const router = useRouter();
@@ -84,7 +92,7 @@ export function SheetBuilder({
       scheduledTime: "18:00",
       format: "photo" as MediaFormat,
       caption: "",
-      hashtags: "",
+      hashtags: hashtagsForItem(initialClient?.defaultHashtags ?? [], index),
     })),
   );
 
@@ -97,11 +105,12 @@ export function SheetBuilder({
   const update = (key: string, patch: Partial<DraftItem>) =>
     setItems((prev) => prev.map((i) => (i.key === key ? { ...i, ...patch } : i)));
 
-  const resizeSchedule = (size: number) => setItems((current) => {
+  const resizeSchedule = (size: number, requestedHashtags?: string[]) => setItems((current) => {
     if (current.length >= size) return current.slice(0, size);
+    const activeHashtags = requestedHashtags ?? clients.find((client) => client.id === selectedClientId)?.defaultHashtags ?? [];
     return [...current, ...Array.from({ length: size - current.length }, (_, index) => ({
       key: `preset-${Date.now()}-${index}`, scheduledDate:"", scheduledTime:"18:00",
-      format:"photo" as MediaFormat, caption:"", hashtags:"",
+      format:"photo" as MediaFormat, caption:"", hashtags:hashtagsForItem(activeHashtags, current.length + index),
     }))];
   });
 
@@ -111,7 +120,8 @@ export function SheetBuilder({
     if (!client) return;
     const defaults = client.defaultNetworks.filter((network): network is SocialNetwork => SOCIAL_NETWORKS.includes(network as SocialNetwork));
     setSelectedNetworks(defaults.length ? defaults : ["instagram", "facebook"]);
-    if (client.monthlyContents > 0) resizeSchedule(Math.max(1, Math.round(client.monthlyContents / 4)));
+    setItems((current) => current.map((item, index) => ({ ...item, hashtags:hashtagsForItem(client.defaultHashtags, index) })));
+    if (client.monthlyContents > 0) resizeSchedule(Math.max(1, Math.round(client.monthlyContents / 4)), client.defaultHashtags);
   };
 
   const periodLabel = `${monday.toISOString().slice(0, 10)} → ${dayOffset(6)}`;
@@ -279,10 +289,11 @@ export function SheetBuilder({
             <input
               className="field"
               aria-label={`Hashtags de la publication ${index + 1}`}
-              placeholder="#Guinguette #Montauban #TarnEtGaronne"
+              placeholder="Les hashtags recommandés du client apparaîtront ici"
               value={item.hashtags}
               onChange={(e) => update(item.key, { hashtags: e.target.value })}
             />
+            <p className="-mt-2 flex items-center gap-1.5 text-xs text-ink-faint"><Icon name="spark" className="h-3.5 w-3.5 text-[#0759e6]"/>{item.hashtags ? "Sélection automatique issue du profil client — modifiable pour ce contenu." : "Ajoutez une bibliothèque de hashtags dans le dossier client."}</p>
           </div>
         ))}
         </div>
@@ -301,7 +312,7 @@ export function SheetBuilder({
                 scheduledTime: "18:00",
                 format: "photo",
                 caption: "",
-                hashtags: "",
+                hashtags: hashtagsForItem(clients.find((client) => client.id === selectedClientId)?.defaultHashtags ?? [], prev.length),
               },
             ])
           }
