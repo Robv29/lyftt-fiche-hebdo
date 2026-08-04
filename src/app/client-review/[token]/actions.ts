@@ -122,6 +122,14 @@ export async function approveItem(
     .eq("id", item.id)
     .eq("weekly_sheet_id", link.context.sheetId);
 
+  // La validation de la correction résout automatiquement le ticket associé.
+  await supabase
+    .from("client_tickets")
+    .update({ status:"approved_by_client", resolved_at:new Date().toISOString() })
+    .eq("weekly_sheet_id", link.context.sheetId)
+    .eq("weekly_sheet_item_id", item.id)
+    .eq("status", "sent_back_to_client");
+
   await recordApproval(link.context, sheet.currentVersionId, item.id, nextStatus, {
     clientName: parsed.data.clientName,
   });
@@ -191,6 +199,13 @@ export async function approveAll(
       clientName,
     });
   }
+
+  // « Tout valider » valide aussi toutes les corrections renvoyées de cette fiche.
+  await supabase
+    .from("client_tickets")
+    .update({ status:"approved_by_client", resolved_at:new Date().toISOString() })
+    .eq("weekly_sheet_id", link.context.sheetId)
+    .eq("status", "sent_back_to_client");
 
   await recordApproval(link.context, sheet.currentVersionId, null, "approved", {
     clientName,

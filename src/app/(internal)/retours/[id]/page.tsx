@@ -237,7 +237,12 @@ export default async function TicketDetailPage({
 
           <TicketActions
             ticketId={ticket.id}
+            ticketNumber={ticket.ticket_number}
             sheetId={ticket.weekly_sheet_id}
+            status={ticket.status}
+            category={ticket.category}
+            clientName={client?.name ?? "Client"}
+            item={item ? { id:item.id, caption:item.caption, hashtags:item.hashtags ?? [], scheduledDate:item.scheduled_date } : null}
             transitions={transitions.map((t) => ({
               to: t.to,
               label: t.label,

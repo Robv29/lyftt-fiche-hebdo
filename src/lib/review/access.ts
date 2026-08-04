@@ -241,7 +241,8 @@ export async function loadReviewSheet(
     .from("client_tickets")
     .select("weekly_sheet_item_id, status")
     .eq("weekly_sheet_id", context.sheetId)
-    .not("status", "in", "(closed,cancelled,rejected,approved_by_client)");
+    // Un ticket renvoyé attend justement la validation : il ne doit plus la bloquer.
+    .not("status", "in", "(closed,cancelled,rejected,approved_by_client,sent_back_to_client)");
 
   const ticketCountByItem = new Map<string, number>();
   for (const ticket of openTickets ?? []) {

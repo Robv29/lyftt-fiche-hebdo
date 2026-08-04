@@ -8,8 +8,9 @@ import { env } from "@/lib/supabase/env";
 import { generateReviewToken } from "@/lib/domain/tokens";
 import { canTransition } from "@/lib/domain/workflow";
 import { checkExportBeforeSend } from "@/lib/domain/edge-cases";
-import { sanitizeText } from "@/lib/security/sanitize";
+import { normalizeHashtags, sanitizeText } from "@/lib/security/sanitize";
 import type { TicketStatus } from "@/lib/domain/types";
+import { whatsappLink } from "@/lib/domain/templates";
 
 export interface InternalActionResult {
   ok: boolean;
@@ -18,6 +19,10 @@ export interface InternalActionResult {
   reviewUrl?: string;
   /** Avertissement à confirmer avant de poursuivre (§14). */
   warning?: string;
+  /** Message prêt à copier après préparation d'une correction. */
+  messageBody?: string;
+  /** Destination WhatsApp avec le message prérempli. */
+  whatsappUrl?: string;
 }
 
 async function requireProfile() {
@@ -349,6 +354,93 @@ export async function generateCorrectedVersion(
 
   revalidatePath(`/fiches/${sheetId}`);
   return { ok: true, message: "Nouvelle version générée. L'ancien export est marqué obsolète." };
+}
+
+// ---------------------------------------------------------------------------
+// Parcours simplifié : corriger → préparer le lien → ouvrir WhatsApp
+// ---------------------------------------------------------------------------
+
+const correctionSchema = z.object({
+  ticketId: z.string().uuid(),
+  sheetId: z.string().uuid(),
+  itemId: z.string().uuid().optional().or(z.literal("")),
+  caption: z.string().max(5000),
+  hashtags: z.string().max(1000),
+  scheduledDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().or(z.literal("")),
+  mediaExternalUrl: z.string().url("Le lien du média est invalide.").optional().or(z.literal("")),
+  summary: z.string().trim().min(3, "Résumez brièvement la correction.").max(500),
+});
+
+export async function prepareCorrectionForClient(formData: FormData): Promise<InternalActionResult> {
+  const profile = await requireProfile();
+  if (!["super_admin", "production_manager", "community_manager"].includes(profile.role)) {
+    return { ok:false, message:"Seul le community manager peut préparer l’envoi client." };
+  }
+
+  const parsed = correctionSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { ok:false, message:parsed.error.issues[0]?.message ?? "Correction invalide." };
+  const input = parsed.data;
+  const admin = createSupabaseAdminClient();
+
+  if (input.itemId) {
+    const itemUpdate: Record<string, unknown> = {
+      caption:sanitizeText(input.caption, 5000),
+      hashtags:normalizeHashtags(input.hashtags),
+      approval_status:"corrected",
+    };
+    if (input.scheduledDate) itemUpdate.scheduled_date = input.scheduledDate;
+    if (input.mediaExternalUrl) itemUpdate.media_external_url = input.mediaExternalUrl;
+    const { error } = await admin.from("weekly_sheet_items").update(itemUpdate).eq("id", input.itemId).eq("weekly_sheet_id", input.sheetId);
+    if (error) return { ok:false, message:"La correction n’a pas pu être enregistrée." };
+  }
+
+  const { data:versionId, error:versionError } = await admin.rpc("create_sheet_version", {
+    target_sheet_id:input.sheetId,
+    summary:sanitizeText(input.summary, 500),
+    author:profile.id,
+    ticket:input.ticketId,
+  });
+  if (versionError) return { ok:false, message:"La nouvelle version n’a pas pu être générée." };
+
+  await admin.from("client_tickets").update({ resolution_version_id:versionId, status:"new_version_generated" }).eq("id", input.ticketId);
+  await admin.from("weekly_sheets").update({ status:"new_version_to_send" }).eq("id", input.sheetId);
+
+  const link = await generateReviewLink(input.sheetId);
+  if (!link.ok || !link.reviewUrl) return link;
+
+  const { data:sheet } = await admin.from("weekly_sheets").select(`iso_week, validation_deadline_at, clients ( name, whatsapp_group_name, client_contacts ( first_name, phone, is_primary ) )`).eq("id", input.sheetId).single();
+  const client = sheet?.clients as unknown as { name:string; whatsapp_group_name:string|null; client_contacts:{first_name:string;phone:string|null;is_primary:boolean}[] } | null;
+  const contact = client?.client_contacts?.find((value) => value.is_primary) ?? client?.client_contacts?.[0];
+  const deadline = sheet?.validation_deadline_at ? new Intl.DateTimeFormat("fr-FR", { dateStyle:"long", timeStyle:"short", timeZone:"Europe/Paris" }).format(new Date(sheet.validation_deadline_at)) : "l’échéance convenue";
+  const messageBody = `Bonjour ${contact?.first_name ?? ""},\n\nNous avons corrigé votre demande concernant le planning de ${client?.name ?? "votre entreprise"}, semaine ${sheet?.iso_week ?? ""}.\n\nVous pouvez consulter la nouvelle version et la valider ici :\n${link.reviewUrl}\n\nMerci de nous confirmer que tout vous convient avant ${deadline}.\n\n${profile.full_name} — LYFTT`;
+
+  revalidatePath(`/retours/${input.ticketId}`);
+  return { ok:true, message:"Correction enregistrée. Le message client est prêt.", reviewUrl:link.reviewUrl, messageBody, whatsappUrl:whatsappLink(messageBody, contact?.phone ?? undefined) };
+}
+
+const correctionDispatchSchema = z.object({
+  ticketId:z.string().uuid(), sheetId:z.string().uuid(), body:z.string().min(1), recipientLabel:z.string().max(200).optional(),
+});
+
+export async function sendCorrectionToClient(formData: FormData): Promise<InternalActionResult> {
+  const profile = await requireProfile();
+  const parsed = correctionDispatchSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { ok:false, message:"Envoi non enregistrable." };
+  const admin = createSupabaseAdminClient();
+  const { data:sheet } = await admin.from("weekly_sheets").select("current_version_id, clients ( client_contacts ( phone, is_primary ) )").eq("id", parsed.data.sheetId).single();
+  if (!sheet?.current_version_id) return { ok:false, message:"Générez d’abord la version corrigée." };
+
+  await admin.from("client_message_dispatches").insert({ weekly_sheet_id:parsed.data.sheetId, sheet_version_id:sheet.current_version_id, template_type:"after_corrections", channel:"whatsapp", recipient_label:parsed.data.recipientLabel ?? null, rendered_body:parsed.data.body, sent_by:profile.id });
+  await admin.from("weekly_sheet_versions").update({ status:"sent", sent_to_client_at:new Date().toISOString() }).eq("id", sheet.current_version_id);
+  await admin.from("client_tickets").update({ status:"sent_back_to_client" }).eq("id", parsed.data.ticketId);
+  await admin.from("weekly_sheet_items").update({ approval_status:"resent" }).eq("weekly_sheet_id", parsed.data.sheetId).eq("approval_status", "corrected");
+  await admin.from("weekly_sheets").update({ status:"awaiting_revalidation", sent_to_client_at:new Date().toISOString() }).eq("id", parsed.data.sheetId);
+
+  const client = sheet.clients as unknown as { client_contacts:{phone:string|null;is_primary:boolean}[] } | null;
+  const contact = client?.client_contacts?.find((value) => value.is_primary) ?? client?.client_contacts?.[0];
+  revalidatePath(`/retours/${parsed.data.ticketId}`);
+  revalidatePath(`/fiches/${parsed.data.sheetId}`);
+  return { ok:true, message:"Envoi enregistré. Ouverture de WhatsApp…", whatsappUrl:whatsappLink(parsed.data.body, contact?.phone ?? undefined) };
 }
 
 /** §14 — refuse silencieusement d'envoyer un export dépassé sans confirmation. */

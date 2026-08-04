@@ -1,147 +1,71 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import {
-  addTicketComment,
-  generateCorrectedVersion,
-  transitionTicket,
-  type InternalActionResult,
-} from "@/lib/internal/actions";
+import { addTicketComment, prepareCorrectionForClient, sendCorrectionToClient, transitionTicket, type InternalActionResult } from "@/lib/internal/actions";
+import { Icon } from "@/components/Icon";
 
-interface Transition {
-  to: string;
-  label: string;
-  requiresReason: boolean;
-}
+interface Transition { to:string; label:string; requiresReason:boolean }
 
-/** §10 — Actions disponibles selon le statut et le rôle. */
-export function TicketActions({
-  ticketId,
-  sheetId,
-  transitions,
-}: {
-  ticketId: string;
-  sheetId: string;
-  transitions: Transition[];
+export function TicketActions({ ticketId, ticketNumber, sheetId, item, category, status, clientName, transitions }: {
+  ticketId:string; ticketNumber:string; sheetId:string; category:string; status:string; clientName:string;
+  item:{ id:string; caption:string; hashtags:string[]; scheduledDate:string } | null;
+  transitions:Transition[];
 }) {
   const [pending, startTransition] = useTransition();
-  const [selected, setSelected] = useState<Transition | null>(null);
   const [feedback, setFeedback] = useState<InternalActionResult | null>(null);
+  const [message, setMessage] = useState("");
+  const [copied, setCopied] = useState(false);
+  const prepared = Boolean(message) || ["new_version_generated", "sent_back_to_client", "approved_by_client", "closed"].includes(status);
+  const sent = ["sent_back_to_client", "approved_by_client", "closed"].includes(status);
+  const approved = ["approved_by_client", "closed"].includes(status);
 
-  const run = (action: () => Promise<InternalActionResult>) => {
-    startTransition(async () => {
-      const result = await action();
-      setFeedback(result);
-      if (result.ok) setSelected(null);
-    });
-  };
+  const run = (action:()=>Promise<InternalActionResult>, onSuccess?:(result:InternalActionResult)=>void) => startTransition(async()=>{
+    const result = await action(); setFeedback(result); if (result.ok) onSuccess?.(result);
+  });
 
-  return (
-    <section className="card p-4">
-      <h2 className="text-sm font-semibold">Actions</h2>
-
-      {feedback?.message && (
-        <p
-          className={`mt-2 rounded-md border px-3 py-2 text-xs ${
-            feedback.ok
-              ? "border-state-approved/30 bg-state-approved/5 text-state-approved"
-              : "border-state-changes/30 bg-state-changes/5 text-state-changes"
-          }`}
-        >
-          {feedback.message}
-        </p>
-      )}
-
-      <div className="mt-3 flex flex-col gap-2">
-        {transitions.map((transition) => (
-          <button
-            key={transition.to}
-            type="button"
-            className="btn-secondary justify-start"
-            disabled={pending}
-            onClick={() => {
-              setFeedback(null);
-              if (transition.requiresReason) {
-                setSelected(transition);
-                return;
-              }
-              const formData = new FormData();
-              formData.set("ticketId", ticketId);
-              formData.set("nextStatus", transition.to);
-              run(() => transitionTicket(formData));
-            }}
-          >
-            {transition.label}
-          </button>
-        ))}
-      </div>
-
-      {selected && (
-        <form
-          action={(formData) => {
-            formData.set("ticketId", ticketId);
-            formData.set("nextStatus", selected.to);
-            run(() => transitionTicket(formData));
-          }}
-          className="mt-3 space-y-2 border-t border-line pt-3"
-        >
-          <label className="label" htmlFor="reason">
-            Justification — {selected.label}
-          </label>
-          <textarea id="reason" name="reason" rows={3} required className="field" />
-          <div className="flex gap-2">
-            <button type="submit" className="btn-primary" disabled={pending}>
-              Confirmer
-            </button>
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={() => setSelected(null)}
-            >
-              Annuler
-            </button>
-          </div>
-        </form>
-      )}
-
-      <form
-        action={(formData) => {
-          formData.set("sheetId", sheetId);
-          formData.set("ticketId", ticketId);
-          run(() => generateCorrectedVersion(formData));
-        }}
-        className="mt-4 space-y-2 border-t border-line pt-3"
-      >
-        <label className="label" htmlFor="summary">
-          Générer la version corrigée
-        </label>
-        <input
-          id="summary"
-          name="summary"
-          className="field"
-          placeholder="Motif (ex. remplacement de la photo du mardi)"
-        />
-        <button type="submit" className="btn-primary w-full" disabled={pending}>
-          Générer la version corrigée
-        </button>
-      </form>
-
-      <form
-        action={(formData) => {
-          formData.set("ticketId", ticketId);
-          run(() => addTicketComment(formData));
-        }}
-        className="mt-4 space-y-2 border-t border-line pt-3"
-      >
-        <label className="label" htmlFor="body">
-          Commentaire interne
-        </label>
-        <textarea id="body" name="body" rows={3} className="field" />
-        <input type="hidden" name="visibility" value="internal" />
-        <button type="submit" className="btn-secondary w-full" disabled={pending}>
-          Ajouter
-        </button>
-      </form>
+  return <div className="space-y-5">
+    <section className="card overflow-hidden">
+      <div className="border-b p-4"><p className="eyebrow">Parcours de correction</p><h2 className="mt-1 font-semibold">4 étapes, sans changement d’écran</h2></div>
+      <ol className="grid grid-cols-4 gap-1 p-3" aria-label="Progression du ticket">
+        <Step number="1" label="Demande" complete />
+        <Step number="2" label="Correction" complete={prepared}/>
+        <Step number="3" label="Envoi" complete={sent}/>
+        <Step number="4" label="Validation" complete={approved}/>
+      </ol>
     </section>
-  );
+
+    {feedback?.message && <p role="status" className={`rounded-xl border px-4 py-3 text-sm ${feedback.ok ? "border-state-approved/30 bg-state-approved/5 text-state-approved" : "border-state-changes/30 bg-state-changes/5 text-state-changes"}`}>{feedback.message}</p>}
+
+    {!sent && <section className="card p-4 sm:p-5">
+      <div className="flex items-start gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#edf4ff] text-sm font-bold text-[#0759e6]">2</span><div><h2 className="font-semibold">Appliquer la correction</h2><p className="mt-1 text-xs text-ink-faint">Modifiez directement les éléments concernés. La nouvelle version et le lien client seront créés ensemble.</p></div></div>
+      <form action={(formData)=>{ formData.set("ticketId",ticketId); formData.set("sheetId",sheetId); if(item) formData.set("itemId",item.id); run(()=>prepareCorrectionForClient(formData),(result)=>setMessage(result.messageBody ?? "")); }} className="mt-5 space-y-4">
+        {!item && <><input type="hidden" name="caption" value=""/><input type="hidden" name="hashtags" value=""/></>}
+        {item && <>
+          <div><label className="label" htmlFor="correctedCaption">Texte corrigé</label><textarea id="correctedCaption" name="caption" rows={7} className="field" defaultValue={item.caption}/></div>
+          <div><label className="label" htmlFor="correctedHashtags">Hashtags corrigés</label><textarea id="correctedHashtags" name="hashtags" rows={2} className="field" defaultValue={item.hashtags.join(" ")}/></div>
+          <div><label className="label" htmlFor="correctedDate">Date de publication</label><input id="correctedDate" name="scheduledDate" type="date" className="field" defaultValue={item.scheduledDate}/></div>
+        </>}
+        {["graphic","video"].includes(category) && <div><label className="label" htmlFor="mediaExternalUrl">Lien du média corrigé</label><input id="mediaExternalUrl" name="mediaExternalUrl" type="url" className="field" placeholder="https://drive.google.com/…"/><p className="mt-1 text-xs text-ink-faint">Collez le lien du nouveau visuel ou de la nouvelle vidéo si le fichier est hébergé ailleurs.</p></div>}
+        <div><label className="label" htmlFor="summary">Résumé de la correction</label><input id="summary" name="summary" required className="field" placeholder="Ex. texte raccourci et photo remplacée"/></div>
+        <button type="submit" className="btn-primary w-full" disabled={pending}><Icon name="spark" className="h-4 w-4"/>{pending ? "Préparation…" : "Enregistrer et préparer l’envoi"}</button>
+      </form>
+    </section>}
+
+    {message && !sent && <section className="card reveal-panel border-[#b9d2ff] p-4 sm:p-5">
+      <div className="flex items-start gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#edf4ff] text-sm font-bold text-[#0759e6]">3</span><div><h2 className="font-semibold">Envoyer au client</h2><p className="mt-1 text-xs text-ink-faint">Le message contient déjà le lien de validation de la nouvelle version.</p></div></div>
+      <textarea className="field mt-4 font-mono text-xs" rows={11} value={message} onChange={(event)=>{setMessage(event.target.value);setCopied(false)}} aria-label="Message WhatsApp prêt à envoyer"/>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2"><button type="button" className="btn-secondary" onClick={async()=>{await navigator.clipboard.writeText(message);setCopied(true)}}>{copied ? "Message copié" : "Copier le message"}</button><button type="button" className="btn-primary" disabled={pending} onClick={()=>{ const formData=new FormData();formData.set("ticketId",ticketId);formData.set("sheetId",sheetId);formData.set("body",message);formData.set("recipientLabel",clientName);run(()=>sendCorrectionToClient(formData),(result)=>{if(result.whatsappUrl) window.location.assign(result.whatsappUrl)}) }}><Icon name="message" className="h-4 w-4"/>Envoyer sur WhatsApp</button></div>
+    </section>}
+
+    {sent && !approved && <section className="rounded-2xl border border-[#cfe0ff] bg-[#f4f8ff] p-5"><p className="eyebrow text-[#0759e6]">Étape 4</p><h2 className="mt-1 font-semibold">En attente du client</h2><p className="mt-2 text-sm text-ink-soft">Le client a reçu la nouvelle version. Dès qu’il clique sur « Valider », le ticket et la fiche se mettent à jour automatiquement.</p></section>}
+    {approved && <section className="rounded-2xl border border-state-approved/30 bg-state-approved/5 p-5 text-state-approved"><Icon name="check" className="h-6 w-6"/><h2 className="mt-3 font-semibold">Correction validée</h2><p className="mt-1 text-sm">Le client a validé la nouvelle fiche. Ce ticket peut être archivé.</p></section>}
+
+    <details className="card p-4"><summary className="cursor-pointer text-sm font-semibold">Actions avancées et notes internes</summary><div className="mt-4 space-y-4 border-t pt-4">
+      <div className="flex flex-col gap-2">{transitions.map((transition)=><button key={transition.to} type="button" className="btn-secondary justify-start" disabled={pending || transition.requiresReason} onClick={()=>{const data=new FormData();data.set("ticketId",ticketId);data.set("nextStatus",transition.to);run(()=>transitionTicket(data))}}>{transition.label}{transition.requiresReason && " — depuis la vue avancée"}</button>)}</div>
+      <form action={(data)=>{data.set("ticketId",ticketId);run(()=>addTicketComment(data))}} className="space-y-2"><label className="label" htmlFor="internalComment">Note interne</label><textarea id="internalComment" name="body" rows={3} className="field"/><input type="hidden" name="visibility" value="internal"/><button className="btn-secondary" disabled={pending}>Ajouter la note</button></form>
+      <p className="text-xs text-ink-faint">Ticket {ticketNumber}</p>
+    </div></details>
+  </div>;
 }
+
+function Step({number,label,complete}:{number:string;label:string;complete:boolean}) { return <li className="min-w-0 text-center"><span className={`mx-auto grid h-8 w-8 place-items-center rounded-full text-xs font-bold ${complete ? "bg-[#1468ff] text-white" : "bg-canvas text-ink-faint"}`}>{complete ? <Icon name="check" className="h-4 w-4"/> : number}</span><span className="mt-1 block truncate text-[10px] text-ink-faint">{label}</span></li> }
