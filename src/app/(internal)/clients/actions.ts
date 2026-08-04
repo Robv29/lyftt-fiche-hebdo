@@ -35,6 +35,9 @@ const clientSchema = z.object({
   tacitNotice: z.string().trim().max(500).optional(),
   whatsappGroup: z.string().trim().max(120).optional(),
   communityManagerId: z.string().uuid().optional().or(z.literal("")),
+  photoPerMonth: z.coerce.number().int().min(0).max(31),
+  videoPerMonth: z.coerce.number().int().min(0).max(31),
+  visualPerMonth: z.coerce.number().int().min(0).max(31),
 });
 
 /** Identifiant lisible et unique, dérivé du nom. */
@@ -65,6 +68,9 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
     tacitNotice: formData.get("tacitNotice") ?? undefined,
     whatsappGroup: formData.get("whatsappGroup") ?? undefined,
     communityManagerId: formData.get("communityManagerId") ?? undefined,
+    photoPerMonth: formData.get("photoPerMonth"),
+    videoPerMonth: formData.get("videoPerMonth"),
+    visualPerMonth: formData.get("visualPerMonth"),
   });
 
   if (!parsed.success) {
@@ -122,7 +128,14 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
   // Les réseaux du client servent de valeur par défaut aux nouvelles fiches.
   await admin
     .from("clients")
-    .update({ notes: JSON.stringify({ defaultNetworks: input.networks }) })
+    .update({ notes: JSON.stringify({
+      defaultNetworks: input.networks,
+      monthlyCadence: {
+        photo: input.photoPerMonth,
+        video: input.videoPerMonth,
+        visual: input.visualPerMonth,
+      },
+    }) })
     .eq("id", client.id);
 
   revalidatePath("/clients");

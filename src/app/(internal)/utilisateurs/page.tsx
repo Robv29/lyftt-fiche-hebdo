@@ -22,7 +22,7 @@ export default async function UsersPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold">Utilisateurs</h1>
+        <p className="eyebrow">Administration</p><h1 className="page-title mt-1">Équipe</h1>
         <p className="mt-1 text-sm text-ink-soft">
           Les comptes de l&apos;équipe LYFTT et leurs droits.
         </p>

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { deadlineState, formatPeriod } from "@/lib/domain/deadline";
 import { sheetStatusLabel } from "@/lib/domain/types";
+import { Icon } from "@/components/Icon";
 
 export default async function SheetsPage() {
   const supabase = await createSupabaseServerClient();
@@ -16,17 +17,15 @@ export default async function SheetsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">Fiches hebdomadaires</h1>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div><p className="eyebrow">Production éditoriale</p><h1 className="page-title mt-1">Planning</h1><p className="mt-2 text-sm text-ink-soft">Toutes les semaines, du brouillon à la validation client.</p></div>
         <Link href="/fiches/nouvelle" className="btn-primary">
-          Nouvelle fiche
+          <Icon name="plus" className="h-4 w-4"/>Nouvelle fiche
         </Link>
       </div>
 
       {(sheets ?? []).length === 0 ? (
-        <p className="card px-4 py-8 text-center text-sm text-ink-faint">
-          Aucune fiche pour le moment.
-        </p>
+        <div className="card flex min-h-64 flex-col items-center justify-center p-8 text-center"><span className="mb-4 grid h-12 w-12 place-items-center rounded-2xl bg-[#edf4ff] text-[#0759e6]"><Icon name="calendar" className="h-6 w-6"/></span><h2 className="font-semibold">Le planning est vide</h2><p className="mt-1 max-w-sm text-sm text-ink-faint">Créez une fiche : le rythme du client préparera automatiquement le bon nombre de contenus.</p><Link href="/fiches/nouvelle" className="btn-primary mt-5">Créer la première fiche</Link></div>
       ) : (
         <ul className="space-y-2">
           {(sheets ?? []).map((sheet) => {
@@ -36,10 +35,10 @@ export default async function SheetsPage() {
               : null;
 
             return (
-              <li key={sheet.id} className="card">
+              <li key={sheet.id} className="card lift-card overflow-hidden">
                 <Link
                   href={`/fiches/${sheet.id}`}
-                  className="flex flex-wrap items-baseline justify-between gap-2 px-4 py-3 hover:bg-canvas"
+                  className="flex min-h-16 flex-wrap items-center justify-between gap-3 px-5 py-3 hover:bg-canvas"
                 >
                   <span className="text-sm">
                     <strong>{client?.name ?? "Client"}</strong>{" "}
@@ -61,6 +60,7 @@ export default async function SheetsPage() {
                       </span>
                     )}
                   </span>
+                  <Icon name="arrow" className="h-4 w-4 text-ink-faint"/>
                 </Link>
               </li>
             );

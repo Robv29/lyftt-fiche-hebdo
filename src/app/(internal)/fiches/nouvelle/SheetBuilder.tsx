@@ -9,9 +9,11 @@ import {
   PUBLICATION_TYPE_LABELS,
   SOCIAL_NETWORKS,
   SOCIAL_NETWORK_LABELS,
+  type SocialNetwork,
   type MediaFormat,
   type PublicationType,
 } from "@/lib/domain/types";
+import { Icon } from "@/components/Icon";
 
 interface DraftItem {
   key: string;
@@ -38,7 +40,7 @@ export function SheetBuilder({
   clients,
   preselectedClientId,
 }: {
-  clients: { id: string; name: string }[];
+  clients: { id: string; name: string; defaultNetworks: string[]; monthlyContents: number }[];
   preselectedClientId: string | null;
 }) {
   const router = useRouter();
@@ -52,6 +54,11 @@ export function SheetBuilder({
 
   const [isoYear, setIsoYear] = useState(nextWeek.year);
   const [isoWeek, setIsoWeek] = useState(nextWeek.week);
+  const initialClient = clients.find((client) => client.id === preselectedClientId) ?? clients[0];
+  const [selectedClientId, setSelectedClientId] = useState(initialClient?.id ?? "");
+  const [selectedNetworks, setSelectedNetworks] = useState<SocialNetwork[]>(
+    (initialClient?.defaultNetworks.filter((network): network is SocialNetwork => SOCIAL_NETWORKS.includes(network as SocialNetwork)) ?? ["instagram", "facebook"]),
+  );
 
   const monday = useMemo(() => isoWeekStart(isoYear, isoWeek), [isoYear, isoWeek]);
 
@@ -83,7 +90,26 @@ export function SheetBuilder({
   const update = (key: string, patch: Partial<DraftItem>) =>
     setItems((prev) => prev.map((i) => (i.key === key ? { ...i, ...patch } : i)));
 
+  const resizeSchedule = (size: number) => setItems((current) => {
+    if (current.length >= size) return current.slice(0, size);
+    return [...current, ...Array.from({ length: size - current.length }, (_, index) => ({
+      key: `preset-${Date.now()}-${index}`, scheduledDate:"", scheduledTime:"18:00",
+      publicationType:"post" as PublicationType, format:"photo" as MediaFormat, caption:"", hashtags:"",
+    }))];
+  });
+
+  const selectClient = (clientId: string) => {
+    setSelectedClientId(clientId);
+    const client = clients.find((candidate) => candidate.id === clientId);
+    if (!client) return;
+    const defaults = client.defaultNetworks.filter((network): network is SocialNetwork => SOCIAL_NETWORKS.includes(network as SocialNetwork));
+    setSelectedNetworks(defaults.length ? defaults : ["instagram", "facebook"]);
+    if (client.monthlyContents > 0) resizeSchedule(Math.max(1, Math.round(client.monthlyContents / 4)));
+  };
+
   const periodLabel = `${monday.toISOString().slice(0, 10)} → ${dayOffset(6)}`;
+  const completedItems = resolvedItems.filter((item) => item.caption.trim()).length;
+  const progress = resolvedItems.length ? Math.round((completedItems / resolvedItems.length) * 100) : 0;
 
   return (
     <form
@@ -115,7 +141,9 @@ export function SheetBuilder({
         </p>
       )}
 
-      <div className="card grid gap-4 p-4 sm:grid-cols-3">
+      <div className="card overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b px-5 py-4"><div><p className="eyebrow">Étape 1</p><h2 className="mt-1 font-semibold">Cadre de la semaine</h2></div><span className="rounded-full bg-[#edf4ff] px-3 py-1 text-xs font-semibold text-[#0759e6]">{periodLabel}</span></div>
+        <div className="grid gap-4 p-5 sm:grid-cols-3">
         <div>
           <label className="label" htmlFor="clientId">
             Client
@@ -124,7 +152,8 @@ export function SheetBuilder({
             id="clientId"
             name="clientId"
             className="field"
-            defaultValue={preselectedClientId ?? clients[0]?.id}
+            value={selectedClientId}
+            onChange={(event) => selectClient(event.target.value)}
           >
             {clients.map((c) => (
               <option key={c.id} value={c.id}>
@@ -163,19 +192,20 @@ export function SheetBuilder({
             onChange={(e) => setIsoYear(Number(e.target.value))}
           />
         </div>
-        <p className="text-xs text-ink-faint sm:col-span-3">Période : {periodLabel}</p>
+        </div>
       </div>
 
-      <fieldset className="card p-4">
-        <legend className="label">Réseaux</legend>
-        <div className="flex flex-wrap gap-3">
+      <fieldset className="card p-5">
+        <legend className="eyebrow px-1">Étape 2 · Réseaux de diffusion</legend>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {SOCIAL_NETWORKS.map((network) => (
-            <label key={network} className="flex items-center gap-1.5 text-sm">
+            <label key={network} className="choice-chip">
               <input
                 type="checkbox"
                 name="networks"
                 value={network}
-                defaultChecked={network === "instagram" || network === "facebook"}
+                checked={selectedNetworks.includes(network)}
+                onChange={(event) => setSelectedNetworks((current) => event.target.checked ? [...current, network] : current.filter((value) => value !== network))}
               />
               {SOCIAL_NETWORK_LABELS[network]}
             </label>
@@ -183,11 +213,14 @@ export function SheetBuilder({
         </div>
       </fieldset>
 
-      <div className="space-y-3">
+      <section className="space-y-4">
+        <div className="flex flex-wrap items-end justify-between gap-4"><div><p className="eyebrow">Étape 3</p><h2 className="mt-1 text-lg font-semibold">Contenus à produire</h2><p className="mt-1 text-sm text-ink-faint">Choisissez un rythme, puis ajustez chaque publication.</p></div><div className="flex gap-2" aria-label="Rythme de publication"><button type="button" className="btn-secondary text-xs" onClick={()=>resizeSchedule(3)}>Léger · 3</button><button type="button" className="btn-secondary text-xs" onClick={()=>resizeSchedule(5)}>Standard · 5</button></div></div>
+        <div className="h-1.5 overflow-hidden rounded-full bg-[#e9edf3]" aria-label={`${progress}% des textes renseignés`} role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}><span className="block h-full rounded-full bg-[#1468ff] transition-[transform] duration-200" style={{ transform:`translateX(${progress - 100}%)` }}/></div>
+        <div className="space-y-3">
         {resolvedItems.map((item, index) => (
-          <div key={item.key} className="card space-y-3 p-4">
+          <div key={item.key} className="card reveal-panel space-y-4 p-4 sm:p-5">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">Publication {index + 1}</span>
+              <div className="flex items-center gap-3"><span className="grid h-8 w-8 place-items-center rounded-lg bg-[#edf4ff] text-xs font-bold text-[#0759e6]">{index + 1}</span><div><span className="text-sm font-semibold">Publication {index + 1}</span><p className="text-xs text-ink-faint">{item.caption.trim() ? "Texte renseigné" : "À compléter"}</p></div></div>
               {items.length > 1 && (
                 <button
                   type="button"
@@ -203,17 +236,20 @@ export function SheetBuilder({
               <input
                 type="date"
                 className="field"
+                aria-label={`Date de la publication ${index + 1}`}
                 value={item.scheduledDate}
                 onChange={(e) => update(item.key, { scheduledDate: e.target.value })}
               />
               <input
                 type="time"
                 className="field"
+                aria-label={`Heure de la publication ${index + 1}`}
                 value={item.scheduledTime}
                 onChange={(e) => update(item.key, { scheduledTime: e.target.value })}
               />
               <select
                 className="field"
+                aria-label={`Type de la publication ${index + 1}`}
                 value={item.publicationType}
                 onChange={(e) =>
                   update(item.key, { publicationType: e.target.value as PublicationType })
@@ -227,6 +263,7 @@ export function SheetBuilder({
               </select>
               <select
                 className="field"
+                aria-label={`Format de la publication ${index + 1}`}
                 value={item.format}
                 onChange={(e) => update(item.key, { format: e.target.value as MediaFormat })}
               >
@@ -241,19 +278,22 @@ export function SheetBuilder({
             <textarea
               rows={3}
               className="field"
+              aria-label={`Texte de la publication ${index + 1}`}
               placeholder="Rédaction — texte de la publication"
               value={item.caption}
               onChange={(e) => update(item.key, { caption: e.target.value })}
             />
             <input
               className="field"
+              aria-label={`Hashtags de la publication ${index + 1}`}
               placeholder="#Guinguette #Montauban #TarnEtGaronne"
               value={item.hashtags}
               onChange={(e) => update(item.key, { hashtags: e.target.value })}
             />
           </div>
         ))}
-      </div>
+        </div>
+      </section>
 
       <div className="flex flex-wrap gap-2">
         <button
@@ -274,10 +314,10 @@ export function SheetBuilder({
             ])
           }
         >
-          Ajouter une publication
+          <Icon name="plus" className="h-4 w-4"/>Ajouter une publication
         </button>
         <button type="submit" className="btn-primary" disabled={pending}>
-          {pending ? "Création…" : "Créer la fiche"}
+          {pending ? "Création…" : "Créer la fiche et continuer"}<Icon name="arrow" className="h-4 w-4"/>
         </button>
       </div>
 

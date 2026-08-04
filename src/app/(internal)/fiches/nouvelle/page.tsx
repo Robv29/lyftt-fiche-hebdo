@@ -16,7 +16,7 @@ export default async function NewSheetPage({
 
   const { data: clients } = await supabase
     .from("clients")
-    .select("id, name")
+    .select("id, name, notes")
     .eq("is_active", true)
     .order("name", { ascending: true });
 
@@ -37,17 +37,26 @@ export default async function NewSheetPage({
   return (
     <div className="space-y-6">
       <div>
-        <Link href="/fiches" className="text-sm text-ink-soft hover:text-ink">
+        <Link href="/fiches" className="inline-flex min-h-11 items-center text-sm text-ink-soft hover:text-ink">
           ← Fiches
         </Link>
-        <h1 className="mt-2 text-xl font-semibold">Nouvelle fiche hebdomadaire</h1>
+        <p className="eyebrow mt-2">Assistant de production</p><h1 className="page-title mt-1">Nouvelle fiche</h1>
         <p className="mt-1 text-sm text-ink-soft">
           La période et l&apos;échéance de validation sont déduites de la semaine choisie.
         </p>
       </div>
 
       <SheetBuilder
-        clients={clients.map((c) => ({ id: c.id, name: c.name }))}
+        clients={clients.map((c) => {
+          let settings: { defaultNetworks?: string[]; monthlyCadence?: Record<string, number> } = {};
+          try { settings = typeof c.notes === "string" ? JSON.parse(c.notes) : {}; } catch { settings = {}; }
+          return {
+            id: c.id,
+            name: c.name,
+            defaultNetworks: settings.defaultNetworks ?? ["instagram", "facebook"],
+            monthlyContents: Object.values(settings.monthlyCadence ?? {}).reduce((sum, value) => sum + Number(value || 0), 0),
+          };
+        })}
         preselectedClientId={client ?? null}
       />
     </div>

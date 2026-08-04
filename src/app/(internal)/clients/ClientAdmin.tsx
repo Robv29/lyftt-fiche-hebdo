@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState, useTransition } from "react";
 import { createClient, setClientActive, type ClientActionResult } from "./actions";
 import { SOCIAL_NETWORKS, SOCIAL_NETWORK_LABELS } from "@/lib/domain/types";
+import { Icon } from "@/components/Icon";
 
 const WEEKDAYS = [
   { value: 1, label: "Lundi" },
@@ -59,22 +60,19 @@ export function ClientAdmin({
         </p>
       )}
 
-      <button
-        type="button"
-        className="btn-primary"
-        onClick={() => {
-          setShowForm(!showForm);
-          setFeedback(null);
-        }}
-      >
-        {showForm ? "Annuler" : "Ajouter un client"}
-      </button>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-ink-faint">{clients.filter((client) => client.isActive).length} client{clients.length > 1 ? "s" : ""} actif{clients.length > 1 ? "s" : ""}</p>
+        <button type="button" className={showForm ? "btn-secondary" : "btn-primary"} aria-expanded={showForm} onClick={() => { setShowForm(!showForm); setFeedback(null); }}>
+          <Icon name={showForm ? "check" : "plus"} className="h-4 w-4"/>{showForm ? "Fermer" : "Nouveau client"}
+        </button>
+      </div>
 
       {showForm && (
         <form
           action={(formData) => run(() => createClient(formData))}
-          className="card space-y-5 p-4"
+          className="card reveal-panel space-y-7 p-5 sm:p-7"
         >
+          <div><p className="eyebrow">Nouveau dossier</p><h2 className="mt-1 text-lg font-semibold">Informations essentielles</h2><p className="mt-1 text-sm text-ink-faint">Tout pourra être complété ensuite. Commencez par ce qui règle le planning.</p></div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <label className="label" htmlFor="name">
@@ -108,9 +106,9 @@ export function ClientAdmin({
 
           <fieldset>
             <legend className="label">Réseaux</legend>
-            <div className="flex flex-wrap gap-3">
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
               {SOCIAL_NETWORKS.map((network) => (
-                <label key={network} className="flex items-center gap-1.5 text-sm">
+                <label key={network} className="choice-chip">
                   <input
                     type="checkbox"
                     name="networks"
@@ -120,6 +118,16 @@ export function ClientAdmin({
                   {SOCIAL_NETWORK_LABELS[network]}
                 </label>
               ))}
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend className="label">Rythme mensuel vendu</legend>
+            <p className="mb-3 text-xs text-ink-faint">Ces volumes prépareront automatiquement les futures fiches. Indiquez 0 pour une prestation non incluse.</p>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div><label className="label" htmlFor="photoPerMonth">Photos</label><input id="photoPerMonth" name="photoPerMonth" type="number" min="0" max="31" defaultValue="4" className="field"/></div>
+              <div><label className="label" htmlFor="videoPerMonth">Vidéos / Reels</label><input id="videoPerMonth" name="videoPerMonth" type="number" min="0" max="31" defaultValue="2" className="field"/></div>
+              <div><label className="label" htmlFor="visualPerMonth">Visuels / carrousels</label><input id="visualPerMonth" name="visualPerMonth" type="number" min="0" max="31" defaultValue="2" className="field"/></div>
             </div>
           </fieldset>
 
@@ -190,12 +198,14 @@ export function ClientAdmin({
           Aucun client. Commencez par en ajouter un.
         </p>
       ) : (
-        <ul className="space-y-2">
+        <ul className="grid gap-3 lg:grid-cols-2">
           {clients.map((client) => (
-            <li key={client.id} className="card px-4 py-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm font-medium">
+            <li key={client.id} className="card lift-card p-5">
+              <div className="flex h-full flex-col gap-5">
+                <div className="flex items-start gap-3">
+                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[#edf2f8] text-sm font-bold text-[#46546a]">{client.name.slice(0,2).toUpperCase()}</span>
+                  <div className="min-w-0 flex-1">
+                  <p className="font-semibold tracking-[-.015em]">
                     {client.name}
                     {!client.isActive && (
                       <span className="ml-2 badge bg-canvas text-ink-faint">Archivé</span>
@@ -206,24 +216,27 @@ export function ClientAdmin({
                       </span>
                     )}
                   </p>
-                  <p className="text-xs text-ink-faint">
+                  <p className="mt-1 text-xs leading-relaxed text-ink-faint">
                     {client.contactName ?? "Aucun contact"} · échéance{" "}
                     {WEEKDAYS.find((d) => d.value === client.deadlineWeekday)?.label.toLowerCase()}{" "}
                     {client.deadlineTime.slice(0, 5).replace(":", " h ")}
                   </p>
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <Link href={`/fiches/nouvelle?client=${client.id}`} className="btn-secondary py-1 text-xs">
-                    Nouvelle fiche
+                <div className="mt-auto flex items-center gap-2 border-t pt-4">
+                  <Link href={`/clients/${client.id}`} className="btn-secondary flex-1 text-xs">Voir le dossier</Link>
+                  <Link href={`/fiches/nouvelle?client=${client.id}`} className="btn-primary flex-1 text-xs">
+                    <Icon name="plus" className="h-3.5 w-3.5"/>Créer la fiche
                   </Link>
                   <button
                     type="button"
-                    className="btn-secondary py-1 text-xs"
+                    className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border bg-surface text-ink-faint transition-colors hover:text-state-changes"
                     disabled={pending}
                     onClick={() => run(() => setClientActive(client.id, !client.isActive))}
+                    aria-label={client.isActive ? `Archiver ${client.name}` : `Réactiver ${client.name}`}
                   >
-                    {client.isActive ? "Archiver" : "Réactiver"}
+                    <Icon name={client.isActive ? "layers" : "check"} className="h-4 w-4"/>
                   </button>
                 </div>
               </div>
