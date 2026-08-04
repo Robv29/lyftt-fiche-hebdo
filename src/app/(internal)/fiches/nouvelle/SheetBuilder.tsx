@@ -6,7 +6,6 @@ import { createSheet, type SheetActionResult } from "./actions";
 import { isoWeekStart } from "@/lib/domain/deadline";
 import {
   MEDIA_FORMAT_LABELS,
-  PUBLICATION_TYPE_LABELS,
   SOCIAL_NETWORKS,
   SOCIAL_NETWORK_LABELS,
   type SocialNetwork,
@@ -19,10 +18,19 @@ interface DraftItem {
   key: string;
   scheduledDate: string;
   scheduledTime: string;
-  publicationType: PublicationType;
   format: MediaFormat;
   caption: string;
   hashtags: string;
+}
+
+/** Le format choisi suffit à déterminer le type technique attendu en base. */
+function publicationTypeForFormat(format: MediaFormat): PublicationType {
+  switch (format) {
+    case "reels": return "reel";
+    case "video": return "video";
+    case "carrousel": return "carousel";
+    default: return "post";
+  }
 }
 
 /** Semaine ISO courante, pour proposer par défaut la semaine suivante. */
@@ -74,7 +82,6 @@ export function SheetBuilder({
       key: `init-${index}`,
       scheduledDate: "",
       scheduledTime: "18:00",
-      publicationType: "post" as PublicationType,
       format: "photo" as MediaFormat,
       caption: "",
       hashtags: "",
@@ -94,7 +101,7 @@ export function SheetBuilder({
     if (current.length >= size) return current.slice(0, size);
     return [...current, ...Array.from({ length: size - current.length }, (_, index) => ({
       key: `preset-${Date.now()}-${index}`, scheduledDate:"", scheduledTime:"18:00",
-      publicationType:"post" as PublicationType, format:"photo" as MediaFormat, caption:"", hashtags:"",
+      format:"photo" as MediaFormat, caption:"", hashtags:"",
     }))];
   });
 
@@ -120,7 +127,7 @@ export function SheetBuilder({
             resolvedItems.map((i) => ({
               scheduledDate: i.scheduledDate,
               scheduledTime: i.scheduledTime,
-              publicationType: i.publicationType,
+              publicationType: publicationTypeForFormat(i.format),
               format: i.format,
               caption: i.caption,
               hashtags: i.hashtags,
@@ -232,7 +239,7 @@ export function SheetBuilder({
               )}
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-3">
               <input
                 type="date"
                 className="field"
@@ -247,20 +254,6 @@ export function SheetBuilder({
                 value={item.scheduledTime}
                 onChange={(e) => update(item.key, { scheduledTime: e.target.value })}
               />
-              <select
-                className="field"
-                aria-label={`Type de la publication ${index + 1}`}
-                value={item.publicationType}
-                onChange={(e) =>
-                  update(item.key, { publicationType: e.target.value as PublicationType })
-                }
-              >
-                {Object.entries(PUBLICATION_TYPE_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
               <select
                 className="field"
                 aria-label={`Format de la publication ${index + 1}`}
@@ -306,7 +299,6 @@ export function SheetBuilder({
                 key: `add-${Date.now()}`,
                 scheduledDate: "",
                 scheduledTime: "18:00",
-                publicationType: "post",
                 format: "photo",
                 caption: "",
                 hashtags: "",
