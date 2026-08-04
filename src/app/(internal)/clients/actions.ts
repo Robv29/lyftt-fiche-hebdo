@@ -6,7 +6,12 @@ import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/se
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sanitizeText } from "@/lib/security/sanitize";
 import { SOCIAL_NETWORKS } from "@/lib/domain/types";
-import { recommendHashtags } from "@/lib/domain/hashtags";
+import {
+  buildClientHashtagLibrary,
+  hashtagsForClientType,
+  LYFTT_CLIENT_TYPE_IDS,
+  normalizeHashtag,
+} from "@/lib/domain/hashtags";
 
 export interface ClientActionResult {
   ok: boolean;
@@ -35,6 +40,8 @@ const clientSchema = z.object({
   audience: z.string().trim().min(3, "La clientèle cible est requise.").max(300),
   brandTone: z.enum(["chaleureux", "premium", "expert", "dynamique", "institutionnel"]),
   keywords: z.string().trim().min(3, "Ajoutez au moins un mot-clé.").max(1000),
+  clientType: z.enum(LYFTT_CLIENT_TYPE_IDS),
+  customHashtags: z.array(z.string().trim().min(2, "Les 5 hashtags client sont obligatoires.").max(60)).length(5),
   networks: z.array(z.enum(SOCIAL_NETWORKS as unknown as [string, ...string[]])).min(1,
     "Sélectionnez au moins un réseau."),
   deadlineWeekday: z.coerce.number().int().min(1).max(7),
@@ -76,6 +83,8 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
     audience: formData.get("audience"),
     brandTone: formData.get("brandTone"),
     keywords: formData.get("keywords"),
+    clientType: formData.get("clientType"),
+    customHashtags: Array.from({ length: 5 }, (_, index) => formData.get(`customHashtag${index + 1}`)),
     networks: formData.getAll("networks").map(String),
     deadlineWeekday: formData.get("deadlineWeekday"),
     deadlineTime: formData.get("deadlineTime"),
@@ -93,6 +102,18 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
   }
 
   const input = parsed.data;
+  const baseHashtags = hashtagsForClientType(input.clientType);
+  const customHashtags = input.customHashtags.map(normalizeHashtag);
+  const baseHashtagKeys = new Set(baseHashtags.map((hashtag) => hashtag.toLocaleLowerCase("fr")));
+  const customHashtagKeys = customHashtags.map((hashtag) => hashtag.toLocaleLowerCase("fr"));
+  const customHashtagsAreUnique = customHashtagKeys.every((key, index) =>
+    Boolean(key) && !baseHashtagKeys.has(key) && customHashtagKeys.indexOf(key) === index,
+  );
+
+  if (!customHashtagsAreUnique) {
+    return { ok: false, message: "Les 5 hashtags client doivent être différents entre eux et des hashtags métier." };
+  }
+
   const admin = createSupabaseAdminClient();
 
   // Un slug déjà pris est suffixé plutôt que de faire échouer la création.
@@ -140,13 +161,7 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
     role: "community_manager",
   });
 
-  const recommendedHashtags = recommendHashtags({
-    brand: input.name,
-    activity: input.activity,
-    city: input.city,
-    audience: input.audience,
-    keywords: input.keywords,
-  });
+  const recommendedHashtags = buildClientHashtagLibrary(input.clientType, customHashtags);
 
   // Le profil éditorial alimente automatiquement les prochaines fiches.
   await admin
@@ -154,6 +169,7 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
     .update({ notes: JSON.stringify({
       defaultNetworks: input.networks,
       brandProfile: {
+        clientType: input.clientType,
         activity: sanitizeText(input.activity, 120),
         website: input.website,
         city: sanitizeText(input.city, 100),
@@ -162,6 +178,8 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
         tone: input.brandTone,
         keywords: sanitizeText(input.keywords, 1000),
       },
+      baseHashtags,
+      customHashtags,
       recommendedHashtags,
       monthlyCadence: {
         photo: input.photoPerMonth,

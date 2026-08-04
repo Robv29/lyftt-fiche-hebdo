@@ -1,47 +1,132 @@
-export interface HashtagProfile {
-  brand: string;
-  activity: string;
-  city: string;
-  audience: string;
-  keywords: string;
-}
+/**
+ * Référentiel éditorial LYFTT, construit à partir des métiers présentés dans
+ * les références publiques de l'agence. Il est volontairement local et fixe :
+ * aucune IA ni API externe n'intervient lors de la création d'un client.
+ */
+export const LYFTT_CLIENT_TYPE_IDS = [
+  "restaurant",
+  "bar",
+  "boucherie",
+  "commerce",
+  "cuisiniste",
+  "design",
+  "loisirs",
+  "hotel",
+  "beaute",
+  "paysagiste",
+  "artisan",
+] as const;
 
-const SECTOR_TAGS: Record<string, string[]> = {
-  restaurant: ["Restaurant", "FoodLovers", "CuisineMaison", "BonnesAdresses"],
-  bar: ["Bar", "Afterwork", "Sortir", "Convivialite"],
-  artisan: ["Artisan", "SavoirFaire", "FaitMain", "ArtisanatFrancais"],
-  immobilier: ["Immobilier", "ProjetImmobilier", "Maison", "ConseilImmobilier"],
-  beaute: ["Beaute", "BienEtre", "PrendreSoinDeSoi", "InstitutDeBeaute"],
-  coiffure: ["Coiffure", "HairStyle", "SalonDeCoiffure", "InspirationCoiffure"],
-  sport: ["Sport", "Fitness", "Motivation", "Bouger"],
-  tourisme: ["Tourisme", "VoyageEnFrance", "Decouverte", "Escapade"],
-  hotel: ["Hotel", "Sejour", "Hospitalite", "WeekendEnFrance"],
-  commerce: ["CommerceLocal", "AcheterLocal", "Proximite", "EntrepriseLocale"],
+export type LyfttClientType = (typeof LYFTT_CLIENT_TYPE_IDS)[number];
+
+export const LYFTT_CLIENT_TYPES: ReadonlyArray<{
+  id: LyfttClientType;
+  label: string;
+  examples: string;
+}> = [
+  { id: "restaurant", label: "Restaurant & brasserie", examples: "restaurant, brasserie, traiteur" },
+  { id: "bar", label: "Bar & lieu de convivialité", examples: "bar, cave, afterwork" },
+  { id: "boucherie", label: "Boucherie & métiers de bouche", examples: "boucherie, charcuterie, épicerie fine" },
+  { id: "commerce", label: "Commerce local", examples: "boutique, concept store, commerce de proximité" },
+  { id: "cuisiniste", label: "Cuisine & aménagement", examples: "cuisiniste, agencement, intérieur" },
+  { id: "design", label: "Design & création", examples: "designer, décoration, création" },
+  { id: "loisirs", label: "Loisirs & expérience", examples: "escape game, activité, événement" },
+  { id: "hotel", label: "Hôtel, gîte & tourisme", examples: "hôtel, gîte, hébergement" },
+  { id: "beaute", label: "Beauté & bien-être", examples: "institut, spa, soins" },
+  { id: "paysagiste", label: "Paysage & extérieur", examples: "paysagiste, jardin, terrasse" },
+  { id: "artisan", label: "Artisan & entreprise locale", examples: "bâtiment, atelier, savoir-faire" },
+];
+
+const LYFTT_HASHTAG_PRESETS: Record<LyfttClientType, readonly string[]> = {
+  restaurant: [
+    "#Restaurant", "#RestaurantToulouse", "#RestaurantMontauban", "#CuisineMaison", "#FaitMaison",
+    "#ProduitsLocaux", "#BonnesAdresses", "#GastronomieLocale", "#TableGourmande", "#ArtisanDuGout",
+    "#SortirAToulouse", "#SortirAMontauban", "#CommerceLocal", "#Occitanie", "#SavoirFaire",
+  ],
+  bar: [
+    "#Bar", "#BarToulouse", "#BarMontauban", "#Afterwork", "#Convivialite",
+    "#SortirAToulouse", "#SortirAMontauban", "#BonnesAdresses", "#Apero", "#Cocktails",
+    "#Vins", "#VieLocale", "#CommerceLocal", "#Occitanie", "#EntreAmis",
+  ],
+  boucherie: [
+    "#Boucherie", "#BoucherieArtisanale", "#ArtisanBoucher", "#MetiersDeBouche", "#ViandeFrancaise",
+    "#ProduitsLocaux", "#CircuitCourt", "#QualiteArtisanale", "#SavoirFaire", "#CommerceLocal",
+    "#BoucherieToulouse", "#BoucherieMontauban", "#GastronomieLocale", "#Occitanie", "#MangerLocal",
+  ],
+  commerce: [
+    "#CommerceLocal", "#AcheterLocal", "#BoutiqueLocale", "#Commercant", "#Proximite",
+    "#EntrepriseLocale", "#Toulouse", "#Montauban", "#Occitanie", "#BonnesAdresses",
+    "#SavoirFaire", "#ConseilClient", "#VieLocale", "#ShoppingLocal", "#ConsommerLocal",
+  ],
+  cuisiniste: [
+    "#Cuisiniste", "#CuisineSurMesure", "#AgencementInterieur", "#AmenagementInterieur", "#ProjetCuisine",
+    "#CuisineDesign", "#Maison", "#DecorationInterieure", "#SavoirFaire", "#Artisan",
+    "#CuisinisteToulouse", "#CuisinisteMontauban", "#EntrepriseLocale", "#Occitanie", "#InspirationMaison",
+  ],
+  design: [
+    "#Design", "#DesignLocal", "#Creation", "#Decoration", "#Inspiration",
+    "#SurMesure", "#SavoirFaire", "#CreateurLocal", "#ArtisanCreateur", "#ProjetUnique",
+    "#DesignToulouse", "#DesignMontauban", "#EntrepriseLocale", "#Occitanie", "#MadeInFrance",
+  ],
+  loisirs: [
+    "#Loisirs", "#EscapeGame", "#Experience", "#SortieEnFamille", "#SortieEntreAmis",
+    "#ActiviteToulouse", "#ActiviteMontauban", "#QueFaireAToulouse", "#QueFaireAMontauban", "#Occitanie",
+    "#Divertissement", "#TeamBuilding", "#IdeeSortie", "#BonPlanLocal", "#Aventure",
+  ],
+  hotel: [
+    "#Hotel", "#Gite", "#Tourisme", "#SejourEnFrance", "#Hospitalite",
+    "#Escapade", "#WeekendEnFrance", "#ExperienceClient", "#DestinationOccitanie", "#TourismeLocal",
+    "#HotelToulouse", "#HotelMontauban", "#VoyageEnFrance", "#ArtDeVivre", "#BonnesAdresses",
+  ],
+  beaute: [
+    "#InstitutDeBeaute", "#Beaute", "#BienEtre", "#PrendreSoinDeSoi", "#SoinsVisage",
+    "#SoinsCorps", "#BeauteNaturelle", "#MomentPourSoi", "#ExpertiseBeaute", "#InstitutToulouse",
+    "#InstitutMontauban", "#Spa", "#Detente", "#CommerceLocal", "#Occitanie",
+  ],
+  paysagiste: [
+    "#Paysagiste", "#AmenagementExterieur", "#Jardin", "#CreationJardin", "#EntretienJardin",
+    "#Terrasse", "#EspaceVert", "#JardinSurMesure", "#SavoirFaire", "#Artisan",
+    "#PaysagisteToulouse", "#PaysagisteMontauban", "#EntrepriseLocale", "#Occitanie", "#InspirationJardin",
+  ],
+  artisan: [
+    "#Artisan", "#ArtisanLocal", "#SavoirFaire", "#FaitMain", "#ArtisanatFrancais",
+    "#EntrepriseLocale", "#Toulouse", "#Montauban", "#Occitanie", "#Proximite",
+    "#TravailBienFait", "#SurMesure", "#Expertise", "#MetierPassion", "#ValorisonsNosArtisans",
+  ],
 };
 
-function words(value: string): string[] {
-  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").split(/[^a-zA-Z0-9]+/).filter((word) => word.length > 1);
+export function hashtagsForClientType(clientType: LyfttClientType): string[] {
+  return [...LYFTT_HASHTAG_PRESETS[clientType]];
 }
 
-function tag(value: string): string {
-  const parts = words(value);
-  return parts.length ? `#${parts.map((part) => part[0]?.toUpperCase() + part.slice(1).toLowerCase()).join("")}` : "";
+/** Nettoie une saisie libre en un hashtag partageable, sans changer son sens. */
+export function normalizeHashtag(value: string): string {
+  const words = value
+    .trim()
+    .replace(/^#+/, "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .split(/[^a-zA-Z0-9]+/)
+    .filter(Boolean);
+
+  if (!words.length) return "";
+  return `#${words.map((word) => `${word[0]?.toUpperCase()}${word.slice(1)}`).join("")}`;
 }
 
-/** Recommandation déterministe : marque + métier + zone + intention, sans API externe. */
-export function recommendHashtags(profile: HashtagProfile, limit = 18): string[] {
-  const activity = words(profile.activity).join(" ").toLowerCase();
-  const sector = Object.entries(SECTOR_TAGS).find(([key]) => activity.includes(key))?.[1] ?? ["EntrepriseLocale", "SavoirFaire", "Proximite"];
-  const candidates = [
-    tag(profile.brand),
-    tag(profile.activity),
-    tag(profile.city),
-    ...sector.map((value) => `#${value}`),
-    ...profile.keywords.split(/[,;\n]/).map(tag),
-    ...profile.audience.split(/[,;\n]/).slice(0, 3).map(tag),
-    tag(`${profile.activity} ${profile.city}`),
-    tag(`Sortir ${profile.city}`),
-    "#LYFTT",
-  ];
-  return [...new Set(candidates.filter((value) => value.length > 3))].slice(0, limit);
+export function buildClientHashtagLibrary(
+  clientType: LyfttClientType,
+  customHashtags: string[],
+): string[] {
+  const values = [
+    ...hashtagsForClientType(clientType),
+    ...customHashtags.map(normalizeHashtag),
+  ].filter(Boolean);
+
+  const seen = new Set<string>();
+  return values.filter((value) => {
+    const key = value.toLocaleLowerCase("fr");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }

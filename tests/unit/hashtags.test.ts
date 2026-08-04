@@ -1,19 +1,46 @@
 import { describe, expect, it } from "vitest";
-import { recommendHashtags } from "../../src/lib/domain/hashtags";
+import {
+  buildClientHashtagLibrary,
+  hashtagsForClientType,
+  LYFTT_CLIENT_TYPE_IDS,
+  normalizeHashtag,
+} from "../../src/lib/domain/hashtags";
 
-describe("recommendHashtags", () => {
-  it("combine la marque, le métier, la ville et les mots-clés sans doublon", () => {
-    const tags = recommendHashtags({ brand:"Canal du Midi", activity:"Restaurant", city:"Toulouse", audience:"familles", keywords:"terrasse, cuisine maison, terrasse" });
-    expect(tags).toContain("#CanalDuMidi");
-    expect(tags).toContain("#Restaurant");
-    expect(tags).toContain("#Toulouse");
-    expect(tags).toContain("#CuisineMaison");
-    expect(new Set(tags).size).toBe(tags.length);
+describe("bibliothèque de hashtags LYFTT", () => {
+  it.each(LYFTT_CLIENT_TYPE_IDS)("propose exactement 15 hashtags uniques pour %s", (clientType) => {
+    const tags = hashtagsForClientType(clientType);
+
+    expect(tags).toHaveLength(15);
+    expect(new Set(tags.map((tag) => tag.toLowerCase())).size).toBe(15);
+    expect(tags.every((tag) => /^#[A-Za-z0-9]+$/.test(tag))).toBe(true);
   });
 
-  it("retire les accents et respecte la limite", () => {
-    const tags = recommendHashtags({ brand:"L'été doré", activity:"Beauté", city:"Montauban", audience:"jeunes adultes", keywords:"été, beauté, détente" }, 5);
-    expect(tags).toHaveLength(5);
-    expect(tags.every((value) => !/[éèêà]/i.test(value))).toBe(true);
+  it("nettoie les hashtags saisis manuellement", () => {
+    expect(normalizeHashtag("  #été en terrasse  ")).toBe("#EteEnTerrasse");
+    expect(normalizeHashtag("nom_du_client")).toBe("#NomDuClient");
+  });
+
+  it("réunit les 15 hashtags métier et les 5 hashtags client", () => {
+    const tags = buildClientHashtagLibrary("restaurant", [
+      "Canal du Midi",
+      "Brigitte cuisine",
+      "Terrasse du Canal",
+      "Menu du Midi",
+      "Cassoulet maison",
+    ]);
+
+    expect(tags).toHaveLength(20);
+    expect(tags.slice(-5)).toEqual([
+      "#CanalDuMidi",
+      "#BrigitteCuisine",
+      "#TerrasseDuCanal",
+      "#MenuDuMidi",
+      "#CassouletMaison",
+    ]);
+  });
+
+  it("supprime les doublons sans appel externe", () => {
+    const tags = buildClientHashtagLibrary("restaurant", ["Restaurant", "Restaurant", "Maison", "Local", "Canal"]);
+    expect(tags.filter((tag) => tag.toLowerCase() === "#restaurant")).toHaveLength(1);
   });
 });

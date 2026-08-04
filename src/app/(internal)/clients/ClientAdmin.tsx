@@ -1,11 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { createClient, setClientActive, type ClientActionResult } from "./actions";
 import { SOCIAL_NETWORKS, SOCIAL_NETWORK_LABELS } from "@/lib/domain/types";
 import { Icon } from "@/components/Icon";
-import { recommendHashtags } from "@/lib/domain/hashtags";
+import {
+  hashtagsForClientType,
+  LYFTT_CLIENT_TYPES,
+  normalizeHashtag,
+  type LyfttClientType,
+} from "@/lib/domain/hashtags";
 
 const WEEKDAYS = [
   { value: 1, label: "Lundi" },
@@ -38,9 +43,23 @@ export function ClientAdmin({
   const [feedback, setFeedback] = useState<ClientActionResult | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [tacit, setTacit] = useState(false);
-  const [brandProfile, setBrandProfile] = useState({ brand:"", activity:"", city:"", audience:"", keywords:"" });
-  const recommendedHashtags = useMemo(() => recommendHashtags(brandProfile), [brandProfile]);
-  const setProfile = (field: keyof typeof brandProfile, value: string) => setBrandProfile((current) => ({ ...current, [field]:value }));
+  const [clientType, setClientType] = useState<LyfttClientType>("restaurant");
+  const [customHashtags, setCustomHashtags] = useState(["", "", "", "", ""]);
+  const baseHashtags = hashtagsForClientType(clientType);
+  const normalizedCustomHashtags = customHashtags.map(normalizeHashtag);
+  const baseHashtagKeys = new Set(baseHashtags.map((hashtag) => hashtag.toLocaleLowerCase("fr")));
+  const customKeys = normalizedCustomHashtags.map((hashtag) => hashtag.toLocaleLowerCase("fr"));
+  const filledCustomHashtags = normalizedCustomHashtags.filter(Boolean).length;
+  const hasDuplicateCustomHashtag = customKeys.some((key, index) =>
+    Boolean(key) && (baseHashtagKeys.has(key) || customKeys.indexOf(key) !== index),
+  );
+  const hashtagSelectionIsValid = filledCustomHashtags === 5 && !hasDuplicateCustomHashtag;
+
+  const updateCustomHashtag = (index: number, value: string) => {
+    setCustomHashtags((current) => current.map((hashtag, currentIndex) =>
+      currentIndex === index ? value : hashtag,
+    ));
+  };
 
   const run = (action: () => Promise<ClientActionResult>) => {
     startTransition(async () => {
@@ -76,13 +95,13 @@ export function ClientAdmin({
           action={(formData) => run(() => createClient(formData))}
           className="card reveal-panel space-y-7 p-5 sm:p-7"
         >
-          <div><p className="eyebrow">Nouveau dossier</p><h2 className="mt-1 text-lg font-semibold">Onboarding éditorial complet</h2><p className="mt-1 text-sm text-ink-faint">Tous les champs sont nécessaires : ils alimentent le planning, les messages clients et les recommandations automatiques.</p></div>
+          <div><p className="eyebrow">Nouveau dossier</p><h2 className="mt-1 text-lg font-semibold">Onboarding éditorial complet</h2><p className="mt-1 text-sm text-ink-faint">Tous les champs sont nécessaires : ils alimentent le planning, les messages clients et la bibliothèque éditoriale.</p></div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <label className="label" htmlFor="name">
                 Nom du client
               </label>
-              <input id="name" name="name" required className="field" placeholder="Un été à la campagne" value={brandProfile.brand} onChange={(event)=>setProfile("brand",event.target.value)}/>
+              <input id="name" name="name" required className="field" placeholder="Un été à la campagne"/>
             </div>
             <div>
               <label className="label" htmlFor="communityManagerId">
@@ -110,15 +129,15 @@ export function ClientAdmin({
 
           <fieldset className="rounded-2xl bg-canvas p-4 sm:p-5">
             <legend className="label px-1">Profil de marque</legend>
-            <p className="mb-4 text-xs text-ink-faint">Ce contexte sert à préparer les sujets, le ton et la bibliothèque de hashtags.</p>
+            <p className="mb-4 text-xs text-ink-faint">Ce contexte sert à préparer les sujets et le ton de chaque publication.</p>
             <div className="grid gap-4 sm:grid-cols-2">
-              <div><label className="label" htmlFor="activity">Activité principale</label><input id="activity" name="activity" required className="field" placeholder="Restaurant bistronomique" value={brandProfile.activity} onChange={(event)=>setProfile("activity",event.target.value)}/></div>
+              <div><label className="label" htmlFor="activity">Activité principale</label><input id="activity" name="activity" required className="field" placeholder="Restaurant bistronomique"/></div>
               <div><label className="label" htmlFor="website">Site internet</label><input id="website" name="website" type="url" required className="field" placeholder="https://exemple.fr"/></div>
-              <div><label className="label" htmlFor="city">Ville ou zone principale</label><input id="city" name="city" required className="field" placeholder="Toulouse" value={brandProfile.city} onChange={(event)=>setProfile("city",event.target.value)}/></div>
+              <div><label className="label" htmlFor="city">Ville ou zone principale</label><input id="city" name="city" required className="field" placeholder="Toulouse"/></div>
               <div><label className="label" htmlFor="postalCode">Code postal</label><input id="postalCode" name="postalCode" required className="field" inputMode="numeric" pattern="[0-9]{5}" placeholder="31000"/></div>
-              <div><label className="label" htmlFor="audience">Clientèle cible</label><input id="audience" name="audience" required className="field" placeholder="Familles, actifs de 30 à 55 ans" value={brandProfile.audience} onChange={(event)=>setProfile("audience",event.target.value)}/></div>
+              <div><label className="label" htmlFor="audience">Clientèle cible</label><input id="audience" name="audience" required className="field" placeholder="Familles, actifs de 30 à 55 ans"/></div>
               <div><label className="label" htmlFor="brandTone">Ton de communication</label><select id="brandTone" name="brandTone" required className="field" defaultValue="chaleureux"><option value="chaleureux">Chaleureux et proche</option><option value="premium">Premium et élégant</option><option value="expert">Expert et pédagogique</option><option value="dynamique">Dynamique et direct</option><option value="institutionnel">Institutionnel et rassurant</option></select></div>
-              <div className="sm:col-span-2"><label className="label" htmlFor="keywords">Produits, services et mots-clés prioritaires</label><textarea id="keywords" name="keywords" required rows={3} className="field" placeholder="terrasse, cuisine maison, privatisation, produits locaux" value={brandProfile.keywords} onChange={(event)=>setProfile("keywords",event.target.value)}/><p className="mt-1 text-xs text-ink-faint">Séparez les thèmes par des virgules. Ils deviennent des pistes éditoriales et des hashtags.</p></div>
+              <div className="sm:col-span-2"><label className="label" htmlFor="keywords">Produits, services et mots-clés prioritaires</label><textarea id="keywords" name="keywords" required rows={3} className="field" placeholder="terrasse, cuisine maison, privatisation, produits locaux"/><p className="mt-1 text-xs text-ink-faint">Séparez les thèmes par des virgules. Ils serviront de pistes lors de la rédaction des publications.</p></div>
             </div>
           </fieldset>
 
@@ -208,13 +227,95 @@ export function ClientAdmin({
             <p className="mt-2 text-xs leading-relaxed text-ink-soft"><strong>Information attendue :</strong> recopiez le nom du groupe tel qu’il apparaît dans WhatsApp — pas un numéro ni un lien d’invitation. LYFTT l’affichera au moment de copier le message de validation pour éviter de l’envoyer au mauvais groupe.</p>
           </div>
 
-          <section className="rounded-2xl bg-[#111827] p-5 text-white sm:p-6">
-            <div className="flex items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/10 text-[#8fbbff]"><Icon name="spark" className="h-5 w-5"/></span><div><p className="text-xs font-semibold uppercase tracking-[.12em] text-white/60">Recherche automatique</p><h3 className="mt-1 font-semibold">Hashtags recommandés</h3><p className="mt-1 text-xs leading-relaxed text-white/70">Calculés à partir de la marque, de l’activité, de la ville, de la cible et des mots-clés. Ils seront ajoutés automatiquement aux nouvelles fiches.</p></div></div>
-            <input type="hidden" name="recommendedHashtags" value={recommendedHashtags.join(" ")}/>
-            {recommendedHashtags.length ? <div className="mt-5 flex flex-wrap gap-2">{recommendedHashtags.map((hashtag)=><span key={hashtag} className="rounded-lg bg-white/10 px-2.5 py-1.5 text-xs text-white/90">{hashtag}</span>)}</div> : <p className="mt-5 rounded-xl border border-dashed border-white/20 p-4 text-center text-xs text-white/50">Renseignez le profil de marque pour lancer la recommandation.</p>}
+          <section className="overflow-hidden rounded-2xl bg-[#111827] text-white">
+            <div className="border-b border-white/10 p-5 sm:p-6">
+              <div className="flex items-start gap-3">
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/10 text-[#8fbbff]"><Icon name="layers" className="h-5 w-5"/></span>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[.12em] text-white/60">Bibliothèque LYFTT · sans IA</p>
+                  <h3 className="mt-1 font-semibold">Les 20 hashtags du client</h3>
+                  <p className="mt-1 max-w-2xl text-xs leading-relaxed text-white/70">Choisissez son métier pour charger 15 hashtags issus des typologies de clients LYFTT, puis renseignez 5 hashtags propres à sa marque. Cette bibliothèque sera reprise automatiquement dans ses nouvelles fiches.</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid lg:grid-cols-[minmax(0,1.15fr)_minmax(20rem,.85fr)]">
+              <div className="border-b border-white/10 p-5 sm:p-6 lg:border-b-0 lg:border-r">
+                <div className="flex flex-wrap items-end justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <label className="label text-white/80" htmlFor="clientType">1. Type de client</label>
+                    <select
+                      id="clientType"
+                      name="clientType"
+                      required
+                      className="field bg-white text-ink"
+                      value={clientType}
+                      onChange={(event) => setClientType(event.target.value as LyfttClientType)}
+                    >
+                      {LYFTT_CLIENT_TYPES.map((type) => (
+                        <option key={type.id} value={type.id}>{type.label} — {type.examples}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <span className="mb-3 rounded-full bg-[#1d4ed8] px-2.5 py-1 text-[11px] font-semibold text-white">15 inclus</span>
+                </div>
+
+                <div key={clientType} className="reveal-panel mt-5 flex flex-wrap gap-2" aria-live="polite">
+                  {baseHashtags.map((hashtag) => (
+                    <span key={hashtag} className="rounded-lg border border-white/10 bg-white/10 px-2.5 py-1.5 text-xs text-white/90">{hashtag}</span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-white/[.06] p-5 sm:p-6">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="label text-white/80">2. Hashtags propres au client</p>
+                    <p className="mt-1 text-xs leading-relaxed text-white/60">Nom de marque, produit signature, quartier ou expression distinctive.</p>
+                  </div>
+                  <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${hashtagSelectionIsValid ? "bg-[#d1fae5] text-[#065f46]" : "bg-white/10 text-white/70"}`} aria-live="polite">
+                    {filledCustomHashtags}/5
+                  </span>
+                </div>
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+                  {customHashtags.map((value, index) => {
+                    const normalized = normalizedCustomHashtags[index];
+                    const key = customKeys[index];
+                    const isDuplicate = Boolean(key) && (baseHashtagKeys.has(key) || customKeys.indexOf(key) !== index);
+                    return (
+                      <div key={index}>
+                        <label className="sr-only" htmlFor={`customHashtag${index + 1}`}>Hashtag client {index + 1} sur 5</label>
+                        <div className="relative">
+                          <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm font-semibold text-[#667085]">#</span>
+                          <input
+                            id={`customHashtag${index + 1}`}
+                            name={`customHashtag${index + 1}`}
+                            required
+                            minLength={2}
+                            maxLength={60}
+                            className={`field bg-white pl-7 text-ink ${isDuplicate ? "border-state-changes ring-2 ring-state-changes/20" : ""}`}
+                            placeholder={["NomDuClient", "ProduitSignature", "Quartier", "Slogan", "RendezVous"][index]}
+                            value={value.replace(/^#+/, "")}
+                            onChange={(event) => updateCustomHashtag(index, event.target.value)}
+                            aria-invalid={isDuplicate || undefined}
+                          />
+                        </div>
+                        {normalized && !isDuplicate && <p className="mt-1 truncate text-[11px] text-white/55">Sera enregistré : {normalized}</p>}
+                        {isDuplicate && <p className="mt-1 text-[11px] text-[#fda4af]">Choisissez un hashtag différent.</p>}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <p className={`mt-4 rounded-xl border px-3 py-2 text-xs leading-relaxed ${hashtagSelectionIsValid ? "border-[#6ee7b7]/30 bg-[#064e3b]/30 text-[#a7f3d0]" : "border-white/10 bg-black/10 text-white/60"}`}>
+                  {hashtagSelectionIsValid ? "Bibliothèque complète : 15 hashtags métier + 5 hashtags client." : "Les 5 hashtags doivent être renseignés et tous différents des 15 hashtags métier."}
+                </p>
+              </div>
+            </div>
           </section>
 
-          <button type="submit" className="btn-primary" disabled={pending}>
+          <button type="submit" className="btn-primary" disabled={pending || !hashtagSelectionIsValid}>
             {pending ? "Création…" : "Créer le client"}
           </button>
         </form>
