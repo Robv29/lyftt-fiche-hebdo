@@ -24,10 +24,15 @@ export default async function InternalLayout({
     ? [{ href: "/production", label: "Corrections clients", badge: null }]
     : [
         { href: "/", label: "Tableau de bord", badge: null },
+        { href: "/clients", label: "Clients", badge: null },
         { href: "/fiches", label: "Fiches", badge: null },
         { href: "/retours", label: "Retours clients", badge: openTickets ?? 0 },
         { href: "/production", label: "Production", badge: null },
         { href: "/indicateurs", label: "Indicateurs", badge: null },
+        // L'administration des comptes n'est visible que par un administrateur.
+        ...(profile.role === "super_admin"
+          ? [{ href: "/utilisateurs", label: "Utilisateurs", badge: null }]
+          : []),
       ];
 
   return (

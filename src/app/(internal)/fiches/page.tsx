@@ -16,7 +16,12 @@ export default async function SheetsPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-semibold">Fiches hebdomadaires</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-xl font-semibold">Fiches hebdomadaires</h1>
+        <Link href="/fiches/nouvelle" className="btn-primary">
+          Nouvelle fiche
+        </Link>
+      </div>
 
       {(sheets ?? []).length === 0 ? (
         <p className="card px-4 py-8 text-center text-sm text-ink-faint">
