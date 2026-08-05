@@ -11,6 +11,7 @@ import {
 import { sheetStatusLabel, type MediaFormat, type TicketPriority, type TicketStatus } from "@/lib/domain/types";
 import { isTicketOpen } from "@/lib/domain/workflow";
 import { Icon } from "@/components/Icon";
+import { PlanningTabs } from "./PlanningTabs";
 
 interface PlanningItem {
   caption: string | null;
@@ -108,18 +109,6 @@ function SheetCard({ sheet, showProgress = false }: { sheet: PlanningSheet; show
   );
 }
 
-function SectionHeader({ icon, title, count, description }: { icon: string; title: string; count: number; description: string }) {
-  return (
-    <div className="mb-3 flex items-start gap-3">
-      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#edf4ff] text-[#0759e6]"><Icon name={icon} className="h-4 w-4"/></span>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline gap-2"><h2 className="font-semibold">{title}</h2><span className="text-xs text-ink-faint">{count}</span></div>
-        <p className="mt-0.5 text-xs leading-relaxed text-ink-faint">{description}</p>
-      </div>
-    </div>
-  );
-}
-
 export default async function SheetsPage() {
   const supabase = await createSupabaseServerClient();
   const range = planningWeekRange();
@@ -159,27 +148,20 @@ export default async function SheetsPage() {
         <p className="mt-2 max-w-2xl text-sm text-ink-soft">Le travail est proposé automatiquement selon les prestations de chaque client. Ouvrez simplement la fiche à préparer.</p>
       </div>
 
-      <section>
-        <SectionHeader icon="clock" title="Passé" count={past.length} description="Historique des semaines terminées, de la plus récente à la plus ancienne."/>
-        {past.length ? (
+      <PlanningTabs
+        counts={{ past: past.length, current: current.length, next: next.length + proposals.length }}
+        past={past.length ? (
           <ul className="grid gap-3 lg:grid-cols-2">{past.map((sheet) => <SheetCard key={sheet.id} sheet={sheet}/>)}</ul>
         ) : (
           <p className="card px-4 py-6 text-center text-sm text-ink-faint">Aucune fiche passée.</p>
         )}
-      </section>
-
-      <section>
-        <SectionHeader icon="calendar" title="Cette semaine" count={current.length} description="Les fiches incomplètes et les modifications de priorité haute apparaissent en premier."/>
-        {current.length ? (
+        current={current.length ? (
           <ul className="grid gap-3 lg:grid-cols-2">{current.map((sheet) => <SheetCard key={sheet.id} sheet={sheet}/>)}</ul>
         ) : (
           <p className="card px-4 py-6 text-center text-sm text-ink-faint">Tout est calme cette semaine.</p>
         )}
-      </section>
-
-      <section>
-        <SectionHeader icon="layers" title="Semaine prochaine" count={next.length + proposals.length} description="Chaque client actif dispose d’une fiche existante ou d’une proposition préprogrammée à remplir."/>
-        <ul className="grid gap-3 lg:grid-cols-2">
+        next={<>
+          <ul className="grid gap-3 lg:grid-cols-2">
           {next.map((sheet) => <SheetCard key={sheet.id} sheet={sheet} showProgress/>)}
           {proposals.map((client) => {
             let settings: { monthlyCadence?: MonthlyCadence; recommendedHashtags?: string[] } = {};
@@ -206,9 +188,10 @@ export default async function SheetsPage() {
               </li>
             );
           })}
-        </ul>
-        {next.length + proposals.length === 0 && <p className="card px-4 py-6 text-center text-sm text-ink-faint">Ajoutez un client actif pour préparer sa prochaine semaine.</p>}
-      </section>
+          </ul>
+          {next.length + proposals.length === 0 && <p className="card px-4 py-6 text-center text-sm text-ink-faint">Ajoutez un client actif pour préparer sa prochaine semaine.</p>}
+        </>}
+      />
     </div>
   );
 }
