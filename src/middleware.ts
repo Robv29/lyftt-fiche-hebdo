@@ -94,6 +94,12 @@ export const config = {
      * Tout sauf : le portail client, la page de connexion, les fichiers
      * statiques et les images.
      */
-    "/((?!client-review|login|api/diagnostic|test-clic|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    /*
+     * `api` est exclu dans son ensemble : ces routes sont appelées par des
+     * machines (tâches planifiées, sondes) et portent leur propre
+     * authentification. Les y soumettre renvoyait une redirection 307 vers la
+     * page de connexion, que le cron ne peut évidemment pas suivre.
+     */
+    "/((?!client-review|login|api|test-clic|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };
