@@ -60,7 +60,19 @@ export async function middleware(request: NextRequest) {
     const redirect = request.nextUrl.clone();
     redirect.pathname = "/login";
     redirect.searchParams.set("next", request.nextUrl.pathname);
-    return NextResponse.redirect(redirect);
+
+    const redirectResponse = NextResponse.redirect(redirect);
+
+    // Indispensable : `response` porte les cookies écrits par Supabase pendant
+    // getUser() — jeton de rafraîchissement renouvelé, ou suppression d'une
+    // session invalide. Les abandonner ici consomme l'ancien jeton sans jamais
+    // écrire le nouveau : la session est perdue et l'utilisateur rebondit
+    // indéfiniment vers la page de connexion.
+    for (const cookie of response.cookies.getAll()) {
+      redirectResponse.cookies.set(cookie);
+    }
+
+    return redirectResponse;
   }
 
   return response;
