@@ -36,8 +36,8 @@ export default async function DashboardPage() {
   const publicationProgress = publications.length ? Math.round((published / publications.length) * 100) : 100;
 
   return (
-    <div className="space-y-6 sm:space-y-8">
-      <section className="relative overflow-hidden rounded-[26px] bg-gradient-to-br from-[#157bc3] via-[#1166a8] to-[#0b4f88] p-6 text-white shadow-[0_22px_52px_rgba(11,79,136,.20)] sm:p-8">
+    <div className="dashboard-page">
+      <section className="dashboard-hero relative overflow-hidden rounded-[26px] bg-gradient-to-br from-[#157bc3] via-[#1166a8] to-[#0b4f88] p-6 text-white shadow-[0_22px_52px_rgba(11,79,136,.20)] sm:p-8">
         <span aria-hidden="true" className="absolute -right-16 -top-24 h-72 w-72 rounded-full bg-white/[.07]" />
         <span aria-hidden="true" className="absolute -bottom-32 left-16 h-64 w-64 rounded-full bg-[#6bc1ff]/10" />
         <div className="relative flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
@@ -49,7 +49,7 @@ export default async function DashboardPage() {
           <Link href="/fiches" className="btn w-fit border border-white/20 bg-white/10 text-white shadow-none backdrop-blur-sm hover:bg-white/20"><Icon name="calendar" className="h-4 w-4"/>Ouvrir le planning</Link>
         </div>
 
-        <div className="relative mt-7 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="dashboard-hero-metrics relative mt-7 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <HeroMetric icon="layers" label="Fiches à préparer" value={preparationResult.count ?? 0} />
           <HeroMetric icon="check" label="Validations en attente" value={sheets.length} />
           <HeroMetric icon="warning" label="Tickets prioritaires" value={urgent.length} />
@@ -57,12 +57,12 @@ export default async function DashboardPage() {
         </div>
       </section>
 
-      <section aria-labelledby="dashboard-metrics">
-        <div className="mb-4 flex items-end justify-between gap-3">
+      <section className="dashboard-kpis" aria-labelledby="dashboard-metrics">
+        <div className="dashboard-kpis-heading mb-4 flex items-end justify-between gap-3">
           <div><p className="eyebrow">Pilotage</p><h2 id="dashboard-metrics" className="mt-1 text-lg font-semibold">L’essentiel en un regard</h2></div>
           <span className="text-xs text-ink-faint">{clientsResult.count ?? 0} clients actifs</span>
         </div>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="dashboard-kpi-grid grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <Stat icon="message" label="Nouveaux retours" value={newTickets.length} tone={newTickets.length ? "danger" : "blue"} detail="à qualifier" />
           <Stat icon="layers" label="Corrections production" value={production.length} tone="violet" detail="photo ou vidéo" />
           <Stat icon="send" label="Contenus publiés" value={`${published}/${publications.length}`} tone="success" detail={`${publicationProgress}% de la journée`} />
@@ -70,7 +70,7 @@ export default async function DashboardPage() {
         </div>
       </section>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,.65fr)]">
+      <div className="dashboard-bottom grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,.65fr)]">
         <section className="section-card">
           <div className="section-card-header">
             <div><p className="eyebrow">File d’intervention</p><h2 className="mt-1 font-semibold">Retours clients à traiter</h2></div>
@@ -80,7 +80,7 @@ export default async function DashboardPage() {
             <div className="flex min-h-44 flex-col items-center justify-center px-5 py-8 text-center"><span className="empty-state-icon"><Icon name="check" className="h-5 w-5"/></span><strong className="mt-3 text-sm">Tout est à jour</strong><p className="mt-1 text-xs text-ink-faint">Aucun retour client ne demande votre attention.</p></div>
           ) : (
             <ul className="divide-y divide-line">
-              {tickets.slice(0, 7).map((ticket) => {
+              {tickets.slice(0, 3).map((ticket) => {
                 const client = ticket.clients as unknown as { name: string } | null;
                 return <li key={ticket.id}><Link href={`/retours/${ticket.id}`} className="group grid gap-2 px-5 py-4 transition-colors hover:bg-[#f7fafe] sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
                   <div className="flex min-w-0 items-center gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#e8f2ff] text-xs font-bold text-[#0b4f88]">{(client?.name ?? "CL").slice(0,2).toUpperCase()}</span><div className="min-w-0"><strong className="block truncate text-sm">{client?.name ?? "Client"}</strong><p className="mt-0.5 truncate text-xs text-ink-faint">{getTicketTypeDefinition(ticket.ticket_type).label} · {ticket.ticket_number}</p></div></div>
@@ -94,7 +94,7 @@ export default async function DashboardPage() {
         <div>
           <section className="section-card">
             <div className="section-card-header"><div><p className="eyebrow">Validation</p><h2 className="mt-1 font-semibold">Fiches en attente</h2></div><span className="badge bg-[#e8f2ff] text-[#0b5e9f]">{sheets.length}</span></div>
-            {sheets.length === 0 ? <p className="px-5 py-8 text-center text-sm text-ink-faint">Aucune validation en attente.</p> : <ul className="divide-y divide-line">{sheets.slice(0, 5).map((sheet) => {
+            {sheets.length === 0 ? <p className="px-5 py-8 text-center text-sm text-ink-faint">Aucune validation en attente.</p> : <ul className="divide-y divide-line">{sheets.slice(0, 3).map((sheet) => {
               const client = sheet.clients as unknown as { name: string } | null;
               const deadline = sheet.validation_deadline_at ? deadlineState(new Date(sheet.validation_deadline_at)) : null;
               return <li key={sheet.id}><Link href={`/fiches/${sheet.id}`} className="block px-5 py-4 transition-colors hover:bg-[#f7fafe]"><div className="flex items-center justify-between gap-3"><strong className="truncate text-sm">{client?.name ?? "Client"}</strong><span className={`text-[11px] font-semibold ${deadline?.isOverdue ? "text-state-changes" : "text-ink-faint"}`}>{deadline?.label ?? `S${sheet.iso_week}`}</span></div><p className="mt-1 truncate text-xs text-ink-faint">Semaine {sheet.iso_week} · {sheetStatusLabel(sheet.status)}</p></Link></li>;
@@ -113,5 +113,5 @@ function HeroMetric({ icon, label, value }: { icon: string; label: string; value
 
 function Stat({ icon, label, value, detail, tone }: { icon: string; label: string; value: string | number; detail: string; tone: "blue" | "success" | "warning" | "danger" | "violet" }) {
   const tones = { blue:"bg-[#e8f2ff] text-[#1176d3]", success:"bg-[#e8f8f1] text-[#128359]", warning:"bg-[#fff4e5] text-[#a75b00]", danger:"bg-[#ffedef] text-[#ce3540]", violet:"bg-[#f1edff] text-[#6f50c9]" };
-  return <article className="metric-card lift-card"><div className="flex items-start justify-between gap-3"><span className={`metric-icon ${tones[tone]}`}><Icon name={icon} className="h-5 w-5"/></span><span className="text-[11px] font-semibold text-ink-faint">Temps réel</span></div><p className="mt-5 text-[13px] font-medium text-ink-soft">{label}</p><p className="mt-1 text-[30px] font-semibold leading-none tracking-[-.04em]">{value}</p><p className="mt-2 text-xs text-ink-faint">{detail}</p></article>;
+  return <article className="dashboard-stat metric-card lift-card"><div className="flex items-start justify-between gap-3"><span className={`metric-icon ${tones[tone]}`}><Icon name={icon} className="h-5 w-5"/></span><span className="text-[11px] font-semibold text-ink-faint">Temps réel</span></div><p className="dashboard-stat-label mt-5 text-[13px] font-medium text-ink-soft">{label}</p><p className="dashboard-stat-value mt-1 text-[30px] font-semibold leading-none tracking-[-.04em]">{value}</p><p className="dashboard-stat-detail mt-2 text-xs text-ink-faint">{detail}</p></article>;
 }

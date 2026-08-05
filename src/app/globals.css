@@ -172,6 +172,39 @@
   .group:hover .reveal-on-card-hover { opacity:1; transform:translate3d(0,0,0); }
 }
 
+.dashboard-page { display:flex; flex-direction:column; gap:24px; }
+
+@media (min-width: 1280px) {
+  .dashboard-page {
+    height:calc(100vh - 205px);
+    min-height:0;
+    display:grid;
+    grid-template-rows:auto auto minmax(0,1fr);
+    gap:14px;
+    overflow:hidden;
+  }
+  .dashboard-hero { padding:18px 24px; border-radius:22px; }
+  .dashboard-hero h1 { margin-top:4px; font-size:clamp(1.65rem,2.3vw,2.15rem); }
+  .dashboard-hero p.mt-2 { margin-top:4px; }
+  .dashboard-hero-metrics { margin-top:16px; gap:9px; }
+  .dashboard-hero-metrics>div { padding:10px 12px; border-radius:14px; }
+  .dashboard-kpis-heading { margin-bottom:8px; }
+  .dashboard-kpis-heading h2 { margin-top:2px; font-size:1rem; }
+  .dashboard-kpi-grid { gap:10px; }
+  .dashboard-stat { padding:12px 14px; border-radius:16px; }
+  .dashboard-stat .metric-icon { width:34px; height:34px; border-radius:10px; }
+  .dashboard-stat-label { margin-top:9px; }
+  .dashboard-stat-value { font-size:25px; }
+  .dashboard-stat-detail { margin-top:4px; font-size:10px; }
+  .dashboard-bottom { min-height:0; height:100%; gap:14px; }
+  .dashboard-bottom>* { min-height:0; }
+  .dashboard-bottom .section-card { height:100%; overflow:hidden; }
+  .dashboard-bottom .section-card-header { padding:11px 16px; }
+  .dashboard-bottom .section-card-header h2 { margin-top:2px; font-size:.875rem; }
+  .dashboard-bottom li a { padding:9px 16px; }
+  .dashboard-bottom li a .h-10 { width:34px; height:34px; border-radius:10px; }
+}
+
 @media (max-width: 1100px) and (min-width: 801px) {
   .sidebar { width:224px; }
   .workspace { margin-left:252px; }
