@@ -62,14 +62,14 @@ export default async function MetricsPage({ searchParams }: { searchParams: Prom
     ticketsPerSheet > 1.2 ? { tone:"warning" as const, icon:"message", title:"Beaucoup de retours par fiche", body:`${ticketsPerSheet.toFixed(1)} ticket en moyenne.` } : { tone:"info" as const, icon:"message", title:"Volume de retours stable", body:sent.length ? `${ticketsPerSheet.toFixed(1)} ticket par fiche.` : "Pas encore de fiche envoyée." },
   ];
 
-  return <div className="space-y-7">
-    <PageHeader eyebrow="Performance opérationnelle" title="Indicateurs" description={`Analyse de la production depuis le ${formatDate(since)}. Les couleurs signalent les actions nécessaires, jamais la performance individuelle.`} actions={<PeriodFilter since={since}/>} />
+  return <div className="metrics-page">
+    <div className="metrics-header"><PageHeader eyebrow="Performance opérationnelle" title="Indicateurs" description={`Analyse de la production depuis le ${formatDate(since)}. Les couleurs signalent les actions nécessaires, jamais la performance individuelle.`} actions={<PeriodFilter since={since}/>} /></div>
 
-    <section className="grid gap-3 lg:grid-cols-3" aria-label="Alertes opérationnelles">
+    <section className="metrics-signals grid gap-3 lg:grid-cols-3" aria-label="Alertes opérationnelles">
       {signals.map((signal) => <Signal key={signal.title} {...signal}/>) }
     </section>
 
-    <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Indicateurs principaux">
+    <section className="metrics-kpis grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Indicateurs principaux">
       <Metric icon="send" label="Fiches envoyées" value={sent.length} detail="sur la période" tone="info" />
       <Metric icon="users" label="Taux de consultation" value={percent(viewed.length, sent.length)} detail={`${viewed.length} fiche${viewed.length > 1 ? "s" : ""} consultée${viewed.length > 1 ? "s" : ""}`} tone={sent.length ? rateTone(viewRate) : "info"} />
       <Metric icon="check" label="Sans correction" value={percent(approvedWithoutCorrection.length, sent.length)} detail="validées au premier envoi" tone={sent.length ? rateTone(noCorrectionRate, 70, 45) : "info"} />
@@ -80,10 +80,10 @@ export default async function MetricsPage({ searchParams }: { searchParams: Prom
       <Metric icon="copy" label="Versions par fiche" value={averageVersions ? averageVersions.toFixed(1) : "—"} detail={`${outOfScope} hors périmètre`} tone={outOfScope ? "warning" : averageVersions > 2 ? "warning" : "success"} />
     </section>
 
-    <section className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,.9fr)]">
-      <div className="section-card">
+    <section className="metrics-charts grid gap-6 xl:grid-cols-[1.05fr_.9fr_1.05fr]" aria-label="Analyses détaillées">
+      <div className="metrics-chart-card section-card">
         <div className="section-card-header"><div><p className="eyebrow">Parcours client</p><h2 className="mt-1 font-semibold">De l’envoi à la validation</h2></div><span className="badge bg-[#e8f2ff] text-[#0b5e9f]">{sent.length} envois</span></div>
-        <div className="space-y-6 p-5 sm:p-6">
+        <div className="metrics-funnel-content space-y-6 p-5 sm:p-6">
           <FunnelRow label="Fiches envoyées" value={sent.length} total={Math.max(sent.length, 1)} color="#1176d3" />
           <FunnelRow label="Consultées par le client" value={viewed.length} total={Math.max(sent.length, 1)} color="#22a6b3" />
           <FunnelRow label="Validées" value={approved.length} total={Math.max(sent.length, 1)} color="#16a36a" />
@@ -91,18 +91,18 @@ export default async function MetricsPage({ searchParams }: { searchParams: Prom
         </div>
       </div>
 
-      <div className="section-card">
+      <div className="metrics-chart-card section-card">
         <div className="section-card-header"><div><p className="eyebrow">Nature des demandes</p><h2 className="mt-1 font-semibold">Répartition des tickets</h2></div><span className="badge bg-canvas text-ink-soft">{ticketTotal} total</span></div>
-        {ticketTotal ? <div className="grid items-center gap-6 p-5 sm:grid-cols-[170px_1fr] xl:grid-cols-1 2xl:grid-cols-[170px_1fr]">
-          <div className="relative mx-auto grid h-40 w-40 place-items-center rounded-full" style={{background:donutGradient}} role="img" aria-label={`Répartition de ${ticketTotal} tickets par type`}><span className="grid h-24 w-24 place-items-center rounded-full bg-white text-center shadow-inner"><span><strong className="block text-2xl">{ticketTotal}</strong><small className="text-[10px] text-ink-faint">tickets</small></span></span></div>
-          <ul className="space-y-2.5">{typeEntries.slice(0,6).map(([type,count],index)=><li key={type} className="flex items-center gap-2 text-xs"><i className="h-2.5 w-2.5 shrink-0 rounded-full" style={{background:CHART_COLORS[index % CHART_COLORS.length]}}/><span className="min-w-0 flex-1 truncate text-ink-soft">{getTicketTypeDefinition(type).label}</span><strong>{count}</strong></li>)}</ul>
+        {ticketTotal ? <div className="metrics-ticket-content grid items-center gap-6 p-5 sm:grid-cols-[170px_1fr] xl:grid-cols-1 2xl:grid-cols-[170px_1fr]">
+          <div className="metrics-donut relative mx-auto grid h-40 w-40 place-items-center rounded-full" style={{background:donutGradient}} role="img" aria-label={`Répartition de ${ticketTotal} tickets par type`}><span className="grid h-24 w-24 place-items-center rounded-full bg-white text-center shadow-inner"><span><strong className="block text-2xl">{ticketTotal}</strong><small className="text-[10px] text-ink-faint">tickets</small></span></span></div>
+          <ul className="metrics-ticket-legend space-y-2.5">{typeEntries.slice(0,6).map(([type,count],index)=><li key={type} className="flex items-center gap-2 text-xs"><i className="h-2.5 w-2.5 shrink-0 rounded-full" style={{background:CHART_COLORS[index % CHART_COLORS.length]}}/><span className="min-w-0 flex-1 truncate text-ink-soft">{getTicketTypeDefinition(type).label}</span><strong>{count}</strong></li>)}</ul>
         </div> : <p className="px-5 py-12 text-center text-sm text-ink-faint">Aucun ticket sur cette période.</p>}
       </div>
-    </section>
 
-    <section className="section-card">
-      <div className="section-card-header"><div><p className="eyebrow">Concentration des retours</p><h2 className="mt-1 font-semibold">Corrections par client</h2></div><span className="text-xs text-ink-faint">7 premiers clients</span></div>
-      {clientEntries.length ? <div className="space-y-4 p-5 sm:p-6">{clientEntries.map(([name,count],index)=><BarRow key={name} label={name} value={count} max={clientEntries[0]?.[1] ?? 1} color={index < 2 && count > 2 ? "#e58a12" : "#1176d3"}/>)}</div> : <p className="px-5 py-12 text-center text-sm text-ink-faint">Aucune correction sur cette période.</p>}
+      <div className="metrics-chart-card section-card">
+        <div className="section-card-header"><div><p className="eyebrow">Concentration des retours</p><h2 className="mt-1 font-semibold">Corrections par client</h2></div><span className="text-xs text-ink-faint">7 premiers</span></div>
+        {clientEntries.length ? <div className="metrics-client-bars space-y-4 p-5 sm:p-6">{clientEntries.map(([name,count],index)=><BarRow key={name} label={name} value={count} max={clientEntries[0]?.[1] ?? 1} color={index < 2 && count > 2 ? "#e58a12" : "#1176d3"}/>)}</div> : <p className="px-5 py-12 text-center text-sm text-ink-faint">Aucune correction sur cette période.</p>}
+      </div>
     </section>
   </div>;
 }
@@ -122,21 +122,21 @@ function PeriodFilter({ since }: { since:string }) {
 
 function Signal({ tone, icon, title, body }: { tone:Tone; icon:string; title:string; body:string }) {
   const style=toneStyles[tone];
-  return <article className={`flex items-start gap-3 rounded-[18px] border p-4 ${style.card}`}><span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${style.icon}`}><Icon name={icon} className="h-5 w-5"/></span><div><h2 className="text-sm font-semibold">{title}</h2><p className="mt-1 text-xs leading-relaxed text-ink-soft">{body}</p></div></article>;
+  return <article className={`metrics-signal flex items-start gap-3 rounded-[18px] border p-4 ${style.card}`}><span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${style.icon}`}><Icon name={icon} className="h-5 w-5"/></span><div><h2 className="text-sm font-semibold">{title}</h2><p className="metrics-signal-body mt-1 text-xs leading-relaxed text-ink-soft">{body}</p></div></article>;
 }
 
 function Metric({ icon, label, value, detail, tone }: { icon:string; label:string; value:string|number; detail:string; tone:Tone }) {
   const style=toneStyles[tone];
-  return <article className={`metric-card lift-card border-t-4 ${style.card}`}><div className="flex items-start justify-between gap-3"><span className={`metric-icon ${style.icon}`}><Icon name={icon} className="h-5 w-5"/></span><span className={`h-2.5 w-2.5 rounded-full ${style.bar}`} aria-label={`État ${tone}`}/></div><p className="mt-5 text-xs font-semibold text-ink-soft">{label}</p><p className="mt-1 text-[30px] font-semibold tracking-[-.045em]">{value}</p><p className="mt-2 text-[11px] text-ink-faint">{detail}</p></article>;
+  return <article className={`metrics-stat metric-card lift-card border-t-4 ${style.card}`}><div className="flex items-start justify-between gap-3"><span className={`metric-icon ${style.icon}`}><Icon name={icon} className="h-5 w-5"/></span><span className={`h-2.5 w-2.5 rounded-full ${style.bar}`} aria-label={`État ${tone}`}/></div><p className="metrics-stat-label mt-5 text-xs font-semibold text-ink-soft">{label}</p><p className="metrics-stat-value mt-1 text-[30px] font-semibold tracking-[-.045em]">{value}</p><p className="metrics-stat-detail mt-2 text-[11px] text-ink-faint">{detail}</p></article>;
 }
 
 function FunnelRow({ label, value, total, color }: { label:string; value:number; total:number; color:string }) {
   const percentage=Math.round(value/total*100);
-  return <div><div className="mb-2 flex items-center justify-between gap-3 text-xs"><span className="font-medium text-ink-soft">{label}</span><span><strong>{value}</strong><span className="ml-1 text-ink-faint">· {percentage}%</span></span></div><div className="h-3 overflow-hidden rounded-full bg-[#edf1f6]" role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={total} aria-valuenow={value}><span className="block h-full origin-left rounded-full transition-transform duration-300" style={{background:color,transform:`scaleX(${Math.min(1,value/total)})`}}/></div></div>;
+  return <div className="metrics-funnel-row"><div className="mb-2 flex items-center justify-between gap-3 text-xs"><span className="font-medium text-ink-soft">{label}</span><span><strong>{value}</strong><span className="ml-1 text-ink-faint">· {percentage}%</span></span></div><div className="h-3 overflow-hidden rounded-full bg-[#edf1f6]" role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={total} aria-valuenow={value}><span className="block h-full origin-left rounded-full transition-transform duration-300" style={{background:color,transform:`scaleX(${Math.min(1,value/total)})`}}/></div></div>;
 }
 
 function BarRow({ label, value, max, color }: { label:string; value:number; max:number; color:string }) {
-  return <div className="grid items-center gap-2 sm:grid-cols-[180px_1fr_36px]"><span className="truncate text-xs font-medium text-ink-soft">{label}</span><div className="h-8 overflow-hidden rounded-lg bg-[#edf1f6]"><span className="flex h-full origin-left items-center rounded-lg px-2 text-[10px] font-semibold text-white transition-transform duration-300" style={{background:color,transform:`scaleX(${value/Math.max(max,1)})`}}><span className="origin-left" style={{transform:`scaleX(${Math.max(max,1)/value})`}}>{value} correction{value>1?"s":""}</span></span></div><strong className="text-right text-xs">{value}</strong></div>;
+  return <div className="metrics-client-row grid items-center gap-2 sm:grid-cols-[180px_1fr_36px]"><span className="truncate text-xs font-medium text-ink-soft">{label}</span><div className="h-8 overflow-hidden rounded-lg bg-[#edf1f6]"><span className="flex h-full origin-left items-center rounded-lg px-2 text-[10px] font-semibold text-white transition-transform duration-300" style={{background:color,transform:`scaleX(${value/Math.max(max,1)})`}}><span className="origin-left" style={{transform:`scaleX(${Math.max(max,1)/value})`}}>{value} correction{value>1?"s":""}</span></span></div><strong className="text-right text-xs">{value}</strong></div>;
 }
 
 function buildDonut(values:number[], total:number):string {
