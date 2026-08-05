@@ -91,7 +91,7 @@ export default async function DashboardPage() {
           )}
         </section>
 
-        <div className="space-y-6">
+        <div>
           <section className="section-card">
             <div className="section-card-header"><div><p className="eyebrow">Validation</p><h2 className="mt-1 font-semibold">Fiches en attente</h2></div><span className="badge bg-[#e8f2ff] text-[#0b5e9f]">{sheets.length}</span></div>
             {sheets.length === 0 ? <p className="px-5 py-8 text-center text-sm text-ink-faint">Aucune validation en attente.</p> : <ul className="divide-y divide-line">{sheets.slice(0, 5).map((sheet) => {
@@ -101,15 +101,6 @@ export default async function DashboardPage() {
             })}</ul>}
           </section>
 
-          <section className="card bg-[#123f73] p-5 text-white">
-            <p className="text-[11px] font-bold uppercase tracking-[.14em] text-white/55">Accès rapide</p>
-            <div className="mt-4 grid grid-cols-2 gap-2">
-              <Shortcut href="/publications" icon="send" label="Publier" />
-              <Shortcut href="/clients" icon="users" label="Clients" />
-              <Shortcut href="/production" icon="layers" label="Production" />
-              <Shortcut href="/indicateurs" icon="chart" label="Indicateurs" />
-            </div>
-          </section>
         </div>
       </div>
     </div>
@@ -123,8 +114,4 @@ function HeroMetric({ icon, label, value }: { icon: string; label: string; value
 function Stat({ icon, label, value, detail, tone }: { icon: string; label: string; value: string | number; detail: string; tone: "blue" | "success" | "warning" | "danger" | "violet" }) {
   const tones = { blue:"bg-[#e8f2ff] text-[#1176d3]", success:"bg-[#e8f8f1] text-[#128359]", warning:"bg-[#fff4e5] text-[#a75b00]", danger:"bg-[#ffedef] text-[#ce3540]", violet:"bg-[#f1edff] text-[#6f50c9]" };
   return <article className="metric-card lift-card"><div className="flex items-start justify-between gap-3"><span className={`metric-icon ${tones[tone]}`}><Icon name={icon} className="h-5 w-5"/></span><span className="text-[11px] font-semibold text-ink-faint">Temps réel</span></div><p className="mt-5 text-[13px] font-medium text-ink-soft">{label}</p><p className="mt-1 text-[30px] font-semibold leading-none tracking-[-.04em]">{value}</p><p className="mt-2 text-xs text-ink-faint">{detail}</p></article>;
-}
-
-function Shortcut({ href, icon, label }: { href: string; icon: string; label: string }) {
-  return <Link href={href} className="group flex min-h-20 flex-col justify-between rounded-2xl bg-white/[.08] p-3 text-xs font-semibold text-white/90 transition-colors hover:bg-white/[.14]"><Icon name={icon} className="h-5 w-5 text-[#8fd1ff]"/><span className="flex items-center justify-between">{label}<Icon name="arrow" className="h-3 w-3 transition-transform group-hover:translate-x-0.5"/></span></Link>;
 }
