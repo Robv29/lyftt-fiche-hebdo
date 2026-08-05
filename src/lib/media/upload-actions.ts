@@ -36,6 +36,8 @@ export interface UploadTicket {
   path?: string;
   /** Jeton d'écriture à usage unique. */
   token?: string;
+  /** URL complète, écrite directement en PUT pour suivre la progression. */
+  signedUrl?: string;
   previewPath?: string;
   previewToken?: string;
 }
@@ -111,7 +113,14 @@ export async function createMediaUploadTicket(input: {
     }
   }
 
-  return { ok: true, path: data.path, token: data.token, previewPath, previewToken };
+  return {
+    ok: true,
+    path: data.path,
+    token: data.token,
+    signedUrl: data.signedUrl,
+    previewPath,
+    previewToken,
+  };
 }
 
 const registerSchema = z.object({

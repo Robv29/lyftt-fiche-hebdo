@@ -1,6 +1,7 @@
 "use client";
 
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { putWithProgress } from "./put-with-progress";
 import { prepareMedia } from "./compression";
 import { createMediaUploadTicket, registerUploadedMedia } from "./upload-actions";
 
@@ -24,6 +25,9 @@ export async function uploadMediaDirect(params: {
   clientId: string;
   sheetId: string | null;
   onProgress?: (step: "preparation" | "envoi" | "enregistrement") => void;
+  /** Avancement de l'envoi réseau, en pourcentage. */
+  onUploadProgress?: (percent: number, uploadedBytes: number) => void;
+  signal?: AbortSignal;
 }): Promise<UploadOutcome> {
   const kind = params.file.type.startsWith("video/") ? "video" : "image";
 
@@ -46,21 +50,25 @@ export async function uploadMediaDirect(params: {
   }
 
   params.onProgress?.("envoi");
-  const supabase = createSupabaseBrowserClient();
 
-  const { error: uploadError } = await supabase.storage
-    .from("media")
-    .uploadToSignedUrl(ticket.path, ticket.token, prepared.file, {
-      contentType: prepared.file.type,
-    });
+  // Écriture directe sur l'URL signée, pour disposer de la progression : sur
+  // une vidéo, une barre qui avance change tout par rapport à une attente muette.
+  const upload = await putWithProgress({
+    signedUrl: ticket.signedUrl!,
+    file: prepared.file,
+    onProgress: params.onUploadProgress,
+    signal: params.signal,
+  });
 
-  if (uploadError) {
-    return { ok: false, message: `Envoi interrompu : ${uploadError.message}` };
+  if (!upload.ok) {
+    return { ok: false, message: upload.message ?? "Envoi interrompu." };
   }
 
   // L'aperçu est un confort : son échec ne doit pas perdre le fichier envoyé.
+  // Il ne concerne que les images, et pèse quelques kilo-octets.
   let previewUploaded = false;
   if (prepared.preview && ticket.previewPath && ticket.previewToken) {
+    const supabase = createSupabaseBrowserClient();
     const { error } = await supabase.storage
       .from("media")
       .uploadToSignedUrl(ticket.previewPath, ticket.previewToken, prepared.preview, {

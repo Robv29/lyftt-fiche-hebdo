@@ -50,6 +50,7 @@ interface DraftItem {
   mediaStatus: "vide" | "preparation" | "envoi" | "enregistrement" | "pret" | "erreur";
   mediaError: string | null;
   mediaSaving: string | null;
+  mediaPercent: number | null;
 }
 
 const EMPTY_MEDIA = {
@@ -58,9 +59,10 @@ const EMPTY_MEDIA = {
   mediaStatus: "vide",
   mediaError: null,
   mediaSaving: null,
+  mediaPercent: null,
 } satisfies Pick<
   DraftItem,
-  "mediaAssetId" | "mediaName" | "mediaStatus" | "mediaError" | "mediaSaving"
+  "mediaAssetId" | "mediaName" | "mediaStatus" | "mediaError" | "mediaSaving" | "mediaPercent"
 >;
 
 /**
@@ -160,14 +162,31 @@ function MediaDropzone({ item, onFile }: { item: DraftItem; onFile: (file: File 
         <Icon name={ready ? "check" : "upload"} className={`h-4 w-4 ${busy ? "animate-pulse" : ""}`}/>
       </span>
       <strong className="mt-2 max-w-full truncate text-xs">
-        {busy ? MEDIA_STATUS_LABEL[item.mediaStatus] : item.mediaName ?? `Déposer ${expected}`}
+        {busy
+          ? item.mediaStatus === "envoi" && item.mediaPercent !== null
+            ? `Envoi ${item.mediaPercent} %`
+            : MEDIA_STATUS_LABEL[item.mediaStatus]
+          : item.mediaName ?? `Déposer ${expected}`}
       </strong>
+
+      {/* Une barre qui avance vaut mieux qu'une attente muette sur une vidéo. */}
+      {item.mediaStatus === "envoi" && item.mediaPercent !== null && (
+        <span className="mt-2 block h-1 w-full max-w-[180px] overflow-hidden rounded-full bg-[#dbe4f0]">
+          <span
+            className="block h-full rounded-full bg-[#1468ff] transition-[width] duration-200"
+            style={{ width: `${item.mediaPercent}%` }}
+          />
+        </span>
+      )}
+
       <span className="mt-1 text-[11px] text-ink-faint">
         {failed
           ? item.mediaError
           : item.mediaSaving
             ? item.mediaSaving
-            : `Glisser-déposer ou cliquer · ${isVideo ? "200 Mo" : "15 Mo"} maximum`}
+            : busy
+              ? "Vous pouvez continuer à rédiger pendant l’envoi."
+              : `Glisser-déposer ou cliquer · ${isVideo ? "200 Mo" : "15 Mo"} maximum`}
       </span>
     </label>
   );
@@ -233,10 +252,11 @@ export function SheetBuilder({
       return;
     }
 
+    // Seules les images sont préparées ; une vidéo part directement à l'envoi.
     update(key, {
       ...EMPTY_MEDIA,
       mediaName: file.name,
-      mediaStatus: "preparation",
+      mediaStatus: file.type.startsWith("video/") ? "envoi" : "preparation",
     });
 
     const result = await uploadMediaDirect({
@@ -244,6 +264,7 @@ export function SheetBuilder({
       clientId: selectedClientId,
       sheetId: null,
       onProgress: (step) => update(key, { mediaStatus: step }),
+      onUploadProgress: (percent) => update(key, { mediaPercent: percent }),
     });
 
     if (!result.ok) {
