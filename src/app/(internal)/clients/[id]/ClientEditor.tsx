@@ -37,6 +37,7 @@ export interface EditableClient {
     approvalPolicy: "explicit_required" | "tacit_allowed";
     tacitNotice: string;
     whatsappGroup: string;
+    postSignature: string;
   };
   customHashtags: string[];
 }
@@ -178,6 +179,7 @@ export function ClientEditor({ initial, managers }: { initial: EditableClient; m
                   <div className="sm:col-span-2"><label className="label" htmlFor="edit-policy">Règle de validation</label><select id="edit-policy" name="approvalPolicy" required className="field bg-white" defaultValue={initial.validation.approvalPolicy} onChange={(event) => setTacit(event.target.value === "tacit_allowed")}><option value="explicit_required">Validation explicite obligatoire</option><option value="tacit_allowed">Validation tacite autorisée</option></select></div>
                   {tacit && <div className="sm:col-span-2"><label className="label" htmlFor="edit-tacit">Mention contractuelle</label><textarea id="edit-tacit" name="tacitNotice" required rows={2} className="field bg-white" defaultValue={initial.validation.tacitNotice}/></div>}
                   <div className="sm:col-span-2"><label className="label" htmlFor="edit-whatsapp">Nom exact du groupe WhatsApp</label><input id="edit-whatsapp" name="whatsappGroup" required className="field bg-white" defaultValue={initial.validation.whatsappGroup}/><p className="mt-1 text-xs text-ink-faint">Recopiez le nom affiché dans WhatsApp, sans numéro ni lien d’invitation.</p></div>
+                  <div className="sm:col-span-2"><label className="label" htmlFor="edit-signature">Signature des publications</label><textarea id="edit-signature" name="postSignature" rows={2} maxLength={300} className="field bg-white" defaultValue={initial.validation.postSignature}/><p className="mt-1 text-xs text-ink-faint">Préremplie en bas du texte de chaque publication des prochaines fiches.</p></div>
                 </div>
               </section>
 

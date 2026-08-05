@@ -53,6 +53,7 @@ const clientSchema = z.object({
   photoPerMonth: z.coerce.number().int().min(0).max(31),
   videoPerMonth: z.coerce.number().int().min(0).max(31),
   visualPerMonth: z.coerce.number().int().min(0).max(31),
+  postSignature: z.string().trim().max(300).optional(),
 });
 
 function clientFormValues(formData: FormData) {
@@ -81,6 +82,7 @@ function clientFormValues(formData: FormData) {
     photoPerMonth: formData.get("photoPerMonth"),
     videoPerMonth: formData.get("videoPerMonth"),
     visualPerMonth: formData.get("visualPerMonth"),
+    postSignature: formData.get("postSignature") ?? undefined,
   };
 }
 
@@ -185,6 +187,7 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
           ? sanitizeText(input.tacitNotice, 500)
           : null,
       whatsapp_group_name: sanitizeText(input.whatsappGroup, 120),
+      post_signature: input.postSignature ? sanitizeText(input.postSignature, 300) : null,
       // Enregistrer le profil éditorial dès la création évite un client vide si
       // une requête suivante est interrompue.
       notes,
@@ -298,6 +301,7 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
       ? sanitizeText(input.tacitNotice, 500)
       : null,
     whatsapp_group_name: sanitizeText(input.whatsappGroup, 120),
+    post_signature: input.postSignature ? sanitizeText(input.postSignature, 300) : null,
     notes: JSON.stringify(notes),
   }).eq("id", clientId.data);
   if (clientError) return { ok: false, message: `Client non modifié : ${clientError.message}` };

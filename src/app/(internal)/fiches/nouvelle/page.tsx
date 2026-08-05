@@ -16,7 +16,7 @@ export default async function NewSheetPage({
 
   const { data: clients } = await supabase
     .from("clients")
-    .select("id, name, notes")
+    .select("id, name, notes, post_signature")
     .eq("is_active", true)
     .order("name", { ascending: true });
 
@@ -56,12 +56,9 @@ export default async function NewSheetPage({
             defaultNetworks: settings.defaultNetworks ?? ["instagram", "facebook"],
             defaultHashtags: settings.recommendedHashtags ?? [],
             monthlyCadence: settings.monthlyCadence ?? {},
+            postSignature: c.post_signature ?? "",
           };
         })}
         preselectedClientId={client ?? null}
         preselectedIsoYear={isoYear ? Number(isoYear) : undefined}
-        preselectedIsoWeek={isoWeek ? Number(isoWeek) : undefined}
-      />
-    </div>
-  );
-}
+        preselectedIsoWeek=

@@ -13,7 +13,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
   const [{ data: client }, { data: managers }] = await Promise.all([
-    supabase.from("clients").select(`id, name, notes, timezone, is_active, approval_policy, tacit_approval_notice, validation_deadline_weekday, validation_deadline_time, reminders_enabled, reminder_channel_email, reminder_channel_whatsapp, whatsapp_group_name, client_contacts ( id, first_name, last_name, email, phone, role_label, is_primary ), client_assignments ( role, profiles ( id, full_name ) ), weekly_sheets ( id, iso_week, iso_year, status, period_start, weekly_sheet_items ( id, publication_type, format, hashtags ) )`).eq("id",id).maybeSingle(),
+    supabase.from("clients").select(`id, name, notes, timezone, is_active, approval_policy, tacit_approval_notice, validation_deadline_weekday, validation_deadline_time, reminders_enabled, reminder_channel_email, reminder_channel_whatsapp, whatsapp_group_name, post_signature, client_contacts ( id, first_name, last_name, email, phone, role_label, is_primary ), client_assignments ( role, profiles ( id, full_name ) ), weekly_sheets ( id, iso_week, iso_year, status, period_start, weekly_sheet_items ( id, publication_type, format, hashtags ) )`).eq("id",id).maybeSingle(),
     supabase.from("profiles").select("id, full_name").in("role", ["community_manager", "super_admin", "production_manager"]).eq("is_active", true).order("full_name"),
   ]);
   if (!client) notFound();
@@ -68,7 +68,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
       },
       networks:networks.length ? networks : ["instagram","facebook"],
       cadence,
-      validation:{ deadlineWeekday:client.validation_deadline_weekday, deadlineTime:String(client.validation_deadline_time), approvalPolicy:client.approval_policy as "explicit_required"|"tacit_allowed", tacitNotice:client.tacit_approval_notice ?? "Sans retour avant cette échéance, les contenus seront considérés comme validés, selon les modalités prévues ensemble.", whatsappGroup:client.whatsapp_group_name ?? "" },
+      validation:{ deadlineWeekday:client.validation_deadline_weekday, deadlineTime:String(client.validation_deadline_time), approvalPolicy:client.approval_policy as "explicit_required"|"tacit_allowed", tacitNotice:client.tacit_approval_notice ?? "Sans retour avant cette échéance, les contenus seront considérés comme validés, selon les modalités prévues ensemble.", whatsappGroup:client.whatsapp_group_name ?? "", postSignature:client.post_signature ?? "" },
       customHashtags,
     }} managers={(managers ?? []).map((manager)=>({id:manager.id,name:manager.full_name}))}/></div></header>
     <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
@@ -83,8 +83,4 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
         <section className="card p-5"><p className="eyebrow">Validation</p><div className="mt-4 space-y-4 text-sm"><div className="flex gap-3"><Icon name="clock" className="mt-0.5 h-4 w-4 text-[#1468ff]"/><div><strong>Échéance client</strong><p className="text-ink-faint">Chaque {weekDays[client.validation_deadline_weekday-1]} à {String(client.validation_deadline_time).slice(0,5).replace(":","h")}</p></div></div><div className="flex gap-3"><Icon name="check" className="mt-0.5 h-4 w-4 text-[#1468ff]"/><div><strong>Mode de validation</strong><p className="text-ink-faint">{client.approval_policy === "tacit_allowed" ? "Validation tacite autorisée" : "Validation explicite requise"}</p></div></div></div></section>
         <section className="card p-5"><p className="eyebrow">Contacts</p><div className="mt-4 space-y-4">{contacts.map(c=><div key={c.id} className="flex gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#eff1f4] text-xs font-bold">{c.first_name[0]}{c.last_name?.[0]}</span><div className="min-w-0"><strong className="block truncate text-sm">{c.first_name} {c.last_name}</strong><p className="truncate text-xs text-ink-faint">{c.email ?? c.phone ?? c.role_label ?? "Contact"}</p></div>{c.is_primary&&<span className="ml-auto text-[10px] font-semibold text-[#0759e6]">PRINCIPAL</span>}</div>)}</div></section>
         <section className="card p-5"><p className="eyebrow">Équipe LYFTT</p><div className="mt-4 space-y-3">{assignments.map((a,i)=><div key={i} className="flex items-center justify-between text-sm"><span>{a.profiles?.full_name ?? "Non assigné"}</span><span className="text-xs text-ink-faint">{a.role.replaceAll("_"," ")}</span></div>)}</div></section>
-        <section className="rounded-[20px] bg-[#123f73] p-5 text-white shadow-[0_16px_36px_rgba(18,63,115,.16)]"><Icon name="spark" className="h-5 w-5 text-[#8fd1ff]"/><h2 className="mt-4 font-semibold">Mises à jour du site</h2><p className="mt-1 text-xs leading-relaxed text-white/70">Le suivi apparaîtra ici dès qu’une prestation web sera enregistrée dans Supabase.</p></section>
-      </aside>
-    </div>
-  </div>;
-}
+        <section className="rounded-[20px] bg-[#123f73] p-5 text-white shadow-[0_16px_36px_rgba(18,63,115,.16)]"><Icon name="spark" className="h-5 w-5 text-[#8fd1ff]"/><h2 className="mt-4 font-semibold">Mises à jour du site</h2><p className="mt-1 text-xs leading-relaxed text-white/70">Le suivi apparaîtra ici dès qu’une prestation web sera enregistrée dans Sup

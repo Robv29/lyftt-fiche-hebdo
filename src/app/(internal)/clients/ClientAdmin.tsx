@@ -240,6 +240,27 @@ export function ClientAdmin({
             <p className="mt-2 text-xs leading-relaxed text-ink-soft"><strong>Information attendue :</strong> recopiez le nom du groupe tel qu’il apparaît dans WhatsApp — pas un numéro ni un lien d’invitation. LYFTT l’affichera au moment de copier le message de validation pour éviter de l’envoyer au mauvais groupe.</p>
           </div>
 
+          <div className="rounded-2xl border border-line bg-canvas p-4 sm:p-5">
+            <label className="label" htmlFor="postSignature">
+              Signature des publications{" "}
+              <span className="font-normal text-ink-faint">(facultatif)</span>
+            </label>
+            <textarea
+              id="postSignature"
+              name="postSignature"
+              rows={2}
+              maxLength={300}
+              className="field bg-white"
+              placeholder={"Ex. \u{1F4CD} 1987 Rte d'Auch, 82000 Montauban"}
+            />
+            <p className="mt-2 text-xs leading-relaxed text-ink-soft">
+              Phrase répétée à la fin de chaque publication : adresse, horaires,
+              accroche de marque. Elle sera <strong>préremplie automatiquement</strong> en
+              bas du texte de chaque contenu, et reste modifiable publication par
+              publication.
+            </p>
+          </div>
+
           <section className="overflow-hidden rounded-[20px] bg-[#123f73] text-white">
             <div className="border-b border-white/10 p-5 sm:p-6">
               <div className="flex items-start gap-3">

@@ -28,6 +28,8 @@ interface ClientPreset {
   defaultNetworks: string[];
   defaultHashtags: string[];
   monthlyCadence: MonthlyCadence;
+  /** Phrase répétée en fin de chaque publication, préremplie dans le texte. */
+  postSignature: string;
 }
 
 interface DraftItem {
@@ -61,6 +63,22 @@ const EMPTY_MEDIA = {
   "mediaAssetId" | "mediaName" | "mediaStatus" | "mediaError" | "mediaSaving"
 >;
 
+/**
+ * Texte de départ d'une publication : deux retours à la ligne puis la
+ * signature du client. Le curseur se place en haut du champ, le community
+ * manager rédige au-dessus, et reste libre de retirer la signature.
+ */
+function signatureBlock(signature: string): string {
+  const trimmed = signature.trim();
+  return trimmed ? `\n\n${trimmed}` : "";
+}
+
+/** La signature préremplie seule ne compte pas comme un texte rédigé. */
+function hasWrittenCaption(caption: string, signature: string): boolean {
+  const written = caption.replace(signature.trim(), "").trim();
+  return written.length > 0;
+}
+
 function publicationTypeForFormat(format: MediaFormat): PublicationType {
   switch (format) {
     case "reels": return "reel";
@@ -91,7 +109,9 @@ function createDraftItems(client: ClientPreset, isoYear: number, isoWeek: number
     scheduledDate: "",
     scheduledTime: "18:00",
     format,
-    caption: "",
+    // La signature est posée en bas du texte : le community manager rédige
+    // au-dessus, et reste libre de la retirer publication par publication.
+    caption: signatureBlock(client.postSignature),
     hashtags: selectHashtags(client.defaultHashtags, `${client.id}-${isoYear}-${isoWeek}-${index}`).join(" "),
     ...EMPTY_MEDIA,
   }));
@@ -176,6 +196,8 @@ export function SheetBuilder({
   const [isoWeek] = useState(preselectedIsoWeek ?? defaultWeek.week);
   const initialClient = clients.find((client) => client.id === preselectedClientId) ?? clients[0]!;
   const [selectedClientId, setSelectedClientId] = useState(initialClient.id);
+  const activeClient =
+    clients.find((client) => client.id === selectedClientId) ?? initialClient;
   const [selectedNetworks, setSelectedNetworks] = useState<SocialNetwork[]>(
     initialClient.defaultNetworks.filter((network): network is SocialNetwork => SOCIAL_NETWORKS.includes(network as SocialNetwork)),
   );
@@ -190,7 +212,7 @@ export function SheetBuilder({
   const resolvedItems = items.map((item, index) => ({ ...item, scheduledDate: item.scheduledDate || dayOffset(Math.min(index * 2, 6)) }));
   const totalRequirements = resolvedItems.reduce((total, item) => total + (item.format === "texte_seul" ? 2 : 3), 0);
   const completedRequirements = resolvedItems.reduce((total, item) => total
-    + Number(Boolean(item.caption.trim()))
+    + Number(hasWrittenCaption(item.caption, activeClient.postSignature))
     + Number(Boolean(item.hashtags.trim()))
     + Number(item.format !== "texte_seul" && Boolean(item.mediaAssetId)), 0);
   const progress = totalRequirements ? Math.round((completedRequirements / totalRequirements) * 100) : 0;
@@ -264,7 +286,7 @@ export function SheetBuilder({
       scheduledDate: "",
       scheduledTime: "18:00",
       format: "photo",
-      caption: "",
+      caption: signatureBlock(client.postSignature),
       hashtags: selectHashtags(client.defaultHashtags, `${client.id}-${isoYear}-${isoWeek}-${currentItems.length}`).join(" "),
       ...EMPTY_MEDIA,
     }]);
@@ -345,7 +367,7 @@ export function SheetBuilder({
 
         <div className="space-y-3">
           {resolvedItems.map((item, index) => {
-            const itemComplete = Boolean(item.caption.trim()) && Boolean(item.hashtags.trim()) && (item.format === "texte_seul" || Boolean(item.mediaAssetId));
+            const itemComplete = hasWrittenCaption(item.caption, activeClient.postSignature) && Boolean(item.hashtags.trim()) && (item.format === "texte_seul" || Boolean(item.mediaAssetId));
             return (
               <article key={item.key} className="card reveal-panel space-y-4 p-4 sm:p-5">
                 <div className="flex items-start justify-between gap-3">
