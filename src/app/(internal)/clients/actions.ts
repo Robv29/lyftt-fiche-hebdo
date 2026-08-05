@@ -55,22 +55,8 @@ const clientSchema = z.object({
   visualPerMonth: z.coerce.number().int().min(0).max(31),
 });
 
-/** Identifiant lisible et unique, dérivé du nom. */
-function slugify(name: string): string {
-  return name
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60) || "client";
-}
-
-export async function createClient(formData: FormData): Promise<ClientActionResult> {
-  const profile = await requireEditorial();
-  if (!profile) return { ok: false, message: "Action non autorisée." };
-
-  const parsed = clientSchema.safeParse({
+function clientFormValues(formData: FormData) {
+  return {
     name: formData.get("name"),
     contactFirstName: formData.get("contactFirstName"),
     contactLastName: formData.get("contactLastName") ?? undefined,
@@ -95,24 +81,56 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
     photoPerMonth: formData.get("photoPerMonth"),
     videoPerMonth: formData.get("videoPerMonth"),
     visualPerMonth: formData.get("visualPerMonth"),
-  });
+  };
+}
+
+function prepareHashtags(input: z.infer<typeof clientSchema>): {
+  baseHashtags: string[];
+  customHashtags: string[];
+  recommendedHashtags: string[];
+} | null {
+  const baseHashtags = hashtagsForClientType(input.clientType);
+  const customHashtags = input.customHashtags.map(normalizeHashtag);
+  const baseHashtagKeys = new Set(baseHashtags.map((hashtag) => hashtag.toLocaleLowerCase("fr")));
+  const customHashtagKeys = customHashtags.map((hashtag) => hashtag.toLocaleLowerCase("fr"));
+  const valid = customHashtagKeys.every((key, index) =>
+    Boolean(key) && !baseHashtagKeys.has(key) && customHashtagKeys.indexOf(key) === index,
+  );
+  if (!valid) return null;
+  return {
+    baseHashtags,
+    customHashtags,
+    recommendedHashtags: buildClientHashtagLibrary(input.clientType, customHashtags),
+  };
+}
+
+/** Identifiant lisible et unique, dérivé du nom. */
+function slugify(name: string): string {
+  return name
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60) || "client";
+}
+
+export async function createClient(formData: FormData): Promise<ClientActionResult> {
+  const profile = await requireEditorial();
+  if (!profile) return { ok: false, message: "Action non autorisée." };
+
+  const parsed = clientSchema.safeParse(clientFormValues(formData));
 
   if (!parsed.success) {
     return { ok: false, message: parsed.error.issues[0]?.message ?? "Formulaire invalide." };
   }
 
   const input = parsed.data;
-  const baseHashtags = hashtagsForClientType(input.clientType);
-  const customHashtags = input.customHashtags.map(normalizeHashtag);
-  const baseHashtagKeys = new Set(baseHashtags.map((hashtag) => hashtag.toLocaleLowerCase("fr")));
-  const customHashtagKeys = customHashtags.map((hashtag) => hashtag.toLocaleLowerCase("fr"));
-  const customHashtagsAreUnique = customHashtagKeys.every((key, index) =>
-    Boolean(key) && !baseHashtagKeys.has(key) && customHashtagKeys.indexOf(key) === index,
-  );
-
-  if (!customHashtagsAreUnique) {
+  const hashtags = prepareHashtags(input);
+  if (!hashtags) {
     return { ok: false, message: "Les 5 hashtags client doivent être différents entre eux et des hashtags métier." };
   }
+  const { baseHashtags, customHashtags, recommendedHashtags } = hashtags;
 
   const admin = createSupabaseAdminClient();
 
@@ -161,8 +179,6 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
     role: "community_manager",
   });
 
-  const recommendedHashtags = buildClientHashtagLibrary(input.clientType, customHashtags);
-
   // Le profil éditorial alimente automatiquement les prochaines fiches.
   await admin
     .from("clients")
@@ -191,6 +207,114 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
 
   revalidatePath("/clients");
   return { ok: true, message: `${input.name} a été créé.`, clientId: client.id };
+}
+
+export async function updateClient(formData: FormData): Promise<ClientActionResult> {
+  const profile = await requireEditorial();
+  if (!profile) return { ok: false, message: "Action non autorisée." };
+
+  const clientId = z.string().uuid().safeParse(formData.get("clientId"));
+  const parsed = clientSchema.safeParse(clientFormValues(formData));
+  if (!clientId.success) return { ok: false, message: "Client invalide." };
+  if (!parsed.success) {
+    return { ok: false, message: parsed.error.issues[0]?.message ?? "Formulaire invalide." };
+  }
+
+  const scopedClient = await createSupabaseServerClient();
+  const { data: accessibleClient } = await scopedClient
+    .from("clients")
+    .select("id")
+    .eq("id", clientId.data)
+    .maybeSingle();
+  if (!accessibleClient) return { ok: false, message: "Client introuvable ou accès refusé." };
+
+  const input = parsed.data;
+  const hashtags = prepareHashtags(input);
+  if (!hashtags) {
+    return { ok: false, message: "Les 5 hashtags client doivent être différents entre eux et des hashtags métier." };
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { data: current } = await admin
+    .from("clients")
+    .select("id, notes, client_contacts ( id, is_primary )")
+    .eq("id", clientId.data)
+    .maybeSingle();
+  if (!current) return { ok: false, message: "Client introuvable." };
+
+  let currentNotes: Record<string, unknown> = {};
+  try { currentNotes = typeof current.notes === "string" ? JSON.parse(current.notes) : {}; } catch { currentNotes = {}; }
+  const existingBrandProfile = typeof currentNotes.brandProfile === "object" && currentNotes.brandProfile
+    ? currentNotes.brandProfile as Record<string, unknown>
+    : {};
+
+  const notes = {
+    ...currentNotes,
+    defaultNetworks: input.networks,
+    brandProfile: {
+      ...existingBrandProfile,
+      clientType: input.clientType,
+      activity: sanitizeText(input.activity, 120),
+      website: input.website,
+      city: sanitizeText(input.city, 100),
+      postalCode: input.postalCode,
+      audience: sanitizeText(input.audience, 300),
+      tone: input.brandTone,
+      keywords: sanitizeText(input.keywords, 1000),
+    },
+    baseHashtags: hashtags.baseHashtags,
+    customHashtags: hashtags.customHashtags,
+    recommendedHashtags: hashtags.recommendedHashtags,
+    monthlyCadence: {
+      photo: input.photoPerMonth,
+      video: input.videoPerMonth,
+      visual: input.visualPerMonth,
+    },
+  };
+
+  const { error: clientError } = await admin.from("clients").update({
+    name: sanitizeText(input.name, 120),
+    validation_deadline_weekday: input.deadlineWeekday,
+    validation_deadline_time: input.deadlineTime,
+    approval_policy: input.approvalPolicy,
+    tacit_approval_notice: input.approvalPolicy === "tacit_allowed" && input.tacitNotice
+      ? sanitizeText(input.tacitNotice, 500)
+      : null,
+    whatsapp_group_name: sanitizeText(input.whatsappGroup, 120),
+    notes: JSON.stringify(notes),
+  }).eq("id", clientId.data);
+  if (clientError) return { ok: false, message: `Client non modifié : ${clientError.message}` };
+
+  const contacts = current.client_contacts as unknown as { id: string; is_primary: boolean }[];
+  const primaryContact = contacts.find((contact) => contact.is_primary) ?? contacts[0];
+  const contactValues = {
+    first_name: sanitizeText(input.contactFirstName, 80),
+    last_name: sanitizeText(input.contactLastName, 80),
+    phone: input.contactPhone,
+    email: input.contactEmail,
+    is_primary: true,
+  };
+  const contactResult = primaryContact
+    ? await admin.from("client_contacts").update(contactValues).eq("id", primaryContact.id)
+    : await admin.from("client_contacts").insert({ client_id: clientId.data, ...contactValues });
+  if (contactResult.error) return { ok: false, message: `Contact non modifié : ${contactResult.error.message}` };
+
+  const { error: assignmentError } = await admin.from("client_assignments").upsert({
+    client_id: clientId.data,
+    profile_id: input.communityManagerId,
+    role: "community_manager",
+  }, { onConflict: "client_id,profile_id,role" });
+  if (assignmentError) return { ok: false, message: `Référent non modifié : ${assignmentError.message}` };
+  await admin.from("client_assignments")
+    .delete()
+    .eq("client_id", clientId.data)
+    .eq("role", "community_manager")
+    .neq("profile_id", input.communityManagerId);
+
+  revalidatePath("/clients");
+  revalidatePath(`/clients/${clientId.data}`);
+  revalidatePath("/fiches");
+  return { ok: true, message: "Modifications enregistrées.", clientId: clientId.data };
 }
 
 export async function setClientActive(

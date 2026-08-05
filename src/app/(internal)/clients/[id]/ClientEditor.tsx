@@ -1,0 +1,200 @@
+"use client";
+
+import { useEffect, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { updateClient, type ClientActionResult } from "../actions";
+import { Icon } from "@/components/Icon";
+import { SOCIAL_NETWORKS, SOCIAL_NETWORK_LABELS, type SocialNetwork } from "@/lib/domain/types";
+import {
+  hashtagsForClientType,
+  LYFTT_CLIENT_TYPES,
+  normalizeHashtag,
+  type LyfttClientType,
+} from "@/lib/domain/hashtags";
+
+const WEEKDAYS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"];
+
+export interface EditableClient {
+  id: string;
+  name: string;
+  communityManagerId: string;
+  contact: { firstName: string; lastName: string; phone: string; email: string };
+  brand: {
+    activity: string;
+    website: string;
+    city: string;
+    postalCode: string;
+    audience: string;
+    tone: "chaleureux" | "premium" | "expert" | "dynamique" | "institutionnel";
+    keywords: string;
+    clientType: LyfttClientType;
+  };
+  networks: SocialNetwork[];
+  cadence: { photo: number; video: number; visual: number };
+  validation: {
+    deadlineWeekday: number;
+    deadlineTime: string;
+    approvalPolicy: "explicit_required" | "tacit_allowed";
+    tacitNotice: string;
+    whatsappGroup: string;
+  };
+  customHashtags: string[];
+}
+
+function fiveHashtags(values: string[]): string[] {
+  return Array.from({ length: 5 }, (_, index) => values[index]?.replace(/^#+/, "") ?? "");
+}
+
+export function ClientEditor({ initial, managers }: { initial: EditableClient; managers: { id: string; name: string }[] }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [pending, startTransition] = useTransition();
+  const [feedback, setFeedback] = useState<ClientActionResult | null>(null);
+  const [tacit, setTacit] = useState(initial.validation.approvalPolicy === "tacit_allowed");
+  const [clientType, setClientType] = useState<LyfttClientType>(initial.brand.clientType);
+  const [customHashtags, setCustomHashtags] = useState(() => fiveHashtags(initial.customHashtags));
+
+  useEffect(() => {
+    if (!open) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  const baseHashtags = hashtagsForClientType(clientType);
+  const normalizedCustom = customHashtags.map(normalizeHashtag);
+  const baseKeys = new Set(baseHashtags.map((hashtag) => hashtag.toLocaleLowerCase("fr")));
+  const customKeys = normalizedCustom.map((hashtag) => hashtag.toLocaleLowerCase("fr"));
+  const hashtagError = customKeys.some((key, index) => Boolean(key) && (baseKeys.has(key) || customKeys.indexOf(key) !== index));
+  const hashtagsReady = normalizedCustom.filter(Boolean).length === 5 && !hashtagError;
+
+  const resetAndClose = () => {
+    setOpen(false);
+    setFeedback(null);
+    setTacit(initial.validation.approvalPolicy === "tacit_allowed");
+    setClientType(initial.brand.clientType);
+    setCustomHashtags(fiveHashtags(initial.customHashtags));
+  };
+
+  return (
+    <>
+      <button type="button" className="btn-secondary sm:w-auto" onClick={() => { setOpen(true); setFeedback(null); }}>
+        <Icon name="settings" className="h-4 w-4"/>Modifier le client
+      </button>
+
+      {open && (
+        <div className="fixed inset-0 z-50 flex justify-end" role="presentation">
+          <button type="button" className="absolute inset-0 cursor-default bg-[#111827]/45 backdrop-blur-[2px]" aria-label="Fermer la modification" onClick={resetAndClose}/>
+          <section className="reveal-panel relative flex h-full w-full max-w-3xl flex-col overflow-hidden bg-white shadow-[-24px_0_70px_rgba(17,24,39,.22)]" role="dialog" aria-modal="true" aria-labelledby="edit-client-title">
+            <header className="flex shrink-0 items-center justify-between gap-4 border-b bg-white/90 px-4 py-4 backdrop-blur-xl sm:px-7">
+              <div className="min-w-0"><p className="eyebrow">Dossier client</p><h2 id="edit-client-title" className="truncate text-lg font-semibold">Modifier {initial.name}</h2></div>
+              <button type="button" className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-canvas text-lg text-ink-soft transition-transform active:scale-95" onClick={resetAndClose} aria-label="Fermer">×</button>
+            </header>
+
+            <form
+              action={(formData) => {
+                startTransition(async () => {
+                  const result = await updateClient(formData);
+                  setFeedback(result);
+                  if (result.ok) {
+                    setOpen(false);
+                    router.refresh();
+                  }
+                });
+              }}
+              className="flex-1 space-y-7 overflow-y-auto p-4 pb-28 sm:p-7 sm:pb-32"
+            >
+              <input type="hidden" name="clientId" value={initial.id}/>
+              {feedback?.message && <p className={`rounded-xl border px-4 py-3 text-sm ${feedback.ok ? "border-state-approved/30 bg-state-approved/5 text-state-approved" : "border-state-changes/30 bg-state-changes/5 text-state-changes"}`}>{feedback.message}</p>}
+
+              <section>
+                <p className="eyebrow">Informations principales</p>
+                <div className="mt-3 grid gap-4 sm:grid-cols-2">
+                  <div><label className="label" htmlFor="edit-name">Nom du client</label><input id="edit-name" name="name" required className="field" defaultValue={initial.name}/></div>
+                  <div><label className="label" htmlFor="edit-manager">Community manager référent</label><select id="edit-manager" name="communityManagerId" required className="field" defaultValue={initial.communityManagerId}>{managers.map((manager) => <option key={manager.id} value={manager.id}>{manager.name}</option>)}</select></div>
+                </div>
+              </section>
+
+              <fieldset className="rounded-2xl bg-canvas p-4 sm:p-5">
+                <legend className="label px-1">Contact principal</legend>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div><label className="label" htmlFor="edit-first-name">Prénom</label><input id="edit-first-name" name="contactFirstName" required className="field bg-white" defaultValue={initial.contact.firstName}/></div>
+                  <div><label className="label" htmlFor="edit-last-name">Nom</label><input id="edit-last-name" name="contactLastName" required className="field bg-white" defaultValue={initial.contact.lastName}/></div>
+                  <div><label className="label" htmlFor="edit-phone">Téléphone</label><input id="edit-phone" name="contactPhone" type="tel" required className="field bg-white" defaultValue={initial.contact.phone}/></div>
+                  <div><label className="label" htmlFor="edit-email">E-mail</label><input id="edit-email" name="contactEmail" type="email" required className="field bg-white" defaultValue={initial.contact.email}/></div>
+                </div>
+              </fieldset>
+
+              <section>
+                <p className="eyebrow">Profil de marque</p>
+                <div className="mt-3 grid gap-4 sm:grid-cols-2">
+                  <div><label className="label" htmlFor="edit-activity">Activité principale</label><input id="edit-activity" name="activity" required className="field" defaultValue={initial.brand.activity}/></div>
+                  <div><label className="label" htmlFor="edit-website">Site internet</label><input id="edit-website" name="website" type="url" required className="field" defaultValue={initial.brand.website}/></div>
+                  <div><label className="label" htmlFor="edit-city">Ville ou zone</label><input id="edit-city" name="city" required className="field" defaultValue={initial.brand.city}/></div>
+                  <div><label className="label" htmlFor="edit-postal">Code postal</label><input id="edit-postal" name="postalCode" required pattern="[0-9]{5}" inputMode="numeric" className="field" defaultValue={initial.brand.postalCode}/></div>
+                  <div><label className="label" htmlFor="edit-audience">Clientèle cible</label><input id="edit-audience" name="audience" required className="field" defaultValue={initial.brand.audience}/></div>
+                  <div><label className="label" htmlFor="edit-tone">Ton de communication</label><select id="edit-tone" name="brandTone" required className="field" defaultValue={initial.brand.tone}><option value="chaleureux">Chaleureux et proche</option><option value="premium">Premium et élégant</option><option value="expert">Expert et pédagogique</option><option value="dynamique">Dynamique et direct</option><option value="institutionnel">Institutionnel et rassurant</option></select></div>
+                  <div className="sm:col-span-2"><label className="label" htmlFor="edit-keywords">Produits, services et mots-clés</label><textarea id="edit-keywords" name="keywords" required rows={3} className="field" defaultValue={initial.brand.keywords}/></div>
+                </div>
+              </section>
+
+              <fieldset>
+                <legend className="eyebrow">Réseaux diffusés</legend>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">{SOCIAL_NETWORKS.map((network) => <label key={network} className="choice-chip"><input type="checkbox" name="networks" value={network} defaultChecked={initial.networks.includes(network)}/>{SOCIAL_NETWORK_LABELS[network]}</label>)}</div>
+              </fieldset>
+
+              <fieldset>
+                <legend className="eyebrow">Rythme mensuel vendu</legend>
+                <div className="mt-3 grid gap-4 sm:grid-cols-3">
+                  <div><label className="label" htmlFor="edit-photo">Photos</label><input id="edit-photo" name="photoPerMonth" type="number" min="0" max="31" required className="field" defaultValue={initial.cadence.photo}/></div>
+                  <div><label className="label" htmlFor="edit-video">Vidéos / Reels</label><input id="edit-video" name="videoPerMonth" type="number" min="0" max="31" required className="field" defaultValue={initial.cadence.video}/></div>
+                  <div><label className="label" htmlFor="edit-visual">Visuels / carrousels</label><input id="edit-visual" name="visualPerMonth" type="number" min="0" max="31" required className="field" defaultValue={initial.cadence.visual}/></div>
+                </div>
+              </fieldset>
+
+              <section className="rounded-2xl border border-[#d8e4f8] bg-[#f7faff] p-4 sm:p-5">
+                <p className="eyebrow">Validation et WhatsApp</p>
+                <div className="mt-3 grid gap-4 sm:grid-cols-2">
+                  <div><label className="label" htmlFor="edit-day">Jour limite</label><select id="edit-day" name="deadlineWeekday" required className="field bg-white" defaultValue={initial.validation.deadlineWeekday}>{WEEKDAYS.map((day, index) => <option key={day} value={index + 1}>{day}</option>)}</select></div>
+                  <div><label className="label" htmlFor="edit-time">Heure limite</label><input id="edit-time" name="deadlineTime" type="time" required className="field bg-white" defaultValue={initial.validation.deadlineTime.slice(0, 5)}/></div>
+                  <div className="sm:col-span-2"><label className="label" htmlFor="edit-policy">Règle de validation</label><select id="edit-policy" name="approvalPolicy" required className="field bg-white" defaultValue={initial.validation.approvalPolicy} onChange={(event) => setTacit(event.target.value === "tacit_allowed")}><option value="explicit_required">Validation explicite obligatoire</option><option value="tacit_allowed">Validation tacite autorisée</option></select></div>
+                  {tacit && <div className="sm:col-span-2"><label className="label" htmlFor="edit-tacit">Mention contractuelle</label><textarea id="edit-tacit" name="tacitNotice" required rows={2} className="field bg-white" defaultValue={initial.validation.tacitNotice}/></div>}
+                  <div className="sm:col-span-2"><label className="label" htmlFor="edit-whatsapp">Nom exact du groupe WhatsApp</label><input id="edit-whatsapp" name="whatsappGroup" required className="field bg-white" defaultValue={initial.validation.whatsappGroup}/><p className="mt-1 text-xs text-ink-faint">Recopiez le nom affiché dans WhatsApp, sans numéro ni lien d’invitation.</p></div>
+                </div>
+              </section>
+
+              <section className="overflow-hidden rounded-2xl bg-[#111827] text-white">
+                <div className="border-b border-white/10 p-4 sm:p-5"><p className="text-xs font-semibold uppercase tracking-[.12em] text-white/60">Bibliothèque LYFTT · sans IA</p><h3 className="mt-1 font-semibold">Modifier les 20 hashtags</h3><p className="mt-1 text-xs text-white/65">Le type fournit 15 hashtags fixes ; les 5 derniers restent propres au client.</p></div>
+                <div className="grid lg:grid-cols-2">
+                  <div className="border-b border-white/10 p-4 sm:p-5 lg:border-b-0 lg:border-r">
+                    <label className="label text-white/80" htmlFor="edit-client-type">Type de client</label>
+                    <select id="edit-client-type" name="clientType" required className="field bg-white text-ink" value={clientType} onChange={(event) => setClientType(event.target.value as LyfttClientType)}>{LYFTT_CLIENT_TYPES.map((type) => <option key={type.id} value={type.id}>{type.label}</option>)}</select>
+                    <div key={clientType} className="reveal-panel mt-4 flex flex-wrap gap-1.5">{baseHashtags.map((hashtag) => <span key={hashtag} className="rounded-lg bg-white/10 px-2 py-1 text-[11px] text-white/85">{hashtag}</span>)}</div>
+                  </div>
+                  <div className="bg-white/[.05] p-4 sm:p-5">
+                    <div className="flex items-center justify-between gap-3"><p className="label text-white/80">5 hashtags client</p><span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${hashtagsReady ? "bg-state-approved/20 text-[#a7f3d0]" : "bg-white/10 text-white/60"}`}>{normalizedCustom.filter(Boolean).length}/5</span></div>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-1">{customHashtags.map((value, index) => {
+                      const key = customKeys[index];
+                      const duplicate = Boolean(key) && (baseKeys.has(key) || customKeys.indexOf(key) !== index);
+                      return <div key={index}><label className="sr-only" htmlFor={`edit-hashtag-${index}`}>Hashtag client {index + 1}</label><div className="relative"><span className="pointer-events-none absolute inset-y-0 left-3 flex items-center font-semibold text-ink-faint">#</span><input id={`edit-hashtag-${index}`} name={`customHashtag${index + 1}`} required minLength={2} maxLength={60} className={`field bg-white pl-7 text-ink ${duplicate ? "border-state-changes ring-2 ring-state-changes/20" : ""}`} value={value.replace(/^#+/, "")} onChange={(event) => setCustomHashtags((current) => current.map((hashtag, currentIndex) => currentIndex === index ? event.target.value : hashtag))} aria-invalid={duplicate || undefined}/></div>{duplicate && <p className="mt-1 text-[11px] text-[#fda4af]">Déjà utilisé : choisissez-en un autre.</p>}</div>;
+                    })}</div>
+                  </div>
+                </div>
+              </section>
+
+              <div className="fixed inset-x-0 bottom-0 z-10 flex justify-end gap-2 border-t bg-white/90 p-4 backdrop-blur-xl sm:left-auto sm:w-full sm:max-w-3xl sm:px-7">
+                <button type="button" className="btn-secondary sm:w-auto" onClick={resetAndClose}>Annuler</button>
+                <button type="submit" className="btn-primary sm:w-auto" disabled={pending || !hashtagsReady}>{pending ? "Enregistrement…" : "Enregistrer les modifications"}</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+    </>
+  );
+}
