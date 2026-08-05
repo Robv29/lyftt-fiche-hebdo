@@ -2,19 +2,29 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { getCurrentProfile } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { publicationReadiness } from "@/lib/domain/publication-checklist";
+import {
+  ACCESS_DENIED_MESSAGE,
+  requireEditorialProfile,
+  resolveAccessibleItem,
+} from "@/lib/internal/authorization";
 
 export interface PublicationActionResult { ok:boolean; published:boolean; message?:string }
 
 const schema = z.object({ itemId:z.string().uuid(), step:z.enum(["media", "content"]) });
 
 export async function completePublicationStep(itemId:string, step:"media"|"content"):Promise<PublicationActionResult> {
-  const profile = await getCurrentProfile();
-  if (!profile || !["super_admin","production_manager","community_manager"].includes(profile.role)) return { ok:false, published:false, message:"Action non autorisée." };
+  const profile = await requireEditorialProfile();
+  if (!profile) return { ok:false, published:false, message:"Action non autorisée." };
   const parsed = schema.safeParse({ itemId, step });
   if (!parsed.success) return { ok:false, published:false, message:"Publication invalide." };
+
+  // Le rôle ne suffit pas : la publication doit appartenir à un client du
+  // périmètre de l'utilisateur. La vérification passe par une lecture RLS.
+  if (!(await resolveAccessibleItem(parsed.data.itemId))) {
+    return { ok:false, published:false, message:ACCESS_DENIED_MESSAGE };
+  }
 
   const admin = createSupabaseAdminClient();
   const { data:item } = await admin.from("weekly_sheet_items").select("id, format, media_asset_id, media_external_url, media_downloaded_at, content_copied_at, published_at").eq("id",itemId).maybeSingle();

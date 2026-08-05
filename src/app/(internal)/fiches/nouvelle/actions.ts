@@ -2,8 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { getCurrentProfile } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import {
+  ACCESS_DENIED_MESSAGE,
+  canAccessClient,
+  requireEditorialProfile,
+} from "@/lib/internal/authorization";
 import { isoWeekStart } from "@/lib/domain/deadline";
 import { normalizeHashtags, sanitizeText } from "@/lib/security/sanitize";
 import { SOCIAL_NETWORKS } from "@/lib/domain/types";
@@ -35,8 +39,8 @@ const sheetSchema = z.object({
 });
 
 export async function createSheet(formData: FormData): Promise<SheetActionResult> {
-  const profile = await getCurrentProfile();
-  if (!profile || !["super_admin", "production_manager", "community_manager"].includes(profile.role)) {
+  const profile = await requireEditorialProfile();
+  if (!profile) {
     return { ok: false, message: "Action non autorisée." };
   }
 
@@ -60,6 +64,13 @@ export async function createSheet(formData: FormData): Promise<SheetActionResult
   }
 
   const input = parsed.data;
+
+  // Le client visé vient du formulaire : on refuse de créer une fiche pour un
+  // client hors du périmètre de l'utilisateur.
+  if (!(await canAccessClient(input.clientId))) {
+    return { ok: false, message: ACCESS_DENIED_MESSAGE };
+  }
+
   const admin = createSupabaseAdminClient();
 
   // La période est déduite de la semaine ISO : l'échéance de validation est

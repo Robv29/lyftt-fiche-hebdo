@@ -3,7 +3,11 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { getCurrentProfile } from "@/lib/supabase/server";
+import {
+  ACCESS_DENIED_MESSAGE,
+  requireEditorialProfile,
+  resolveAccessibleSheet,
+} from "@/lib/internal/authorization";
 import { uploadSheetMedia } from "@/lib/media/internal-upload";
 import { normalizeHashtags, sanitizeText } from "@/lib/security/sanitize";
 import type { MediaFormat, PublicationType } from "@/lib/domain/types";
@@ -30,8 +34,8 @@ function publicationTypeForFormat(format: MediaFormat): PublicationType {
 }
 
 export async function saveSheetContent(formData: FormData): Promise<SheetContentActionResult> {
-  const profile = await getCurrentProfile();
-  if (!profile || !["super_admin", "production_manager", "community_manager"].includes(profile.role)) {
+  const profile = await requireEditorialProfile();
+  if (!profile) {
     return { ok: false, message: "Action non autorisée." };
   }
 
@@ -41,13 +45,19 @@ export async function saveSheetContent(formData: FormData): Promise<SheetContent
   const items = z.array(editableItemSchema).min(1).safeParse(rawItems);
   if (!sheetId.success || !items.success) return { ok: false, message: "Contenu de la fiche invalide." };
 
+  // La fiche doit être dans le périmètre de l'utilisateur, pas seulement
+  // exister : la lecture RLS le vérifie avant toute écriture service-role.
+  if (!(await resolveAccessibleSheet(sheetId.data))) {
+    return { ok: false, message: ACCESS_DENIED_MESSAGE };
+  }
+
   const admin = createSupabaseAdminClient();
   const { data: sheet } = await admin
     .from("weekly_sheets")
     .select("id, client_id, status, weekly_sheet_items ( id, media_asset_id )")
     .eq("id", sheetId.data)
     .maybeSingle();
-  if (!sheet) return { ok: false, message: "Fiche introuvable." };
+  if (!sheet) return { ok: false, message: ACCESS_DENIED_MESSAGE };
   if (!["draft", "internal_review", "ready_to_send"].includes(sheet.status)) {
     return { ok: false, message: "Cette fiche a déjà été envoyée. Utilisez le workflow de correction pour la modifier." };
   }
