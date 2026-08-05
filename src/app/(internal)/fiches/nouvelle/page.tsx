@@ -61,4 +61,8 @@ export default async function NewSheetPage({
         })}
         preselectedClientId={client ?? null}
         preselectedIsoYear={isoYear ? Number(isoYear) : undefined}
-        preselectedIsoWeek=
+        preselectedIsoWeek={isoWeek ? Number(isoWeek) : undefined}
+      />
+    </div>
+  );
+}
