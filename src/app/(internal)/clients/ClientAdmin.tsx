@@ -48,6 +48,8 @@ export function ClientAdmin({
   const [tacit, setTacit] = useState(false);
   const [clientType, setClientType] = useState<LyfttClientType>("restaurant");
   const [customHashtags, setCustomHashtags] = useState(["", "", "", "", ""]);
+  // Un client a souvent plusieurs interlocuteurs à qui adresser le planning.
+  const [contactRows, setContactRows] = useState<string[]>(["principal"]);
   const baseHashtags = hashtagsForClientType(clientType);
   const normalizedCustomHashtags = customHashtags.map(normalizeHashtag);
   const baseHashtagKeys = new Set(baseHashtags.map((hashtag) => hashtag.toLocaleLowerCase("fr")));
@@ -131,13 +133,48 @@ export function ClientAdmin({
           </div>
 
           <fieldset className="form-section">
-            <legend className="label px-1">Contact principal</legend>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <div><label className="label" htmlFor="contactFirstName">Prénom</label><input id="contactFirstName" name="contactFirstName" required className="field" autoComplete="given-name"/></div>
-              <div><label className="label" htmlFor="contactLastName">Nom</label><input id="contactLastName" name="contactLastName" required className="field" autoComplete="family-name"/></div>
-              <div><label className="label" htmlFor="contactPhone">Téléphone</label><input id="contactPhone" name="contactPhone" type="tel" required className="field" placeholder="+33 6 12 34 56 78" autoComplete="tel"/></div>
-              <div><label className="label" htmlFor="contactEmail">E-mail</label><input id="contactEmail" name="contactEmail" type="email" required className="field" autoComplete="email"/></div>
+            <legend className="label px-1">Contacts destinataires</legend>
+            <p className="mb-4 text-xs text-ink-faint">
+              Chaque contact reçoit le planning et le lien de validation. Ajoutez-en
+              autant que nécessaire : gérant, responsable communication, associé.
+            </p>
+
+            <div className="space-y-4">
+              {contactRows.map((rowId, index) => (
+                <div key={rowId} className="rounded-2xl border border-line bg-canvas p-4">
+                  <div className="mb-3 flex items-center justify-between">
+                    <span className="text-xs font-semibold text-ink-soft">
+                      {index === 0 ? "Contact principal" : `Contact ${index + 1}`}
+                    </span>
+                    {index > 0 && (
+                      <button
+                        type="button"
+                        className="text-xs text-state-changes hover:underline"
+                        onClick={() =>
+                          setContactRows((rows) => rows.filter((id) => id !== rowId))
+                        }
+                      >
+                        Retirer
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                    <div><label className="label" htmlFor={`contactFirstName-${rowId}`}>Prénom</label><input id={`contactFirstName-${rowId}`} name="contactFirstName" required className="field bg-white" autoComplete="given-name"/></div>
+                    <div><label className="label" htmlFor={`contactLastName-${rowId}`}>Nom</label><input id={`contactLastName-${rowId}`} name="contactLastName" required className="field bg-white" autoComplete="family-name"/></div>
+                    <div><label className="label" htmlFor={`contactPhone-${rowId}`}>Téléphone</label><input id={`contactPhone-${rowId}`} name="contactPhone" type="tel" required className="field bg-white" placeholder="+33 6 12 34 56 78" autoComplete="tel"/></div>
+                    <div><label className="label" htmlFor={`contactEmail-${rowId}`}>E-mail</label><input id={`contactEmail-${rowId}`} name="contactEmail" type="email" required className="field bg-white" autoComplete="email"/></div>
+                  </div>
+                </div>
+              ))}
             </div>
+
+            <button
+              type="button"
+              className="btn-secondary mt-4"
+              onClick={() => setContactRows((rows) => [...rows, `c-${Date.now()}`])}
+            >
+              Ajouter un contact
+            </button>
           </fieldset>
 
           <fieldset className="form-section">

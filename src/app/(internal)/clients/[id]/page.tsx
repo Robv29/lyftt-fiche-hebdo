@@ -55,7 +55,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
       id: client.id,
       name: client.name,
       communityManagerId: communityManager?.profiles?.id ?? managers?.[0]?.id ?? "",
-      contact: { firstName:primaryContact?.first_name ?? "", lastName:primaryContact?.last_name ?? "", phone:primaryContact?.phone ?? "", email:primaryContact?.email ?? "" },
+      contacts: (contacts.length ? contacts : [primaryContact]).filter(Boolean).map((c)=>({ firstName:c?.first_name ?? "", lastName:c?.last_name ?? "", phone:c?.phone ?? "", email:c?.email ?? "" })),
       brand: {
         clientType,
         activity:settings.brandProfile?.activity ?? "",

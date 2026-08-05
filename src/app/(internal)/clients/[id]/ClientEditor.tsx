@@ -18,7 +18,7 @@ export interface EditableClient {
   id: string;
   name: string;
   communityManagerId: string;
-  contact: { firstName: string; lastName: string; phone: string; email: string };
+  contacts: { firstName: string; lastName: string; phone: string; email: string }[];
   brand: {
     activity: string;
     website: string;
@@ -49,6 +49,10 @@ function fiveHashtags(values: string[]): string[] {
 export function ClientEditor({ initial, managers }: { initial: EditableClient; managers: { id: string; name: string }[] }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  // Liste éditable : ajouts et retraits sont appliqués en une seule sauvegarde.
+  const [editedContacts, setEditedContacts] = useState(() =>
+    initial.contacts.map((contact, index) => ({ ...contact, key: `c${index}` })),
+  );
   const [pending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<ClientActionResult | null>(null);
   const [tacit, setTacit] = useState(initial.validation.approvalPolicy === "tacit_allowed");
@@ -135,13 +139,43 @@ export function ClientEditor({ initial, managers }: { initial: EditableClient; m
               </section>
 
               <fieldset className="rounded-2xl bg-canvas p-4 sm:p-5">
-                <legend className="label px-1">Contact principal</legend>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div><label className="label" htmlFor="edit-first-name">Prénom</label><input id="edit-first-name" name="contactFirstName" required className="field bg-white" defaultValue={initial.contact.firstName}/></div>
-                  <div><label className="label" htmlFor="edit-last-name">Nom</label><input id="edit-last-name" name="contactLastName" required className="field bg-white" defaultValue={initial.contact.lastName}/></div>
-                  <div><label className="label" htmlFor="edit-phone">Téléphone</label><input id="edit-phone" name="contactPhone" type="tel" required className="field bg-white" defaultValue={initial.contact.phone}/></div>
-                  <div><label className="label" htmlFor="edit-email">E-mail</label><input id="edit-email" name="contactEmail" type="email" required className="field bg-white" defaultValue={initial.contact.email}/></div>
+                <legend className="label px-1">Contacts destinataires</legend>
+                <p className="mb-3 text-xs text-ink-faint">
+                  Chacun reçoit le planning et le lien de validation.
+                </p>
+                <div className="space-y-4">
+                  {editedContacts.map((contact, index) => (
+                    <div key={contact.key} className="rounded-xl border border-line bg-white p-3">
+                      <div className="mb-2 flex items-center justify-between">
+                        <span className="text-xs font-semibold text-ink-soft">
+                          {index === 0 ? "Contact principal" : `Contact ${index + 1}`}
+                        </span>
+                        {editedContacts.length > 1 && (
+                          <button
+                            type="button"
+                            className="text-xs text-state-changes hover:underline"
+                            onClick={() => setEditedContacts((rows) => rows.filter((row) => row.key !== contact.key))}
+                          >
+                            Retirer
+                          </button>
+                        )}
+                      </div>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div><label className="label" htmlFor={`edit-first-${contact.key}`}>Prénom</label><input id={`edit-first-${contact.key}`} name="contactFirstName" required className="field" defaultValue={contact.firstName}/></div>
+                        <div><label className="label" htmlFor={`edit-last-${contact.key}`}>Nom</label><input id={`edit-last-${contact.key}`} name="contactLastName" required className="field" defaultValue={contact.lastName}/></div>
+                        <div><label className="label" htmlFor={`edit-phone-${contact.key}`}>Téléphone</label><input id={`edit-phone-${contact.key}`} name="contactPhone" type="tel" required className="field" defaultValue={contact.phone}/></div>
+                        <div><label className="label" htmlFor={`edit-email-${contact.key}`}>E-mail</label><input id={`edit-email-${contact.key}`} name="contactEmail" type="email" required className="field" defaultValue={contact.email}/></div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
+                <button
+                  type="button"
+                  className="btn-secondary mt-4"
+                  onClick={() => setEditedContacts((rows) => [...rows, { key: `c-${Date.now()}`, firstName: "", lastName: "", phone: "", email: "" }])}
+                >
+                  Ajouter un contact
+                </button>
               </fieldset>
 
               <section>

@@ -350,11 +350,13 @@ export default async function SheetDetailPage({
               community_manager_name: manager?.full_name ?? "",
             }}
             recipientPhone={primaryContact?.phone ?? undefined}
-            recipientLabel={
-              primaryContact
-                ? `${primaryContact.first_name} ${primaryContact.last_name ?? ""}`.trim()
-                : undefined
-            }
+            recipients={(contacts ?? []).map((contact) => ({
+              name: `${contact.first_name} ${contact.last_name ?? ""}`.trim(),
+              phone: contact.phone,
+            }))}
+            recipientLabel={(contacts ?? [])
+              .map((contact) => `${contact.first_name} ${contact.last_name ?? ""}`.trim())
+              .join(", ") || undefined}
             canSend={preparation.percentage === 100}
           />
         </aside>

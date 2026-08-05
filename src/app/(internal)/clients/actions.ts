@@ -29,10 +29,12 @@ async function requireEditorial() {
 
 const clientSchema = z.object({
   name: z.string().trim().min(2, "Le nom du client est requis."),
-  contactFirstName: z.string().trim().min(1, "Le prénom du contact est requis."),
-  contactLastName: z.string().trim().min(1, "Le nom du contact est requis."),
-  contactPhone: z.string().trim().min(8, "Le téléphone du contact est requis.").max(30),
-  contactEmail: z.string().trim().email("E-mail invalide."),
+  contacts: z.array(z.object({
+    firstName: z.string().trim().min(1, "Le prénom du contact est requis."),
+    lastName: z.string().trim().min(1, "Le nom du contact est requis."),
+    phone: z.string().trim().min(8, "Le téléphone du contact est requis.").max(30),
+    email: z.string().trim().email("E-mail invalide."),
+  })).min(1, "Au moins un contact est requis."),
   activity: z.string().trim().min(2, "L’activité est requise.").max(120),
   website: z.string().trim().url("L’adresse du site internet est invalide."),
   city: z.string().trim().min(2, "La ville est requise.").max(100),
@@ -59,10 +61,12 @@ const clientSchema = z.object({
 function clientFormValues(formData: FormData) {
   return {
     name: formData.get("name"),
-    contactFirstName: formData.get("contactFirstName"),
-    contactLastName: formData.get("contactLastName") ?? undefined,
-    contactPhone: formData.get("contactPhone") ?? undefined,
-    contactEmail: formData.get("contactEmail") ?? undefined,
+    contacts: formData.getAll("contactFirstName").map((firstName, index) => ({
+      firstName,
+      lastName: formData.getAll("contactLastName")[index],
+      phone: formData.getAll("contactPhone")[index],
+      email: formData.getAll("contactEmail")[index],
+    })),
     activity: formData.get("activity"),
     website: normalizeWebsite(formData.get("website")),
     city: formData.get("city"),
@@ -199,14 +203,19 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
     return { ok: false, message: `Client non créé : ${error?.message ?? "erreur"}` };
   }
 
-  const { error: contactError } = await admin.from("client_contacts").insert({
-    client_id: client.id,
-    first_name: sanitizeText(input.contactFirstName, 80),
-    last_name: input.contactLastName ? sanitizeText(input.contactLastName, 80) : null,
-    phone: input.contactPhone || null,
-    email: input.contactEmail || null,
-    is_primary: true,
-  });
+  // Tous les contacts saisis reçoivent le planning ; le premier fait office de
+  // référent pour l'affichage et pour le prénom des messages préremplis.
+  const { error: contactError } = await admin.from("client_contacts").insert(
+    input.contacts.map((contact) => ({
+      client_id: client.id,
+      first_name: sanitizeText(contact.firstName, 80),
+      last_name: sanitizeText(contact.lastName, 80),
+      phone: contact.phone || null,
+      email: contact.email || null,
+      is_primary: true,
+      receives_planning: true,
+    })),
+  );
   if (contactError) {
     await admin.from("clients").delete().eq("id", client.id);
     return { ok: false, message: `Contact non enregistré : ${contactError.message}` };
@@ -306,19 +315,28 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
   }).eq("id", clientId.data);
   if (clientError) return { ok: false, message: `Client non modifié : ${clientError.message}` };
 
-  const contacts = current.client_contacts as unknown as { id: string; is_primary: boolean }[];
-  const primaryContact = contacts.find((contact) => contact.is_primary) ?? contacts[0];
-  const contactValues = {
-    first_name: sanitizeText(input.contactFirstName, 80),
-    last_name: sanitizeText(input.contactLastName, 80),
-    phone: input.contactPhone,
-    email: input.contactEmail,
-    is_primary: true,
-  };
-  const contactResult = primaryContact
-    ? await admin.from("client_contacts").update(contactValues).eq("id", primaryContact.id)
-    : await admin.from("client_contacts").insert({ client_id: clientId.data, ...contactValues });
-  if (contactResult.error) return { ok: false, message: `Contact non modifié : ${contactResult.error.message}` };
+  // La liste des contacts est remplacée par celle du formulaire : c'est le seul
+  // moyen simple de gérer ajouts, modifications et retraits en une opération.
+  const { error: clearError } = await admin
+    .from("client_contacts")
+    .delete()
+    .eq("client_id", clientId.data);
+  if (clearError) {
+    return { ok: false, message: `Contacts non modifiés : ${clearError.message}` };
+  }
+
+  const { error: contactError } = await admin.from("client_contacts").insert(
+    input.contacts.map((contact) => ({
+      client_id: clientId.data,
+      first_name: sanitizeText(contact.firstName, 80),
+      last_name: sanitizeText(contact.lastName, 80),
+      phone: contact.phone,
+      email: contact.email,
+      is_primary: true,
+      receives_planning: true,
+    })),
+  );
+  if (contactError) return { ok: false, message: `Contacts non modifiés : ${contactError.message}` };
 
   const { error: assignmentError } = await admin.from("client_assignments").upsert({
     client_id: clientId.data,

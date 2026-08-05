@@ -41,6 +41,7 @@ export function SendPanel({
   templates,
   context,
   recipientPhone,
+  recipients,
   recipientLabel,
   canSend,
 }: {
@@ -50,6 +51,8 @@ export function SendPanel({
   templates: Template[];
   context: TemplateContext;
   recipientPhone?: string;
+  /** Tous les contacts qui reçoivent le planning. */
+  recipients?: { name: string; phone: string | null }[];
   recipientLabel?: string;
   canSend: boolean;
 }) {
@@ -209,15 +212,41 @@ export function SendPanel({
             {copied ? "Copié" : "Copier le message"}
           </button>
 
-          <a
-            className={`btn-secondary ${complete ? "" : "pointer-events-none opacity-50"}`}
-            href={whatsappLink(body, recipientPhone)}
-            target="_blank"
-            rel="noreferrer noopener"
-          >
-            Ouvrir WhatsApp
-          </a>
+          {/*
+            WhatsApp n'ouvre qu'une conversation à la fois : avec plusieurs
+            destinataires, on propose un bouton par personne plutôt qu'un lien
+            unique qui en oublierait silencieusement.
+          */}
+          {recipients && recipients.length > 1 ? (
+            recipients.map((recipient) => (
+              <a
+                key={recipient.name}
+                className={`btn-secondary ${complete ? "" : "pointer-events-none opacity-50"}`}
+                href={whatsappLink(body, recipient.phone ?? undefined)}
+                target="_blank"
+                rel="noreferrer noopener"
+              >
+                WhatsApp · {recipient.name.split(" ")[0]}
+              </a>
+            ))
+          ) : (
+            <a
+              className={`btn-secondary ${complete ? "" : "pointer-events-none opacity-50"}`}
+              href={whatsappLink(body, recipientPhone)}
+              target="_blank"
+              rel="noreferrer noopener"
+            >
+              Ouvrir WhatsApp
+            </a>
+          )}
         </div>
+
+        {recipients && recipients.length > 1 && (
+          <p className="mt-2 text-xs text-ink-faint">
+            {recipients.length} destinataires : {recipients.map((r) => r.name).join(", ")}.
+            Le message est identique pour chacun.
+          </p>
+        )}
 
         <form
           action={(formData) => {
