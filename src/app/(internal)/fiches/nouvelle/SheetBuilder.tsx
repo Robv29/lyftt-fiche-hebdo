@@ -19,6 +19,8 @@ import {
   type PublicationType,
 } from "@/lib/domain/types";
 import { Icon } from "@/components/Icon";
+import { uploadMediaDirect } from "@/lib/media/direct-upload";
+import { formatBytes } from "@/lib/domain/media-retention";
 
 interface ClientPreset {
   id: string;
@@ -35,8 +37,29 @@ interface DraftItem {
   format: MediaFormat;
   caption: string;
   hashtags: string;
-  mediaFile: File | null;
+  /*
+   * Le média part vers Supabase dès le dépôt, sans passer par le serveur : une
+   * fonction Vercel refuse tout corps de requête au-delà de 4,5 Mo, ce qu'une
+   * vidéo dépasse systématiquement. On ne conserve donc ici que l'identifiant
+   * du média déjà stocké.
+   */
+  mediaAssetId: string | null;
+  mediaName: string | null;
+  mediaStatus: "vide" | "preparation" | "envoi" | "enregistrement" | "pret" | "erreur";
+  mediaError: string | null;
+  mediaSaving: string | null;
 }
+
+const EMPTY_MEDIA = {
+  mediaAssetId: null,
+  mediaName: null,
+  mediaStatus: "vide",
+  mediaError: null,
+  mediaSaving: null,
+} satisfies Pick<
+  DraftItem,
+  "mediaAssetId" | "mediaName" | "mediaStatus" | "mediaError" | "mediaSaving"
+>;
 
 function publicationTypeForFormat(format: MediaFormat): PublicationType {
   switch (format) {
@@ -48,10 +71,19 @@ function publicationTypeForFormat(format: MediaFormat): PublicationType {
 }
 
 function mediaAccept(format: MediaFormat): string {
-  if (["video", "reels"].includes(format)) return "video/mp4,video/quicktime";
+  if (["video", "reels"].includes(format)) return "video/mp4,video/quicktime,video/webm";
   if (format === "texte_seul") return "";
   return "image/jpeg,image/png,image/webp,image/heic";
 }
+
+const MEDIA_STATUS_LABEL: Record<DraftItem["mediaStatus"], string> = {
+  vide: "",
+  preparation: "Compression…",
+  envoi: "Envoi en cours…",
+  enregistrement: "Finalisation…",
+  pret: "Média prêt",
+  erreur: "Échec",
+};
 
 function createDraftItems(client: ClientPreset, isoYear: number, isoWeek: number): DraftItem[] {
   return weeklyFormatsForCadence(client.monthlyCadence, isoWeek).map((format, index) => ({
@@ -61,19 +93,33 @@ function createDraftItems(client: ClientPreset, isoYear: number, isoWeek: number
     format,
     caption: "",
     hashtags: selectHashtags(client.defaultHashtags, `${client.id}-${isoYear}-${isoWeek}-${index}`).join(" "),
-    mediaFile: null,
+    ...EMPTY_MEDIA,
   }));
 }
 
-function MediaDropzone({ item, index, onFile }: { item: DraftItem; index: number; onFile: (file: File | null) => void }) {
+function MediaDropzone({ item, onFile }: { item: DraftItem; onFile: (file: File | null) => void }) {
   const [dragging, setDragging] = useState(false);
   const requiresMedia = item.format !== "texte_seul";
   if (!requiresMedia) return <p className="rounded-xl bg-canvas px-4 py-3 text-xs text-ink-faint">Aucun média nécessaire pour un texte seul.</p>;
 
-  const expected = ["video", "reels"].includes(item.format) ? "une vidéo MP4 ou MOV" : "une photo JPG, PNG, WEBP ou HEIC";
+  const isVideo = ["video", "reels"].includes(item.format);
+  const expected = isVideo ? "une vidéo MP4, MOV ou WEBM" : "une photo JPG, PNG, WEBP ou HEIC";
+  const busy = ["preparation", "envoi", "enregistrement"].includes(item.mediaStatus);
+  const ready = item.mediaStatus === "pret";
+  const failed = item.mediaStatus === "erreur";
+
+  const border = dragging
+    ? "border-[#1468ff] bg-[#edf4ff]"
+    : failed
+      ? "border-state-changes/50 bg-state-changes/5"
+      : ready
+        ? "border-state-approved/50 bg-state-approved/5"
+        : "border-[#cdd5df] bg-canvas hover:border-[#8bb5ff] hover:bg-[#f5f9ff]";
+
   return (
     <label
-      className={`group flex min-h-28 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed px-4 py-5 text-center transition-[border-color,background-color,transform] duration-150 active:scale-[.99] ${dragging ? "border-[#1468ff] bg-[#edf4ff]" : item.mediaFile ? "border-state-approved/50 bg-state-approved/5" : "border-[#cdd5df] bg-canvas hover:border-[#8bb5ff] hover:bg-[#f5f9ff]"}`}
+      aria-busy={busy}
+      className={`group flex min-h-28 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed px-4 py-5 text-center transition-[border-color,background-color,transform] duration-150 active:scale-[.99] ${border}`}
       onDragEnter={(event) => { event.preventDefault(); setDragging(true); }}
       onDragOver={(event) => event.preventDefault()}
       onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false); }}
@@ -85,14 +131,24 @@ function MediaDropzone({ item, index, onFile }: { item: DraftItem; index: number
     >
       <input
         type="file"
-        name={`media-${index}`}
         className="sr-only"
         accept={mediaAccept(item.format)}
+        disabled={busy}
         onChange={(event) => onFile(event.target.files?.[0] ?? null)}
       />
-      <span className={`grid h-9 w-9 place-items-center rounded-xl ${item.mediaFile ? "bg-state-approved/10 text-state-approved" : "bg-white text-[#0759e6] shadow-sm"}`}><Icon name={item.mediaFile ? "check" : "upload"} className="h-4 w-4"/></span>
-      <strong className="mt-2 max-w-full truncate text-xs">{item.mediaFile?.name ?? `Déposer ${expected}`}</strong>
-      <span className="mt-1 text-[11px] text-ink-faint">Glisser-déposer ou cliquer · 10 Mo maximum</span>
+      <span className={`grid h-9 w-9 place-items-center rounded-xl ${ready ? "bg-state-approved/10 text-state-approved" : failed ? "bg-state-changes/10 text-state-changes" : "bg-white text-[#0759e6] shadow-sm"}`}>
+        <Icon name={ready ? "check" : "upload"} className={`h-4 w-4 ${busy ? "animate-pulse" : ""}`}/>
+      </span>
+      <strong className="mt-2 max-w-full truncate text-xs">
+        {busy ? MEDIA_STATUS_LABEL[item.mediaStatus] : item.mediaName ?? `Déposer ${expected}`}
+      </strong>
+      <span className="mt-1 text-[11px] text-ink-faint">
+        {failed
+          ? item.mediaError
+          : item.mediaSaving
+            ? item.mediaSaving
+            : `Glisser-déposer ou cliquer · ${isVideo ? "200 Mo" : "15 Mo"} maximum`}
+      </span>
     </label>
   );
 }
@@ -136,13 +192,61 @@ export function SheetBuilder({
   const completedRequirements = resolvedItems.reduce((total, item) => total
     + Number(Boolean(item.caption.trim()))
     + Number(Boolean(item.hashtags.trim()))
-    + Number(item.format !== "texte_seul" && Boolean(item.mediaFile)), 0);
+    + Number(item.format !== "texte_seul" && Boolean(item.mediaAssetId)), 0);
   const progress = totalRequirements ? Math.round((completedRequirements / totalRequirements) * 100) : 0;
   const periodLabel = `${dayOffset(0)} → ${dayOffset(6)}`;
 
   const update = (key: string, patch: Partial<DraftItem>) => setItems((currentItems) =>
     currentItems.map((item) => item.key === key ? { ...item, ...patch } : item),
   );
+
+  /**
+   * Le fichier part vers Supabase dès le dépôt, sans attendre l'enregistrement
+   * de la fiche : c'est ce qui permet d'accepter une vidéo, et l'utilisateur
+   * peut continuer à rédiger pendant l'envoi.
+   */
+  const handleMedia = async (key: string, file: File | null) => {
+    if (!file) {
+      update(key, EMPTY_MEDIA);
+      return;
+    }
+
+    update(key, {
+      ...EMPTY_MEDIA,
+      mediaName: file.name,
+      mediaStatus: "preparation",
+    });
+
+    const result = await uploadMediaDirect({
+      file,
+      clientId: selectedClientId,
+      sheetId: null,
+      onProgress: (step) => update(key, { mediaStatus: step }),
+    });
+
+    if (!result.ok) {
+      update(key, {
+        ...EMPTY_MEDIA,
+        mediaName: file.name,
+        mediaStatus: "erreur",
+        mediaError: result.message ?? "Envoi impossible.",
+      });
+      return;
+    }
+
+    const saved =
+      result.originalBytes && result.finalBytes && result.finalBytes < result.originalBytes
+        ? `${formatBytes(result.originalBytes)} → ${formatBytes(result.finalBytes)}`
+        : null;
+
+    update(key, {
+      mediaAssetId: result.mediaAssetId ?? null,
+      mediaName: file.name,
+      mediaStatus: "pret",
+      mediaError: null,
+      mediaSaving: saved,
+    });
+  };
 
   const selectClient = (clientId: string) => {
     const client = clients.find((candidate) => candidate.id === clientId);
@@ -162,7 +266,7 @@ export function SheetBuilder({
       format: "photo",
       caption: "",
       hashtags: selectHashtags(client.defaultHashtags, `${client.id}-${isoYear}-${isoWeek}-${currentItems.length}`).join(" "),
-      mediaFile: null,
+      ...EMPTY_MEDIA,
     }]);
   };
 
@@ -176,10 +280,8 @@ export function SheetBuilder({
           format: item.format,
           caption: item.caption,
           hashtags: item.hashtags,
+          mediaAssetId: item.mediaAssetId,
         }))));
-        resolvedItems.forEach((item, index) => {
-          if (item.mediaFile) formData.set(`media-${index}`, item.mediaFile);
-        });
         startTransition(async () => {
           const result = await createSheet(formData);
           setFeedback(result);
@@ -236,7 +338,7 @@ export function SheetBuilder({
 
         <div className="space-y-3">
           {resolvedItems.map((item, index) => {
-            const itemComplete = Boolean(item.caption.trim()) && Boolean(item.hashtags.trim()) && (item.format === "texte_seul" || Boolean(item.mediaFile));
+            const itemComplete = Boolean(item.caption.trim()) && Boolean(item.hashtags.trim()) && (item.format === "texte_seul" || Boolean(item.mediaAssetId));
             return (
               <article key={item.key} className="card reveal-panel space-y-4 p-4 sm:p-5">
                 <div className="flex items-start justify-between gap-3">
@@ -250,7 +352,7 @@ export function SheetBuilder({
                 <div className="grid gap-3 sm:grid-cols-3">
                   <input type="date" className="field" aria-label={`Date de la publication ${index + 1}`} value={item.scheduledDate} onChange={(event) => update(item.key, { scheduledDate: event.target.value })}/>
                   <input type="time" className="field" aria-label={`Heure de la publication ${index + 1}`} value={item.scheduledTime} onChange={(event) => update(item.key, { scheduledTime: event.target.value })}/>
-                  <select className="field" aria-label={`Format de la publication ${index + 1}`} value={item.format} onChange={(event) => update(item.key, { format: event.target.value as MediaFormat, mediaFile: null })}>
+                  <select className="field" aria-label={`Format de la publication ${index + 1}`} value={item.format} onChange={(event) => update(item.key, { format: event.target.value as MediaFormat, ...EMPTY_MEDIA })}>
                     {Object.entries(MEDIA_FORMAT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                   </select>
                 </div>
@@ -260,7 +362,7 @@ export function SheetBuilder({
                     <div><label className="label" htmlFor={`caption-${item.key}`}>Texte de la publication</label><textarea id={`caption-${item.key}`} rows={5} className="field" placeholder="Écrivez librement le texte à publier…" value={item.caption} onChange={(event) => update(item.key, { caption: event.target.value })}/></div>
                     <div><label className="label" htmlFor={`hashtags-${item.key}`}>Hashtags sélectionnés automatiquement</label><textarea id={`hashtags-${item.key}`} rows={2} className="field" value={item.hashtags} onChange={(event) => update(item.key, { hashtags: event.target.value })}/><p className="mt-1 flex items-center gap-1.5 text-xs text-ink-faint"><Icon name="layers" className="h-3.5 w-3.5 text-[#0759e6]"/>Sélection variée issue des 20 hashtags enregistrés dans le dossier client.</p></div>
                   </div>
-                  <div><span className="label">Média prévu · {MEDIA_FORMAT_LABELS[item.format]}</span><MediaDropzone item={item} index={index} onFile={(mediaFile) => update(item.key, { mediaFile })}/></div>
+                  <div><span className="label">Média prévu · {MEDIA_FORMAT_LABELS[item.format]}</span><MediaDropzone item={item} onFile={(file) => handleMedia(item.key, file)}/></div>
                 </div>
               </article>
             );
