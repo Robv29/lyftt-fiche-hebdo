@@ -11,6 +11,7 @@ import { SOCIAL_NETWORK_LABELS } from "@/lib/domain/types";
 import { ReviewBoard } from "./ReviewBoard";
 import { AccessDenied } from "./AccessDenied";
 import { PrivacyNotice } from "./PrivacyNotice";
+import { BrandLogo } from "@/components/BrandLogo";
 
 export const metadata: Metadata = {
   title: "Vos publications de la semaine — LYFTT",
@@ -59,7 +60,7 @@ export default async function ClientReviewPage({
       <div className="mx-auto max-w-5xl overflow-hidden rounded-[26px] border border-white bg-[#f7fafe] shadow-[0_28px_80px_rgba(38,76,112,.13)]">
       <header className="border-b border-line bg-white px-5 py-5 sm:px-8">
         <div className="flex items-center justify-between gap-4">
-          <span className="text-[26px] font-bold tracking-[-.055em] text-[#123f73]">lyftt<span className="text-[#1176d3]">.</span></span>
+          <BrandLogo variant="ink" className="w-[96px]" priority />
           {sheet.clientLogoUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icon } from "./Icon";
+import { BrandLogo } from "./BrandLogo";
 
 type NavItem = { href: string; label: string; icon: string; badge?: number | null };
 
@@ -16,7 +17,7 @@ export function InternalShell({ children, profile, links }: { children: React.Re
     <div className="app-shell">
       <aside className="sidebar">
         <div className="sidebar-head">
-          <Link href="/" className="brand" aria-label="LYFTT, accueil"><span>lyftt</span><i>.</i></Link>
+          <Link href="/" className="brand" aria-label="LYFTT, accueil"><BrandLogo className="w-[88px]" priority /></Link>
           <p>Production sociale</p>
         </div>
         <nav className="side-nav" aria-label="Navigation principale">
@@ -29,7 +30,7 @@ export function InternalShell({ children, profile, links }: { children: React.Re
       </aside>
       <div className="workspace">
         <header className="topbar">
-          <div className="topbar-context"><span>{currentSection}</span><small>{today}</small></div>
+          <div className="topbar-context"><BrandLogo variant="ink" className="topbar-mobile-logo"/><span>{currentSection}</span><small>{today}</small></div>
           <div className="topbar-actions">
             {ticketLink && <Link href="/retours" className="topbar-icon" aria-label={`${ticketLink.badge ?? 0} ticket(s) client à traiter`}><Icon name="bell"/>{Boolean(ticketLink.badge) && <b>{ticketLink.badge}</b>}</Link>}
             <div className="topbar-profile"><span>{initials}</span><div><strong>{profile.name}</strong><small>{profile.role}</small></div></div>

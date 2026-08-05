@@ -116,8 +116,9 @@
 .sidebar::before { width:210px; height:210px; top:-95px; right:-95px; }
 .sidebar::after { width:240px; height:240px; bottom:-165px; left:-100px; }
 .sidebar-head { position: relative; z-index:1; padding: 0 12px 25px; border-bottom:1px solid rgba(255,255,255,.12); }
-.brand { display: inline-flex; align-items:center; color:#fff; font-size:26px; font-weight:750; line-height:1; letter-spacing:-.06em; }
-.brand i { color:#bfe4ff; font-style:normal; }
+.brand { display:inline-flex; align-items:center; }
+.brand-logo-image { display:block; height:auto; object-fit:contain; user-select:none; }
+.brand-logo-image--ink { filter:brightness(0) saturate(100%) invert(21%) sepia(27%) saturate(1834%) hue-rotate(171deg) brightness(88%) contrast(91%); }
 .sidebar-head p { margin-top:7px; color:rgba(255,255,255,.62); font-size:10px; font-weight:650; letter-spacing:.12em; text-transform:uppercase; }
 .side-nav { position:relative; z-index:1; display:flex; flex-direction:column; gap:5px; padding-top:18px; }
 .nav-item { display:flex; align-items:center; gap:12px; min-height:45px; padding:0 12px; border-radius:13px; color:rgba(255,255,255,.76); font-size:13px; font-weight:590; transition:color var(--motion-fast) var(--ease-out), background-color var(--motion-fast) var(--ease-out), box-shadow var(--motion-ui) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
@@ -135,6 +136,7 @@
 .workspace { margin-left:286px; min-height:100vh; padding:14px 14px 14px 0; }
 .topbar { position:relative; z-index:20; min-height:72px; display:flex; align-items:center; justify-content:space-between; gap:24px; padding:0 clamp(22px,3vw,40px); border:1px solid rgba(227,232,239,.9); border-bottom:0; border-radius:28px 28px 0 0; background:rgba(255,255,255,.88); backdrop-filter:blur(20px) saturate(150%); }
 .topbar-context { min-width:0; display:flex; flex-direction:column; }
+.topbar-mobile-logo { display:none; width:64px; }
 .topbar-context>span { color:var(--text); font-size:15px; font-weight:680; }
 .topbar-context small { margin-top:2px; color:var(--text-muted); font-size:11px; text-transform:capitalize; }
 .topbar-actions { display:flex; align-items:center; gap:10px; }
@@ -271,6 +273,8 @@
   .workspace { margin-left:0; padding:0; }
   .topbar { min-height:64px; padding:0 18px; border:0; border-bottom:1px solid var(--border); border-radius:0; background:rgba(255,255,255,.9); position:sticky; top:0; }
   .topbar-context small { display:none; }
+  .topbar-mobile-logo { display:block; }
+  .topbar-context>span { display:none; }
   .topbar-profile div { display:none; }
   .topbar-profile { padding-left:0; }
   .topbar-profile>span { width:34px; height:34px; }

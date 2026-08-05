@@ -1,4 +1,5 @@
 import type { AccessDenial } from "@/lib/review/access";
+import { BrandLogo } from "@/components/BrandLogo";
 
 const MESSAGES: Record<AccessDenial, { title: string; body: string }> = {
   malformed: {
@@ -33,7 +34,7 @@ export function AccessDenied({ reason }: { reason: AccessDenial }) {
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#edf3f9] px-5 py-16">
       <section className="card w-full max-w-readable p-7 sm:p-10">
-      <span className="text-2xl font-bold tracking-[-.05em] text-[#123f73]">lyftt<span className="text-[#1176d3]">.</span></span>
+      <BrandLogo variant="ink" className="w-[104px]" priority />
       <span className="mt-8 grid h-12 w-12 place-items-center rounded-2xl bg-[#fff4e5] text-xl text-[#9a5708]" aria-hidden="true">!</span>
       <h1 className="mt-4 text-2xl font-semibold tracking-[-.03em]">{title}</h1>
       <p className="mt-3 text-sm leading-relaxed text-ink-soft">{body}</p>
