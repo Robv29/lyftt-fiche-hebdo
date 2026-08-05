@@ -283,9 +283,16 @@ export function SheetBuilder({
           mediaAssetId: item.mediaAssetId,
         }))));
         startTransition(async () => {
-          const result = await createSheet(formData);
-          setFeedback(result);
-          if (result.ok && result.sheetId) router.push(`/fiches/${result.sheetId}`);
+          try {
+            const result = await createSheet(formData);
+            setFeedback(result);
+            if (result.ok && result.sheetId) router.push(`/fiches/${result.sheetId}`);
+          } catch {
+            setFeedback({
+              ok: false,
+              message: "L’enregistrement a été interrompu. Rechargez la page puis réessayez.",
+            });
+          }
         });
       }}
       className="space-y-5"

@@ -147,7 +147,7 @@ export function ClientEditor({ initial, managers }: { initial: EditableClient; m
                 <p className="eyebrow">Profil de marque</p>
                 <div className="mt-3 grid gap-4 sm:grid-cols-2">
                   <div><label className="label" htmlFor="edit-activity">Activité principale</label><input id="edit-activity" name="activity" required className="field" defaultValue={initial.brand.activity}/></div>
-                  <div><label className="label" htmlFor="edit-website">Site internet</label><input id="edit-website" name="website" type="url" required className="field" defaultValue={initial.brand.website}/></div>
+                  <div><label className="label" htmlFor="edit-website">Site internet</label><input id="edit-website" name="website" type="text" inputMode="url" required className="field" defaultValue={initial.brand.website}/></div>
                   <div><label className="label" htmlFor="edit-city">Ville ou zone</label><input id="edit-city" name="city" required className="field" defaultValue={initial.brand.city}/></div>
                   <div><label className="label" htmlFor="edit-postal">Code postal</label><input id="edit-postal" name="postalCode" required pattern="[0-9]{5}" inputMode="numeric" className="field" defaultValue={initial.brand.postalCode}/></div>
                   <div><label className="label" htmlFor="edit-audience">Clientèle cible</label><input id="edit-audience" name="audience" required className="field" defaultValue={initial.brand.audience}/></div>

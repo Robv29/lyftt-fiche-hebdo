@@ -63,7 +63,7 @@ function clientFormValues(formData: FormData) {
     contactPhone: formData.get("contactPhone") ?? undefined,
     contactEmail: formData.get("contactEmail") ?? undefined,
     activity: formData.get("activity"),
-    website: formData.get("website"),
+    website: normalizeWebsite(formData.get("website")),
     city: formData.get("city"),
     postalCode: formData.get("postalCode"),
     audience: formData.get("audience"),
@@ -82,6 +82,13 @@ function clientFormValues(formData: FormData) {
     videoPerMonth: formData.get("videoPerMonth"),
     visualPerMonth: formData.get("visualPerMonth"),
   };
+}
+
+/** Accepte aussi « exemple.fr » : l'interface complète le protocole attendu. */
+function normalizeWebsite(value: FormDataEntryValue | null): string {
+  const website = String(value ?? "").trim();
+  if (!website || /^[a-z][a-z0-9+.-]*:\/\//i.test(website)) return website;
+  return `https://${website}`;
 }
 
 function prepareHashtags(input: z.infer<typeof clientSchema>): {
@@ -134,9 +141,34 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
 
   const admin = createSupabaseAdminClient();
 
+  const notes = JSON.stringify({
+    defaultNetworks: input.networks,
+    brandProfile: {
+      clientType: input.clientType,
+      activity: sanitizeText(input.activity, 120),
+      website: input.website,
+      city: sanitizeText(input.city, 100),
+      postalCode: input.postalCode,
+      audience: sanitizeText(input.audience, 300),
+      tone: input.brandTone,
+      keywords: sanitizeText(input.keywords, 1000),
+    },
+    baseHashtags,
+    customHashtags,
+    recommendedHashtags,
+    monthlyCadence: {
+      photo: input.photoPerMonth,
+      video: input.videoPerMonth,
+      visual: input.visualPerMonth,
+    },
+  });
+
   // Un slug déjà pris est suffixé plutôt que de faire échouer la création.
   let slug = slugify(input.name);
-  const { data: taken } = await admin.from("clients").select("id").eq("slug", slug).maybeSingle();
+  const { data: taken, error: slugError } = await admin.from("clients").select("id").eq("slug", slug).maybeSingle();
+  if (slugError) {
+    return { ok: false, message: `Création impossible : ${slugError.message}` };
+  }
   if (taken) slug = `${slug}-${Date.now().toString(36).slice(-4)}`;
 
   const { data: client, error } = await admin
@@ -152,7 +184,10 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
         input.approvalPolicy === "tacit_allowed" && input.tacitNotice
           ? sanitizeText(input.tacitNotice, 500)
           : null,
-      whatsapp_group_name: input.whatsappGroup || null,
+      whatsapp_group_name: sanitizeText(input.whatsappGroup, 120),
+      // Enregistrer le profil éditorial dès la création évite un client vide si
+      // une requête suivante est interrompue.
+      notes,
     })
     .select("id")
     .single();
@@ -161,7 +196,7 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
     return { ok: false, message: `Client non créé : ${error?.message ?? "erreur"}` };
   }
 
-  await admin.from("client_contacts").insert({
+  const { error: contactError } = await admin.from("client_contacts").insert({
     client_id: client.id,
     first_name: sanitizeText(input.contactFirstName, 80),
     last_name: input.contactLastName ? sanitizeText(input.contactLastName, 80) : null,
@@ -169,41 +204,23 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
     email: input.contactEmail || null,
     is_primary: true,
   });
+  if (contactError) {
+    await admin.from("clients").delete().eq("id", client.id);
+    return { ok: false, message: `Contact non enregistré : ${contactError.message}` };
+  }
 
   // Rattachement du community manager : c'est ce qui lui donne accès au client
   // et ce qui alimente le routage des tickets (§7).
   const managerId = input.communityManagerId;
-  await admin.from("client_assignments").insert({
+  const { error: assignmentError } = await admin.from("client_assignments").insert({
     client_id: client.id,
     profile_id: managerId,
     role: "community_manager",
   });
-
-  // Le profil éditorial alimente automatiquement les prochaines fiches.
-  await admin
-    .from("clients")
-    .update({ notes: JSON.stringify({
-      defaultNetworks: input.networks,
-      brandProfile: {
-        clientType: input.clientType,
-        activity: sanitizeText(input.activity, 120),
-        website: input.website,
-        city: sanitizeText(input.city, 100),
-        postalCode: input.postalCode,
-        audience: sanitizeText(input.audience, 300),
-        tone: input.brandTone,
-        keywords: sanitizeText(input.keywords, 1000),
-      },
-      baseHashtags,
-      customHashtags,
-      recommendedHashtags,
-      monthlyCadence: {
-        photo: input.photoPerMonth,
-        video: input.videoPerMonth,
-        visual: input.visualPerMonth,
-      },
-    }) })
-    .eq("id", client.id);
+  if (assignmentError) {
+    await admin.from("clients").delete().eq("id", client.id);
+    return { ok: false, message: `Responsable non enregistré : ${assignmentError.message}` };
+  }
 
   revalidatePath("/clients");
   return { ok: true, message: `${input.name} a été créé.`, clientId: client.id };

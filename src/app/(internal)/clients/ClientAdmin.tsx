@@ -67,9 +67,16 @@ export function ClientAdmin({
 
   const run = (action: () => Promise<ClientActionResult>) => {
     startTransition(async () => {
-      const result = await action();
-      setFeedback(result);
-      if (result.ok) setShowForm(false);
+      try {
+        const result = await action();
+        setFeedback(result);
+        if (result.ok) setShowForm(false);
+      } catch {
+        setFeedback({
+          ok: false,
+          message: "L’enregistrement a été interrompu. Rechargez la page puis réessayez : vos informations sont restées dans le formulaire.",
+        });
+      }
     });
   };
 
@@ -138,7 +145,7 @@ export function ClientAdmin({
             <p className="mb-4 text-xs text-ink-faint">Ce contexte sert à préparer les sujets et le ton de chaque publication.</p>
             <div className="grid gap-4 sm:grid-cols-2">
               <div><label className="label" htmlFor="activity">Activité principale</label><input id="activity" name="activity" required className="field" placeholder="Restaurant bistronomique"/></div>
-              <div><label className="label" htmlFor="website">Site internet</label><input id="website" name="website" type="url" required className="field" placeholder="https://exemple.fr"/></div>
+              <div><label className="label" htmlFor="website">Site internet</label><input id="website" name="website" type="text" inputMode="url" required className="field" placeholder="exemple.fr ou https://exemple.fr"/><p className="mt-1 text-xs text-ink-faint">Vous pouvez saisir simplement le domaine : https:// sera ajouté automatiquement.</p></div>
               <div><label className="label" htmlFor="city">Ville ou zone principale</label><input id="city" name="city" required className="field" placeholder="Toulouse"/></div>
               <div><label className="label" htmlFor="postalCode">Code postal</label><input id="postalCode" name="postalCode" required className="field" inputMode="numeric" pattern="[0-9]{5}" placeholder="31000"/></div>
               <div><label className="label" htmlFor="audience">Clientèle cible</label><input id="audience" name="audience" required className="field" placeholder="Familles, actifs de 30 à 55 ans"/></div>
