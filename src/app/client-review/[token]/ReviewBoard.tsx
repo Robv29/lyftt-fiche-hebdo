@@ -49,7 +49,7 @@ export function ReviewBoard({ token, sheet }: { token: string; sheet: ReviewShee
       {feedback?.message && (
         <p
           role="status"
-          className={`mb-5 rounded-md border px-4 py-3 text-sm ${
+          className={`mb-5 rounded-xl border px-4 py-3 text-sm ${
             feedback.ok
               ? "border-state-approved/30 bg-state-approved/5 text-state-approved"
               : "border-state-changes/30 bg-state-changes/5 text-state-changes"
@@ -61,7 +61,7 @@ export function ReviewBoard({ token, sheet }: { token: string; sheet: ReviewShee
 
       <ul className="space-y-4">
         {sheet.items.map((item) => (
-          <li key={item.id} className="card overflow-hidden">
+          <li key={item.id} className="card lift-card overflow-hidden">
             <PublicationCard
               item={item}
               pending={pending}
@@ -88,7 +88,7 @@ export function ReviewBoard({ token, sheet }: { token: string; sheet: ReviewShee
         ))}
       </ul>
 
-      <div className="mt-8 flex flex-col gap-3 border-t border-line pt-6 sm:flex-row sm:items-center">
+      <div className="sticky bottom-3 z-10 mt-8 flex flex-col gap-3 rounded-2xl border border-white/80 bg-white/90 p-3 shadow-[0_16px_45px_rgba(32,72,108,.16)] backdrop-blur-xl sm:flex-row sm:items-center sm:p-4">
         {showApproveAll && (
           <button
             type="button"
@@ -153,7 +153,7 @@ function PublicationCard({
 
   return (
     <article className={item.isCancelled ? "opacity-60" : undefined}>
-      <header className="flex flex-wrap items-baseline justify-between gap-2 border-b border-line px-4 py-3">
+      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-line bg-[#fbfcfe] px-4 py-4 sm:px-5">
         <div>
           <h2 className="text-sm font-semibold uppercase tracking-wide">
             {formatDay(item.scheduledDate)}
@@ -174,7 +174,7 @@ function PublicationCard({
         <StatusBadge item={item} />
       </header>
 
-      <div className="grid gap-4 p-4 sm:grid-cols-[minmax(0,180px)_1fr]">
+      <div className="grid gap-5 p-4 sm:grid-cols-[minmax(0,190px)_1fr] sm:p-5">
         <MediaPreview item={item} />
 
         <div className="min-w-0">
@@ -194,7 +194,7 @@ function PublicationCard({
           Cette publication a été annulée.
         </p>
       ) : (
-        <div className="flex flex-wrap gap-2 border-t border-line px-4 py-3">
+        <div className="flex flex-wrap gap-2 border-t border-line bg-[#fbfcfe] px-4 py-4 sm:px-5">
           {!isApproved && !hasOpenRequest && (
             <button
               type="button"
@@ -254,7 +254,7 @@ function MediaPreview({ item }: { item: ReviewItem }) {
         controls
         preload="metadata"
         poster={item.media.thumbnailUrl ?? undefined}
-        className="w-full rounded-md border border-line bg-black"
+        className="aspect-square w-full rounded-2xl border border-line bg-black object-cover"
       >
         <source src={item.media.url} />
       </video>
@@ -267,7 +267,7 @@ function MediaPreview({ item }: { item: ReviewItem }) {
       <img
         src={item.media.thumbnailUrl ?? item.media.url}
         alt={`Visuel du ${formatDay(item.scheduledDate)}`}
-        className="w-full rounded-md border border-line object-cover"
+        className="aspect-square w-full rounded-2xl border border-line object-cover"
       />
     );
   }
@@ -278,7 +278,7 @@ function MediaPreview({ item }: { item: ReviewItem }) {
         href={item.mediaExternalUrl}
         target="_blank"
         rel="noreferrer noopener"
-        className="flex min-h-24 items-center justify-center rounded-md border border-dashed border-line px-3 py-6 text-center text-xs underline"
+        className="flex min-h-40 items-center justify-center rounded-2xl border border-dashed border-line bg-canvas px-3 py-6 text-center text-xs underline"
       >
         Voir le visuel
       </a>
@@ -286,7 +286,7 @@ function MediaPreview({ item }: { item: ReviewItem }) {
   }
 
   return (
-    <p className="flex min-h-24 items-center justify-center rounded-md border border-dashed border-line px-3 py-6 text-center text-xs text-ink-faint">
+    <p className="flex min-h-40 items-center justify-center rounded-2xl border border-dashed border-line bg-canvas px-3 py-6 text-center text-xs text-ink-faint">
       {item.mediaPendingNote ?? "Vidéo transmise séparément"}
     </p>
   );

@@ -6,22 +6,22 @@ export default {
     extend: {
       colors: {
         ink: {
-          DEFAULT: "#131722",
-          soft: "#5d6573",
-          faint: "#697180",
+          DEFAULT: "#172033",
+          soft: "#667085",
+          faint: "#667085",
         },
-        line: "#e8eaee",
+        line: "#e3e8ef",
         surface: "#ffffff",
-        canvas: "#f7f8fa",
+        canvas: "#f3f6fa",
         accent: {
-          DEFAULT: "#111111",
+          DEFAULT: "#1176d3",
           contrast: "#ffffff",
         },
         state: {
-          pending: "#8a8a8a",
-          approved: "#1c7c54",
-          changes: "#b4451f",
-          progress: "#9a6b00",
+          pending: "#667085",
+          approved: "#16a36a",
+          changes: "#e5484d",
+          progress: "#b76200",
         },
       },
       fontFamily: {

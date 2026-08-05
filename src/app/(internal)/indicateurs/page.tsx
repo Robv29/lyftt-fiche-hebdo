@@ -1,6 +1,8 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
 import type { TicketType } from "@/lib/domain/ticket-types";
+import { PageHeader } from "@/components/ui";
+import { Icon } from "@/components/Icon";
 
 /**
  * §23 — Indicateurs.
@@ -26,7 +28,7 @@ export default async function MetricsPage({
 
   const { data: tickets } = await supabase
     .from("client_tickets")
-    .select("id, ticket_type, status, submitted_at, resolved_at, clients ( name )")
+    .select("id, weekly_sheet_id, ticket_type, status, submitted_at, resolved_at, clients ( name )")
     .gte("submitted_at", `${since}T00:00:00Z`);
 
   const { data: versions } = await supabase
@@ -43,7 +45,7 @@ export default async function MetricsPage({
   );
 
   const sheetsWithTickets = new Set(
-    ticketList.map((t) => t.id).filter(Boolean),
+    ticketList.map((t) => t.weekly_sheet_id).filter(Boolean),
   );
 
   const approvedWithoutCorrection = sent.filter(
@@ -96,34 +98,34 @@ export default async function MetricsPage({
   const outOfScope = ticketList.filter((t) => t.status === "out_of_scope").length;
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold">Indicateurs</h1>
-        <p className="mt-1 text-sm text-ink-soft">Depuis le {since}.</p>
-      </div>
+    <div className="space-y-7">
+      <PageHeader eyebrow="Performance opérationnelle" title="Indicateurs" description={`Vue descriptive de l’activité depuis le ${since}, sans classement individuel.`} />
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Metric label="Fiches envoyées" value={sent.length} />
-        <Metric label="Taux de consultation" value={percent(viewed.length, sent.length)} />
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Metric icon="send" label="Fiches envoyées" value={sent.length} />
+        <Metric icon="users" label="Taux de consultation" value={percent(viewed.length, sent.length)} />
         <Metric
+          icon="check"
           label="Validées sans correction"
           value={percent(approvedWithoutCorrection.length, sent.length)}
         />
         <Metric
+          icon="clock"
           label="Validées avant échéance"
           value={percent(beforeDeadline.length, approved.length)}
         />
-        <Metric
+        <Metric icon="message"
           label="Tickets par fiche"
           value={sent.length ? (ticketList.length / sent.length).toFixed(1) : "—"}
         />
-        <Metric label="Délai moyen de réponse client" value={hours(average(responseDelays))} />
-        <Metric label="Délai moyen de correction" value={hours(average(correctionDelays))} />
+        <Metric icon="clock" label="Délai moyen de réponse client" value={hours(average(responseDelays))} />
+        <Metric icon="layers" label="Délai moyen de correction" value={hours(average(correctionDelays))} />
         <Metric
+          icon="copy"
           label="Versions par fiche"
           value={averageVersions ? averageVersions.toFixed(1) : "—"}
         />
-        <Metric label="Tickets hors périmètre" value={outOfScope} />
+        <Metric icon="warning" label="Tickets hors périmètre" value={outOfScope} />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -175,11 +177,12 @@ export default async function MetricsPage({
   );
 }
 
-function Metric({ label, value }: { label: string; value: string | number }) {
+function Metric({ icon, label, value }: { icon: string; label: string; value: string | number }) {
   return (
-    <div className="card px-4 py-3">
-      <p className="text-xs text-ink-faint">{label}</p>
-      <p className="mt-1 text-2xl font-semibold">{value}</p>
+    <div className="metric-card lift-card">
+      <span className="metric-icon"><Icon name={icon} className="h-5 w-5"/></span>
+      <p className="mt-5 text-xs font-medium text-ink-soft">{label}</p>
+      <p className="mt-1 text-[30px] font-semibold tracking-[-.04em]">{value}</p>
     </div>
   );
 }

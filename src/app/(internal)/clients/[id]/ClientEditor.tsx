@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { updateClient, type ClientActionResult } from "../actions";
 import { Icon } from "@/components/Icon";
@@ -53,16 +53,29 @@ export function ClientEditor({ initial, managers }: { initial: EditableClient; m
   const [tacit, setTacit] = useState(initial.validation.approvalPolicy === "tacit_allowed");
   const [clientType, setClientType] = useState<LyfttClientType>(initial.brand.clientType);
   const [customHashtags, setCustomHashtags] = useState(() => fiveHashtags(initial.customHashtags));
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     if (!open) return;
+    const trigger = triggerRef.current;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    const focusable = () => Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])') ?? []);
+    requestAnimationFrame(() => focusable()[0]?.focus());
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Tab") {
+        const elements = focusable(); const first = elements[0]; const last = elements[elements.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }
+    };
     window.addEventListener("keydown", onKeyDown);
     return () => {
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", onKeyDown);
+      trigger?.focus();
     };
   }, [open]);
 
@@ -83,16 +96,16 @@ export function ClientEditor({ initial, managers }: { initial: EditableClient; m
 
   return (
     <>
-      <button type="button" className="btn-secondary sm:w-auto" onClick={() => { setOpen(true); setFeedback(null); }}>
+      <button ref={triggerRef} type="button" className="btn-secondary sm:w-auto" onClick={() => { setOpen(true); setFeedback(null); }}>
         <Icon name="settings" className="h-4 w-4"/>Modifier le client
       </button>
 
       {open && (
         <div className="fixed inset-0 z-50 flex justify-end" role="presentation">
-          <button type="button" className="absolute inset-0 cursor-default bg-[#111827]/45 backdrop-blur-[2px]" aria-label="Fermer la modification" onClick={resetAndClose}/>
-          <section className="reveal-panel relative flex h-full w-full max-w-3xl flex-col overflow-hidden bg-white shadow-[-24px_0_70px_rgba(17,24,39,.22)]" role="dialog" aria-modal="true" aria-labelledby="edit-client-title">
+          <button type="button" className="absolute inset-0 cursor-default bg-[#123f73]/45 backdrop-blur-[2px]" aria-label="Fermer la modification" onClick={resetAndClose}/>
+          <section ref={dialogRef} className="side-sheet relative flex h-full w-full max-w-3xl flex-col overflow-hidden bg-white shadow-[-24px_0_70px_rgba(17,63,115,.22)] sm:rounded-l-[28px]" role="dialog" aria-modal="true" aria-labelledby="edit-client-title">
             <header className="flex shrink-0 items-center justify-between gap-4 border-b bg-white/90 px-4 py-4 backdrop-blur-xl sm:px-7">
-              <div className="min-w-0"><p className="eyebrow">Dossier client</p><h2 id="edit-client-title" className="truncate text-lg font-semibold">Modifier {initial.name}</h2></div>
+              <div className="min-w-0"><div className="flex items-center gap-2"><p className="eyebrow">Dossier client</p><span className="badge bg-[#e8f2ff] text-[#0b5e9f]">8 sections</span></div><h2 id="edit-client-title" className="mt-1 truncate text-lg font-semibold">Modifier {initial.name}</h2></div>
               <button type="button" className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-canvas text-lg text-ink-soft transition-transform active:scale-95" onClick={resetAndClose} aria-label="Fermer">×</button>
             </header>
 
@@ -168,7 +181,7 @@ export function ClientEditor({ initial, managers }: { initial: EditableClient; m
                 </div>
               </section>
 
-              <section className="overflow-hidden rounded-2xl bg-[#111827] text-white">
+              <section className="overflow-hidden rounded-2xl bg-[#123f73] text-white">
                 <div className="border-b border-white/10 p-4 sm:p-5"><p className="text-xs font-semibold uppercase tracking-[.12em] text-white/60">Bibliothèque LYFTT · sans IA</p><h3 className="mt-1 font-semibold">Modifier les 20 hashtags</h3><p className="mt-1 text-xs text-white/65">Le type fournit 15 hashtags fixes ; les 5 derniers restent propres au client.</p></div>
                 <div className="grid lg:grid-cols-2">
                   <div className="border-b border-white/10 p-4 sm:p-5 lg:border-b-0 lg:border-r">

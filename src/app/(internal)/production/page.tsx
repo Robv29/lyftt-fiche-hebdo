@@ -3,6 +3,8 @@ import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/se
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
 import { deadlineState } from "@/lib/domain/deadline";
 import { ticketStatusLabel } from "@/lib/domain/types";
+import { ClientAvatar, EmptyState, PageHeader, StatusDot } from "@/components/ui";
+import { Icon } from "@/components/Icon";
 
 /**
  * §22 — Espace de production.
@@ -31,22 +33,13 @@ export default async function ProductionPage() {
   );
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold">Corrections clients</h1>
-        <p className="mt-1 text-sm text-ink-soft">
-          {isProductionRole
-            ? "Les corrections qui vous sont affectées."
-            : "Les corrections nécessitant une intervention graphique ou vidéo."}
-        </p>
-      </div>
+    <div className="space-y-7">
+      <PageHeader eyebrow="Studio de production" title="Corrections clients" description={isProductionRole ? "Les corrections qui vous sont affectées, triées selon leur échéance." : "Les retours qui nécessitent une intervention graphique ou vidéo."} />
 
       {(tickets ?? []).length === 0 ? (
-        <p className="card px-4 py-8 text-center text-sm text-ink-faint">
-          Aucune correction en attente.
-        </p>
+        <EmptyState icon="layers" title="Production à jour" description="Aucune correction graphique ou vidéo n’attend d’intervention." />
       ) : (
-        <ul className="space-y-2">
+        <ul className="grid gap-4 lg:grid-cols-2">
           {(tickets ?? []).map((ticket) => {
             const client = ticket.clients as unknown as { name: string } | null;
             const item = ticket.weekly_sheet_items as unknown as {
@@ -56,19 +49,17 @@ export default async function ProductionPage() {
             const due = ticket.due_at ? deadlineState(new Date(ticket.due_at)) : null;
 
             return (
-              <li key={ticket.id} className="card">
+              <li key={ticket.id} className="card lift-card overflow-hidden">
                 <Link
                   href={`/retours/${ticket.id}`}
-                  className="block px-4 py-3 hover:bg-canvas"
+                  className="group block p-5 hover:bg-[#f7fafe]"
                 >
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <span className="text-sm font-medium">
-                      {client?.name} — {getTicketTypeDefinition(ticket.ticket_type).label}
-                    </span>
-                    <span className="flex items-center gap-2 text-xs">
-                      <span className="badge bg-canvas text-ink-soft">
-                        {ticketStatusLabel(ticket.status)}
-                      </span>
+                  <div className="flex items-start gap-3">
+                    <ClientAvatar name={client?.name ?? "Client"}/>
+                    <div className="min-w-0 flex-1"><div className="flex flex-wrap items-start justify-between gap-2"><div><h2 className="truncate text-sm font-semibold">{client?.name}</h2><p className="mt-1 text-xs text-ink-faint">{getTicketTypeDefinition(ticket.ticket_type).label}</p></div><Icon name="arrow" className="h-4 w-4 text-ink-faint transition-transform group-hover:translate-x-0.5"/></div>
+                    {item && <p className="mt-4 line-clamp-2 text-sm leading-relaxed text-ink-soft">Publication du {item.scheduled_date} — {item.caption}</p>}
+                    <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-3 text-xs">
+                      <StatusDot tone="info">{ticketStatusLabel(ticket.status)}</StatusDot>
                       {due && (
                         <span
                           className={due.isOverdue ? "text-state-changes" : "text-ink-faint"}
@@ -76,14 +67,9 @@ export default async function ProductionPage() {
                           {due.label}
                         </span>
                       )}
-                    </span>
+                      <span className="ml-auto text-ink-faint">{ticket.ticket_number}</span>
+                    </div></div>
                   </div>
-                  {item && (
-                    <p className="mt-1 truncate text-sm text-ink-soft">
-                      Publication du {item.scheduled_date} — {item.caption}
-                    </p>
-                  )}
-                  <p className="mt-1 text-xs text-ink-faint">{ticket.ticket_number}</p>
                 </Link>
               </li>
             );
@@ -91,7 +77,7 @@ export default async function ProductionPage() {
         </ul>
       )}
 
-      <p className="text-xs text-ink-faint">
+      <p className="rounded-2xl bg-[#e8f2ff] px-4 py-3 text-xs leading-relaxed text-[#385a78]">
         Le renvoi au client reste à la charge du community manager : déposez votre
         nouvelle version puis passez le ticket en « Prêt à contrôler ».
       </p>

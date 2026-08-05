@@ -22,17 +22,20 @@ export default async function LoginPage({
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center px-6">
-      <span className="mb-8 text-2xl font-bold tracking-tight">lyftt.</span>
-      <h1 className="text-lg font-semibold">Connexion</h1>
+    <main className="flex min-h-screen items-center justify-center bg-[#edf3f9] px-4 py-10 sm:px-6">
+      <section className="w-full max-w-[420px] rounded-[26px] border border-white bg-white p-6 shadow-[0_28px_70px_rgba(36,76,116,.13)] sm:p-8" aria-labelledby="login-title">
+      <span className="inline-flex text-[27px] font-bold tracking-[-.055em] text-[#123f73]">lyftt<span className="text-[#1176d3]">.</span></span>
+      <p className="mt-8 text-[11px] font-bold uppercase tracking-[.14em] text-ink-faint">Espace équipe</p>
+      <h1 id="login-title" className="mt-1 text-2xl font-semibold tracking-[-.03em]">Heureux de vous revoir</h1>
+      <p className="mt-2 text-sm leading-relaxed text-ink-soft">Connectez-vous pour retrouver la production et les validations de la semaine.</p>
 
       {erreur && (
-        <p className="mt-3 rounded-md border border-state-changes/30 bg-state-changes/5 px-3 py-2 text-sm text-state-changes">
+        <p role="alert" className="mt-5 rounded-xl border border-state-changes/30 bg-state-changes/5 px-4 py-3 text-sm text-state-changes">
           Identifiants incorrects.
         </p>
       )}
 
-      <form action={signIn} className="mt-6 space-y-4">
+      <form action={signIn} className="mt-7 space-y-4">
         <input type="hidden" name="next" value={next ?? "/"} />
         <div>
           <label className="label" htmlFor="email">
@@ -52,10 +55,12 @@ export default async function LoginPage({
             className="field"
           />
         </div>
-        <button type="submit" className="btn-primary w-full">
+        <button type="submit" className="btn-primary mt-2 w-full">
           Se connecter
         </button>
       </form>
+      <p className="mt-6 text-center text-[11px] text-ink-faint">Accès réservé à l’équipe LYFTT</p>
+      </section>
     </main>
   );
 }

@@ -7,6 +7,8 @@ import {
   ticketStatusLabel,
   type TicketStatus
 } from "@/lib/domain/types";
+import { ClientAvatar, EmptyState, PageHeader } from "@/components/ui";
+import { Icon } from "@/components/Icon";
 
 /** §9 — Écran interne « Retours clients ». */
 
@@ -64,21 +66,18 @@ export default async function TicketsPage({
   const { data: tickets } = await query;
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-baseline justify-between gap-3">
-        <h1 className="text-xl font-semibold">Retours clients</h1>
-        <p className="text-sm text-ink-soft">{tickets?.length ?? 0} ticket(s)</p>
-      </div>
+    <div className="space-y-7">
+      <PageHeader eyebrow="File d’intervention" title="Tickets clients" description="Qualifiez les demandes, corrigez le contenu concerné et renvoyez la nouvelle version au client." actions={<span className="badge bg-[#e8f2ff] text-[#0b5e9f]">{tickets?.length ?? 0} ticket{(tickets?.length ?? 0) > 1 ? "s" : ""}</span>} />
 
-      <nav className="flex flex-wrap gap-2">
+      <nav className="filter-bar" aria-label="Filtrer les tickets par statut">
         {STATUS_FILTERS.map((filter) => (
           <Link
             key={filter.value}
             href={`/retours?statut=${filter.value}`}
-            className={`badge border ${
+            className={`btn min-h-9 rounded-xl px-3 py-1.5 text-xs shadow-none ${
               statusFilter === filter.value
-                ? "border-ink bg-ink text-white"
-                : "border-line bg-surface text-ink-soft hover:border-ink"
+                ? "border border-[#1176d3] bg-[#1176d3] text-white"
+                : "border border-transparent bg-transparent text-ink-soft hover:bg-canvas hover:text-ink"
             }`}
           >
             {filter.label}
@@ -87,11 +86,9 @@ export default async function TicketsPage({
       </nav>
 
       {(tickets ?? []).length === 0 ? (
-        <p className="card px-4 py-8 text-center text-sm text-ink-faint">
-          Aucun ticket pour ce filtre.
-        </p>
+        <EmptyState icon="message" title="Aucun ticket" description="Aucune demande ne correspond au filtre sélectionné." />
       ) : (
-        <ul className="space-y-2">
+        <ul className="space-y-3">
           {(tickets ?? []).map((ticket) => {
             const client = ticket.clients as unknown as { name: string } | null;
             const week = ticket.weekly_sheets as unknown as { iso_week: number } | null;
@@ -102,22 +99,14 @@ export default async function TicketsPage({
             const due = ticket.due_at ? deadlineState(new Date(ticket.due_at)) : null;
 
             return (
-              <li key={ticket.id} className="card">
+              <li key={ticket.id} className="card lift-card overflow-hidden">
                 <Link
                   href={`/retours/${ticket.id}`}
-                  className="block px-4 py-3 hover:bg-canvas"
+                  className="group grid gap-4 p-4 hover:bg-[#f7fafe] sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center sm:p-5"
                 >
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <span className="text-sm font-medium">
-                      {ticket.ticket_number} — {client?.name ?? "Client"}
-                      {week && (
-                        <span className="font-normal text-ink-faint">
-                          {" "}
-                          · semaine {week.iso_week}
-                        </span>
-                      )}
-                    </span>
-                    <span className="flex flex-wrap items-center gap-2 text-xs">
+                  <ClientAvatar name={client?.name ?? "Client"}/>
+                  <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><strong className="truncate text-sm">{client?.name ?? "Client"}</strong><span className="text-[11px] text-ink-faint">{ticket.ticket_number}{week && ` · semaine ${week.iso_week}`}</span></div><p className="mt-1 truncate text-sm text-ink-soft">{getTicketTypeDefinition(ticket.ticket_type).label} — {ticket.title}</p>{assignments.length > 0 && <p className="mt-1 truncate text-xs text-ink-faint">Responsable : {assignments.map((a) => a.profiles?.full_name).filter(Boolean).join(" · ")}</p>}</div>
+                  <div className="flex flex-wrap items-center gap-2 pl-[60px] text-xs sm:max-w-60 sm:justify-end sm:pl-0">
                       {ticket.priority !== "normal" && (
                         <span className="badge bg-state-progress/10 text-state-progress">
                           {ticketPriorityLabel(ticket.priority)}
@@ -133,21 +122,8 @@ export default async function TicketsPage({
                           {due.isOverdue ? `en retard de ${due.label.replace("en retard de ", "")}` : due.label}
                         </span>
                       )}
-                    </span>
+                    <Icon name="arrow" className="h-4 w-4 text-ink-faint transition-transform group-hover:translate-x-0.5"/>
                   </div>
-
-                  <p className="mt-1 text-sm text-ink-soft">
-                    {getTicketTypeDefinition(ticket.ticket_type).label} — {ticket.title}
-                  </p>
-
-                  {assignments.length > 0 && (
-                    <p className="mt-1 text-xs text-ink-faint">
-                      {assignments
-                        .map((a) => a.profiles?.full_name)
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </p>
-                  )}
                 </Link>
               </li>
             );

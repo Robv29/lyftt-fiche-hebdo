@@ -142,7 +142,7 @@ export default async function SheetDetailPage({
         <Link href="/fiches" className="text-sm text-ink-soft hover:text-ink">
           ← Fiches
         </Link>
-        <h1 className="mt-2 text-xl font-semibold">
+        <h1 className="page-title mt-2">
           {client.name} — semaine {sheet.iso_week}
         </h1>
         <p className="mt-1 text-sm text-ink-soft">

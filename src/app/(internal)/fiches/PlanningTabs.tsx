@@ -42,7 +42,7 @@ export function PlanningTabs({
 
   return (
     <section className="space-y-5">
-      <div className="grid grid-cols-3 gap-1 rounded-2xl border border-line bg-[#edf0f4] p-1.5 shadow-inner" role="tablist" aria-label="Période du planning">
+      <div className="grid grid-cols-3 gap-1.5 rounded-2xl border border-line bg-[#e9eff6] p-1.5 shadow-inner" role="tablist" aria-label="Période du planning">
         {TABS.map((tab) => {
           const selected = tab.id === active;
           return (
@@ -54,23 +54,23 @@ export function PlanningTabs({
               aria-selected={selected}
               aria-controls={`planning-panel-${tab.id}`}
               tabIndex={selected ? 0 : -1}
-              className={`group flex min-h-14 min-w-0 items-center justify-center gap-2 rounded-xl px-2 text-xs font-semibold transition-[background-color,color,box-shadow,transform] duration-200 active:scale-[.98] sm:min-h-16 sm:px-4 sm:text-sm ${selected ? "bg-white text-ink shadow-[0_2px_10px_rgba(31,41,55,.10)]" : "text-ink-faint hover:bg-white/45 hover:text-ink-soft"}`}
+              className={`group flex min-h-14 min-w-0 items-center justify-center gap-2 rounded-xl px-2 text-xs font-semibold transition-[background-color,color,box-shadow,transform] duration-200 active:scale-[.98] sm:min-h-16 sm:px-4 sm:text-sm ${selected ? "bg-white text-[#0b4f88] shadow-[0_4px_14px_rgba(34,72,112,.12)]" : "text-ink-faint hover:bg-white/55 hover:text-ink-soft"}`}
               onClick={() => setActive(tab.id)}
               onKeyDown={(event) => {
                 if (event.key === "ArrowLeft") move(event, -1);
                 if (event.key === "ArrowRight") move(event, 1);
               }}
             >
-              <Icon name={tab.icon} className={`hidden h-4 w-4 shrink-0 sm:block ${selected ? "text-[#0759e6]" : ""}`}/>
+              <Icon name={tab.icon} className={`hidden h-4 w-4 shrink-0 sm:block ${selected ? "text-[#1176d3]" : ""}`}/>
               <span className="min-w-0 truncate"><span className="sm:hidden">{tab.shortLabel}</span><span className="hidden sm:inline">{tab.label}</span></span>
-              <span className={`grid min-w-5 place-items-center rounded-full px-1.5 py-0.5 text-[10px] ${selected ? "bg-[#e6efff] text-[#0759e6]" : "bg-white/55 text-ink-faint"}`}>{counts[tab.id]}</span>
+              <span className={`grid min-w-5 place-items-center rounded-full px-1.5 py-0.5 text-[10px] ${selected ? "bg-[#e8f2ff] text-[#0b5e9f]" : "bg-white/55 text-ink-faint"}`}>{counts[tab.id]}</span>
             </button>
           );
         })}
       </div>
 
       <div className="flex items-start gap-3 px-1">
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#edf4ff] text-[#0759e6]"><Icon name={activeTab.icon} className="h-4 w-4"/></span>
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#e8f2ff] text-[#1176d3]"><Icon name={activeTab.icon} className="h-4 w-4"/></span>
         <div><h2 className="font-semibold">{activeTab.label}</h2><p className="mt-0.5 text-xs leading-relaxed text-ink-faint">{activeTab.description}</p></div>
       </div>
 

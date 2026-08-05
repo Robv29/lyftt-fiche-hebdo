@@ -80,7 +80,7 @@ export default async function TicketDetailPage({
         <Link href="/retours" className="text-sm text-ink-soft hover:text-ink">
           ← Retours clients
         </Link>
-        <h1 className="mt-2 text-xl font-semibold">
+        <h1 className="page-title mt-2">
           {ticket.ticket_number} — {definition.label}
         </h1>
         <p className="mt-1 text-sm text-ink-soft">

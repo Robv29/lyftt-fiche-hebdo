@@ -38,7 +38,7 @@ export function TicketForm({ item, pending, onSubmit, onCancel }: Props) {
   return (
     <form
       action={(formData) => onSubmit(formData)}
-      className="mt-4 space-y-4 rounded-md border border-line bg-canvas p-4"
+      className="reveal-panel mt-4 space-y-4 rounded-[18px] border border-[#cbdff1] bg-[#f7fafe] p-4 sm:p-5"
     >
       <input type="hidden" name="itemId" value={item?.id ?? ""} />
 
@@ -69,7 +69,7 @@ export function TicketForm({ item, pending, onSubmit, onCancel }: Props) {
         <>
           <div>
             <span className="label">Texte actuel</span>
-            <p className="whitespace-pre-wrap rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink-soft">
+            <p className="whitespace-pre-wrap rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink-soft">
               {item.caption || "—"}
             </p>
           </div>

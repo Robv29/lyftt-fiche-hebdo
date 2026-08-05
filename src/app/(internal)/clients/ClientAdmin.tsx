@@ -30,6 +30,8 @@ interface ClientRow {
   deadlineTime: string;
   approvalPolicy: string;
   contactName: string | null;
+  managerName: string;
+  cadenceLabel: string;
 }
 
 export function ClientAdmin({
@@ -42,6 +44,7 @@ export function ClientAdmin({
   const [pending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<ClientActionResult | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [query, setQuery] = useState("");
   const [tacit, setTacit] = useState(false);
   const [clientType, setClientType] = useState<LyfttClientType>("restaurant");
   const [customHashtags, setCustomHashtags] = useState(["", "", "", "", ""]);
@@ -54,6 +57,7 @@ export function ClientAdmin({
     Boolean(key) && (baseHashtagKeys.has(key) || customKeys.indexOf(key) !== index),
   );
   const hashtagSelectionIsValid = filledCustomHashtags === 5 && !hasDuplicateCustomHashtag;
+  const filteredClients = clients.filter((client) => `${client.name} ${client.contactName ?? ""} ${client.managerName}`.toLocaleLowerCase("fr").includes(query.trim().toLocaleLowerCase("fr")));
 
   const updateCustomHashtag = (index: number, value: string) => {
     setCustomHashtags((current) => current.map((hashtag, currentIndex) =>
@@ -90,6 +94,8 @@ export function ClientAdmin({
         </button>
       </div>
 
+      {!showForm && clients.length > 0 && <div className="relative max-w-lg"><Icon name="search" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint"/><label className="sr-only" htmlFor="client-search">Rechercher un client</label><input id="client-search" type="search" className="field bg-white pl-10" placeholder="Rechercher un client, un contact ou un responsable…" value={query} onChange={(event)=>setQuery(event.target.value)}/></div>}
+
       {showForm && (
         <form
           action={(formData) => run(() => createClient(formData))}
@@ -117,7 +123,7 @@ export function ClientAdmin({
             </div>
           </div>
 
-          <fieldset className="rounded-2xl bg-canvas p-4 sm:p-5">
+          <fieldset className="form-section">
             <legend className="label px-1">Contact principal</legend>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <div><label className="label" htmlFor="contactFirstName">Prénom</label><input id="contactFirstName" name="contactFirstName" required className="field" autoComplete="given-name"/></div>
@@ -127,7 +133,7 @@ export function ClientAdmin({
             </div>
           </fieldset>
 
-          <fieldset className="rounded-2xl bg-canvas p-4 sm:p-5">
+          <fieldset className="form-section">
             <legend className="label px-1">Profil de marque</legend>
             <p className="mb-4 text-xs text-ink-faint">Ce contexte sert à préparer les sujets et le ton de chaque publication.</p>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -227,7 +233,7 @@ export function ClientAdmin({
             <p className="mt-2 text-xs leading-relaxed text-ink-soft"><strong>Information attendue :</strong> recopiez le nom du groupe tel qu’il apparaît dans WhatsApp — pas un numéro ni un lien d’invitation. LYFTT l’affichera au moment de copier le message de validation pour éviter de l’envoyer au mauvais groupe.</p>
           </div>
 
-          <section className="overflow-hidden rounded-2xl bg-[#111827] text-white">
+          <section className="overflow-hidden rounded-[20px] bg-[#123f73] text-white">
             <div className="border-b border-white/10 p-5 sm:p-6">
               <div className="flex items-start gap-3">
                 <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/10 text-[#8fbbff]"><Icon name="layers" className="h-5 w-5"/></span>
@@ -257,7 +263,7 @@ export function ClientAdmin({
                       ))}
                     </select>
                   </div>
-                  <span className="mb-3 rounded-full bg-[#1d4ed8] px-2.5 py-1 text-[11px] font-semibold text-white">15 inclus</span>
+                  <span className="mb-3 rounded-full bg-[#1176d3] px-2.5 py-1 text-[11px] font-semibold text-white">15 inclus</span>
                 </div>
 
                 <div key={clientType} className="reveal-panel mt-5 flex flex-wrap gap-2" aria-live="polite">
@@ -326,12 +332,12 @@ export function ClientAdmin({
           Aucun client. Commencez par en ajouter un.
         </p>
       ) : (
-        <ul className="grid gap-3 lg:grid-cols-2">
-          {clients.map((client) => (
+        <ul className="grid gap-4 lg:grid-cols-2">
+          {filteredClients.map((client) => (
             <li key={client.id} className="card lift-card p-5">
               <div className="flex h-full flex-col gap-5">
                 <div className="flex items-start gap-3">
-                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[#edf2f8] text-sm font-bold text-[#46546a]">{client.name.slice(0,2).toUpperCase()}</span>
+                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[#e8f2ff] text-sm font-bold text-[#0b5e9f]">{client.name.slice(0,2).toUpperCase()}</span>
                   <div className="min-w-0 flex-1">
                   <p className="font-semibold tracking-[-.015em]">
                     {client.name}
@@ -349,6 +355,7 @@ export function ClientAdmin({
                     {WEEKDAYS.find((d) => d.value === client.deadlineWeekday)?.label.toLowerCase()}{" "}
                     {client.deadlineTime.slice(0, 5).replace(":", " h ")}
                   </p>
+                  <p className="mt-2 text-xs text-ink-soft">{client.managerName} · {client.cadenceLabel}</p>
                   </div>
                 </div>
 
@@ -370,6 +377,7 @@ export function ClientAdmin({
               </div>
             </li>
           ))}
+          {filteredClients.length === 0 && <li className="card col-span-full px-5 py-10 text-center text-sm text-ink-faint">Aucun client ne correspond à « {query} ».</li>}
         </ul>
       )}
     </div>
