@@ -19,6 +19,21 @@ export async function POST(request: NextRequest) {
   if (!secret) {
     return NextResponse.json({ error: "CRON_SECRET non configuré." }, { status: 503 });
   }
+
+  // Un en-tête HTTP n'accepte que de l'ASCII visible. Un secret contenant un
+  // accent ou une espace insécable ne pourra jamais être transmis : la purge
+  // échouerait silencieusement à chaque exécution. Mieux vaut le dire.
+  if (!/^[\x21-\x7E]+$/.test(secret)) {
+    return NextResponse.json(
+      {
+        error:
+          "CRON_SECRET contient des caractères invalides pour un en-tête HTTP. " +
+          "N'utilisez que des lettres non accentuées, des chiffres et des symboles simples.",
+      },
+      { status: 503 },
+    );
+  }
+
   if (request.headers.get("authorization") !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "Non autorisé." }, { status: 401 });
   }
