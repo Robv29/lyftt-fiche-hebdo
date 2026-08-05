@@ -27,7 +27,8 @@ export async function uploadMediaDirect(params: {
 }): Promise<UploadOutcome> {
   const kind = params.file.type.startsWith("video/") ? "video" : "image";
 
-  params.onProgress?.("preparation");
+  // Les images sont recompressées ; les vidéos partent telles quelles.
+  if (kind === "image") params.onProgress?.("preparation");
   const prepared = await prepareMedia(params.file);
 
   const ticket = await createMediaUploadTicket({

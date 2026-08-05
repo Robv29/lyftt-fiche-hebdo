@@ -108,48 +108,9 @@ async function prepareImage(file: File): Promise<PreparedMedia> {
   };
 }
 
-async function prepareVideo(file: File): Promise<PreparedMedia> {
-  const url = URL.createObjectURL(file);
-  const video = document.createElement("video");
-  video.muted = true;
-  video.playsInline = true;
-  video.preload = "metadata";
-
-  try {
-    const preview = await new Promise<File | null>((resolve) => {
-      // Une vidéo illisible par le navigateur ne doit pas bloquer l'envoi.
-      const giveUp = setTimeout(() => resolve(null), 6000);
-
-      video.onloadeddata = () => {
-        // Une frame à 1 s évite les fondus au noir du tout début.
-        video.currentTime = Math.min(1, (video.duration || 2) / 2);
-      };
-      video.onseeked = async () => {
-        clearTimeout(giveUp);
-        try {
-          const size = scaleTo(video.videoWidth, video.videoHeight, PREVIEW_EDGE);
-          resolve(
-            await canvasToFile(
-              draw(video, size.width, size.height),
-              `${file.name.replace(/\.[^.]+$/, "")}-couverture.webp`,
-              0.6,
-            ),
-          );
-        } catch {
-          resolve(null);
-        }
-      };
-      video.onerror = () => {
-        clearTimeout(giveUp);
-        resolve(null);
-      };
-      video.src = url;
-    });
-
-    return { file, preview, originalBytes: file.size, finalBytes: file.size };
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+/** Fichier transmis tel quel, sans aucun traitement préalable. */
+function asIs(file: File): PreparedMedia {
+  return { file, preview: null, originalBytes: file.size, finalBytes: file.size };
 }
 
 export async function prepareMedia(file: File): Promise<PreparedMedia> {
@@ -158,11 +119,19 @@ export async function prepareMedia(file: File): Promise<PreparedMedia> {
       return await prepareImage(file);
     } catch {
       // HEIC non décodable par certains navigateurs : on envoie l'original.
-      return { file, preview: null, originalBytes: file.size, finalBytes: file.size };
+      return asIs(file);
     }
   }
 
-  if (file.type.startsWith("video/")) return prepareVideo(file);
-
-  return { file, preview: null, originalBytes: file.size, finalBytes: file.size };
+  /*
+   * Les vidéos partent brutes, sans traitement.
+   *
+   * Il n'y a jamais eu de compression vidéo — transcoder dans un navigateur
+   * exigerait ffmpeg.wasm, des dizaines de méga-octets à charger et des minutes
+   * de calcul. Seule une image de couverture était extraite ; elle est retirée
+   * car elle allongeait le dépôt et échouait sur certains codecs. Le portail
+   * client charge de toute façon la vidéo en `preload="metadata"` : il ne
+   * télécharge que l'en-tête tant que le client ne lance pas la lecture.
+   */
+  return asIs(file);
 }
