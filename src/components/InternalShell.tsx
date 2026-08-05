@@ -21,8 +21,13 @@ export function InternalShell({ children, profile, links }: { children: React.Re
         <div className="profile-chip"><span>{profile.name.split(" ").map(x => x[0]).join("").slice(0,2)}</span><div><strong>{profile.name}</strong><small>{profile.role}</small></div></div>
       </aside>
       <main className="main-content">{children}</main>
+      {/*
+        La barre défile horizontalement plutôt que de tronquer la liste : avec
+        `slice(0, 5)`, Production, Indicateurs et Équipe n'étaient accessibles
+        depuis aucun écran sur téléphone.
+      */}
       <nav className="mobile-nav" aria-label="Navigation mobile">
-        {links.slice(0, 5).map((link) => { const active = link.href === "/" ? pathname === "/" : pathname.startsWith(link.href); return <Link key={link.href} href={link.href} className={active ? "active" : ""}><Icon name={link.icon}/><span>{link.label.split(" ")[0]}</span>{Boolean(link.badge) && <b>{link.badge}</b>}</Link>; })}
+        {links.map((link) => { const active = link.href === "/" ? pathname === "/" : pathname.startsWith(link.href); return <Link key={link.href} href={link.href} className={active ? "active" : ""}><Icon name={link.icon}/><span>{link.label.split(" ")[0]}</span>{Boolean(link.badge) && <b>{link.badge}</b>}</Link>; })}
       </nav>
     </div>
   );

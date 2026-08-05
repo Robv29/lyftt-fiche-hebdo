@@ -106,8 +106,9 @@
 @media (max-width: 800px) {
   .sidebar { display:none; }
   .main-content { margin-left:0; padding:28px 18px calc(104px + env(safe-area-inset-bottom)); }
-  .mobile-nav { position:fixed; z-index:40; display:flex; justify-content:space-around; align-items:center; left:12px; right:12px; bottom:max(10px, env(safe-area-inset-bottom)); height:68px; padding:5px; border:1px solid rgba(255,255,255,.8); border-radius:22px; background:rgba(250,250,251,.88); backdrop-filter:blur(24px) saturate(180%); box-shadow:0 12px 40px rgba(26,35,50,.18); }
-  .mobile-nav a { position:relative; flex:1; height:54px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; border-radius:16px; color:#88909d; font-size:9px; }
+  .mobile-nav { position:fixed; z-index:40; display:flex; justify-content:flex-start; align-items:center; left:12px; right:12px; bottom:max(10px, env(safe-area-inset-bottom)); height:68px; padding:5px; border:1px solid rgba(255,255,255,.8); border-radius:22px; background:rgba(250,250,251,.88); backdrop-filter:blur(24px) saturate(180%); box-shadow:0 12px 40px rgba(26,35,50,.18); overflow-x:auto; scrollbar-width:none; scroll-snap-type:x proximity; -webkit-overflow-scrolling:touch; }
+  .mobile-nav::-webkit-scrollbar { display:none; }
+  .mobile-nav a { position:relative; flex:0 0 auto; min-width:19%; height:54px; scroll-snap-align:center; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; padding-inline:6px; border-radius:16px; color:#88909d; font-size:9px; }
   .mobile-nav a.active { color:var(--blue); background:#edf4ff; }
   .mobile-nav svg { width:20px; height:20px; }
   .mobile-nav b { position:absolute; top:2px; right:18%; }
