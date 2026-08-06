@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import { createClient, setClientActive, type ClientActionResult } from "./actions";
 import { SOCIAL_NETWORKS, SOCIAL_NETWORK_LABELS } from "@/lib/domain/types";
 import { Icon } from "@/components/Icon";
+import { ClientLogoField } from "@/components/ClientLogoField";
 import {
   hashtagsForClientType,
   LYFTT_CLIENT_TYPES,
@@ -131,6 +132,8 @@ export function ClientAdmin({
               </select>
             </div>
           </div>
+
+          <ClientLogoField id="client-logo" required />
 
           <fieldset className="form-section">
             <legend className="label px-1">Contacts destinataires</legend>

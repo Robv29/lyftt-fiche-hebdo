@@ -12,6 +12,7 @@ import {
 } from "@/lib/domain/tokens";
 import { rateLimit } from "@/lib/security/rate-limit";
 import { resolveMediaUrl } from "@/lib/media/signed-url";
+import { resolveClientLogoUrl } from "@/lib/media/client-logo";
 import type {
   ItemApprovalStatus,
   MediaFormat,
@@ -320,7 +321,7 @@ export async function loadReviewSheet(
   return {
     id: sheet.id,
     clientName: client.name,
-    clientLogoUrl: client.logo_url,
+    clientLogoUrl: await resolveClientLogoUrl(client.logo_url),
     timezone: client.timezone,
     approvalPolicy: client.approval_policy,
     tacitApprovalNotice: client.tacit_approval_notice,

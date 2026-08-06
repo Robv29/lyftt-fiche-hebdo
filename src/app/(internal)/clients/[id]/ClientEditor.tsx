@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { updateClient, type ClientActionResult } from "../actions";
 import { Icon } from "@/components/Icon";
+import { ClientLogoField } from "@/components/ClientLogoField";
 import { SOCIAL_NETWORKS, SOCIAL_NETWORK_LABELS, type SocialNetwork } from "@/lib/domain/types";
 import {
   hashtagsForClientType,
@@ -17,6 +18,7 @@ const WEEKDAYS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "
 export interface EditableClient {
   id: string;
   name: string;
+  logoUrl: string | null;
   communityManagerId: string;
   contacts: { firstName: string; lastName: string; phone: string; email: string }[];
   brand: {
@@ -137,6 +139,12 @@ export function ClientEditor({ initial, managers }: { initial: EditableClient; m
                   <div><label className="label" htmlFor="edit-manager">Community manager référent</label><select id="edit-manager" name="communityManagerId" required className="field" defaultValue={initial.communityManagerId}>{managers.map((manager) => <option key={manager.id} value={manager.id}>{manager.name}</option>)}</select></div>
                 </div>
               </section>
+
+              <ClientLogoField
+                id="edit-client-logo"
+                initialUrl={initial.logoUrl}
+                required={!initial.logoUrl}
+              />
 
               <fieldset className="rounded-2xl bg-canvas p-4 sm:p-5">
                 <legend className="label px-1">Contacts destinataires</legend>

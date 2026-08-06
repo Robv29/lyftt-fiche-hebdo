@@ -5,6 +5,7 @@ import { sheetStatusLabel, SOCIAL_NETWORKS, type SocialNetwork } from "@/lib/dom
 import { LYFTT_CLIENT_TYPE_IDS, type LyfttClientType } from "@/lib/domain/hashtags";
 import { Icon } from "@/components/Icon";
 import { ClientEditor } from "./ClientEditor";
+import { resolveClientLogoUrl } from "@/lib/media/client-logo";
 
 const weekDays = ["lundi","mardi","mercredi","jeudi","vendredi","samedi","dimanche"];
 const brandTones = ["chaleureux","premium","expert","dynamique","institutionnel"] as const;
@@ -13,10 +14,11 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
   const [{ data: client }, { data: managers }] = await Promise.all([
-    supabase.from("clients").select(`id, name, notes, timezone, is_active, approval_policy, tacit_approval_notice, validation_deadline_weekday, validation_deadline_time, reminders_enabled, reminder_channel_email, reminder_channel_whatsapp, whatsapp_group_name, post_signature, client_contacts ( id, first_name, last_name, email, phone, role_label, is_primary ), client_assignments ( role, profiles ( id, full_name ) ), weekly_sheets ( id, iso_week, iso_year, status, period_start, weekly_sheet_items ( id, publication_type, format, hashtags ) )`).eq("id",id).maybeSingle(),
+    supabase.from("clients").select(`id, name, logo_url, notes, timezone, is_active, approval_policy, tacit_approval_notice, validation_deadline_weekday, validation_deadline_time, reminders_enabled, reminder_channel_email, reminder_channel_whatsapp, whatsapp_group_name, post_signature, client_contacts ( id, first_name, last_name, email, phone, role_label, is_primary ), client_assignments ( role, profiles ( id, full_name ) ), weekly_sheets ( id, iso_week, iso_year, status, period_start, weekly_sheet_items ( id, publication_type, format, hashtags ) )`).eq("id",id).maybeSingle(),
     supabase.from("profiles").select("id, full_name").in("role", ["community_manager", "super_admin", "production_manager"]).eq("is_active", true).order("full_name"),
   ]);
   if (!client) notFound();
+  const clientLogoUrl = await resolveClientLogoUrl(client.logo_url);
   const contacts = client.client_contacts as unknown as {id:string;first_name:string;last_name:string|null;email:string|null;phone:string|null;role_label:string|null;is_primary:boolean}[];
   const sheets = (client.weekly_sheets as unknown as {id:string;iso_week:number;iso_year:number;status:string;period_start:string;weekly_sheet_items:{id:string;publication_type:string;format:string;hashtags:string[]}[]}[]).sort((a,b)=>b.period_start.localeCompare(a.period_start));
   const assignments = client.client_assignments as unknown as {role:string;profiles:{id:string;full_name:string}|null}[];
@@ -51,9 +53,13 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
     : "chaleureux";
 
   return <div className="space-y-7">
-    <header><Link href="/clients" className="mb-5 inline-flex min-h-11 items-center text-sm text-ink-soft hover:text-ink">← Clients</Link><div className="flex flex-wrap items-center justify-between gap-4"><div className="flex min-w-0 items-center gap-3 sm:gap-4"><span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[#e8effa] text-base font-bold text-[#3e526f] sm:h-14 sm:w-14 sm:text-lg">{client.name.slice(0,2).toUpperCase()}</span><div className="min-w-0"><h1 className="page-title break-words">{client.name}</h1><p className="mt-1 break-words text-sm text-ink-soft">{client.is_active ? "Collaboration active" : "Client en pause"} · {client.timezone}</p></div></div><ClientEditor initial={{
+    <header><Link href="/clients" className="mb-5 inline-flex min-h-11 items-center text-sm text-ink-soft hover:text-ink">← Clients</Link><div className="flex flex-wrap items-center justify-between gap-4"><div className="flex min-w-0 items-center gap-3 sm:gap-4">{clientLogoUrl ? <span className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-2xl border border-line bg-white shadow-sm sm:h-14 sm:w-14">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={clientLogoUrl} alt={`Logo ${client.name}`} className="h-full w-full object-contain p-1.5"/>
+    </span> : <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[#e8effa] text-base font-bold text-[#3e526f] sm:h-14 sm:w-14 sm:text-lg">{client.name.slice(0,2).toUpperCase()}</span>}<div className="min-w-0"><h1 className="page-title break-words">{client.name}</h1><p className="mt-1 break-words text-sm text-ink-soft">{client.is_active ? "Collaboration active" : "Client en pause"} · {client.timezone}</p></div></div><ClientEditor initial={{
       id: client.id,
       name: client.name,
+      logoUrl: clientLogoUrl,
       communityManagerId: communityManager?.profiles?.id ?? managers?.[0]?.id ?? "",
       contacts: (contacts.length ? contacts : [primaryContact]).filter(Boolean).map((c)=>({ firstName:c?.first_name ?? "", lastName:c?.last_name ?? "", phone:c?.phone ?? "", email:c?.email ?? "" })),
       brand: {

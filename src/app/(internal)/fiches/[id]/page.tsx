@@ -17,6 +17,7 @@ import { SendPanel } from "./SendPanel";
 import { SheetContentEditor } from "./SheetContentEditor";
 import { sheetCompletion } from "@/lib/domain/planning";
 import { resolveMediaUrl } from "@/lib/media/signed-url";
+import { resolveClientLogoUrl } from "@/lib/media/client-logo";
 
 /** §21 — Onglet « Retours et validations » d'une fiche. */
 export default async function SheetDetailPage({
@@ -32,7 +33,7 @@ export default async function SheetDetailPage({
     .select(
       `id, iso_year, iso_week, period_start, period_end, status, validation_deadline_at,
        sent_to_client_at, first_viewed_at, current_version_id,
-       clients ( id, name, timezone, approval_policy ),
+       clients ( id, name, logo_url, timezone, approval_policy ),
        profiles:community_manager_id ( full_name ),
        weekly_sheet_items ( id, position, scheduled_date, scheduled_time, format, caption, hashtags,
          media_asset_id, media_external_url, approval_status, is_cancelled,
@@ -52,10 +53,12 @@ export default async function SheetDetailPage({
   const client = sheet.clients as unknown as {
     id: string;
     name: string;
+    logo_url: string | null;
     timezone: string;
     approval_policy: string;
   };
   const manager = sheet.profiles as unknown as { full_name: string } | null;
+  const clientLogoUrl = await resolveClientLogoUrl(client.logo_url);
 
   const { data: contacts } = await supabase
     .from("client_contacts")
@@ -156,9 +159,17 @@ export default async function SheetDetailPage({
         <Link href="/fiches" className="text-sm text-ink-soft hover:text-ink">
           ← Fiches
         </Link>
-        <h1 className="page-title mt-2">
-          {client.name} — semaine {sheet.iso_week}
-        </h1>
+        <div className="mt-2 flex min-w-0 items-center gap-3">
+          {clientLogoUrl ? (
+            <span className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-2xl border border-line bg-white shadow-sm">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={clientLogoUrl} alt={`Logo ${client.name}`} className="h-full w-full object-contain p-1.5" />
+            </span>
+          ) : null}
+          <h1 className="page-title min-w-0 break-words">
+            {client.name} — semaine {sheet.iso_week}
+          </h1>
+        </div>
         <p className="mt-1 text-sm text-ink-soft">
           {formatPeriod(
             new Date(`${sheet.period_start}T00:00:00Z`),

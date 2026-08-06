@@ -12,6 +12,7 @@ import {
   LYFTT_CLIENT_TYPE_IDS,
   normalizeHashtag,
 } from "@/lib/domain/hashtags";
+import { removeClientLogo, uploadClientLogo } from "@/lib/media/client-logo";
 
 export interface ClientActionResult {
   ok: boolean;
@@ -203,6 +204,22 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
     return { ok: false, message: `Client non créé : ${error?.message ?? "erreur"}` };
   }
 
+  const logo = await uploadClientLogo(client.id, formData.get("logo"), true);
+  if (!logo.path) {
+    await admin.from("clients").delete().eq("id", client.id);
+    return { ok: false, message: logo.error ?? "Le logo du client est requis." };
+  }
+
+  const { error: logoError } = await admin
+    .from("clients")
+    .update({ logo_url: logo.path })
+    .eq("id", client.id);
+  if (logoError) {
+    await removeClientLogo(logo.path);
+    await admin.from("clients").delete().eq("id", client.id);
+    return { ok: false, message: `Logo non enregistré : ${logoError.message}` };
+  }
+
   // Tous les contacts saisis reçoivent le planning ; le premier fait office de
   // référent pour l'affichage et pour le prénom des messages préremplis.
   const { error: contactError } = await admin.from("client_contacts").insert(
@@ -217,6 +234,7 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
     })),
   );
   if (contactError) {
+    await removeClientLogo(logo.path);
     await admin.from("clients").delete().eq("id", client.id);
     return { ok: false, message: `Contact non enregistré : ${contactError.message}` };
   }
@@ -230,6 +248,7 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
     role: "community_manager",
   });
   if (assignmentError) {
+    await removeClientLogo(logo.path);
     await admin.from("clients").delete().eq("id", client.id);
     return { ok: false, message: `Responsable non enregistré : ${assignmentError.message}` };
   }
@@ -266,10 +285,16 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
   const admin = createSupabaseAdminClient();
   const { data: current } = await admin
     .from("clients")
-    .select("id, notes, client_contacts ( id, is_primary )")
+    .select("id, notes, logo_url, client_contacts ( id, is_primary )")
     .eq("id", clientId.data)
     .maybeSingle();
   if (!current) return { ok: false, message: "Client introuvable." };
+
+  const newLogo = await uploadClientLogo(clientId.data, formData.get("logo"), false);
+  if (newLogo.error) return { ok: false, message: newLogo.error };
+  if (!current.logo_url && !newLogo.path) {
+    return { ok: false, message: "Ajoutez le logo du client avant d’enregistrer." };
+  }
 
   let currentNotes: Record<string, unknown> = {};
   try { currentNotes = typeof current.notes === "string" ? JSON.parse(current.notes) : {}; } catch { currentNotes = {}; }
@@ -311,9 +336,14 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
       : null,
     whatsapp_group_name: sanitizeText(input.whatsappGroup, 120),
     post_signature: input.postSignature ? sanitizeText(input.postSignature, 300) : null,
+    logo_url: newLogo.path ?? current.logo_url,
     notes: JSON.stringify(notes),
   }).eq("id", clientId.data);
-  if (clientError) return { ok: false, message: `Client non modifié : ${clientError.message}` };
+  if (clientError) {
+    if (newLogo.path) await removeClientLogo(newLogo.path);
+    return { ok: false, message: `Client non modifié : ${clientError.message}` };
+  }
+  if (newLogo.path) await removeClientLogo(current.logo_url);
 
   // La liste des contacts est remplacée par celle du formulaire : c'est le seul
   // moyen simple de gérer ajouts, modifications et retraits en une opération.
