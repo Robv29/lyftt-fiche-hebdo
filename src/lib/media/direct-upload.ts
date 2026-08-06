@@ -26,7 +26,8 @@ export async function uploadMediaDirect(params: {
   sheetId: string | null;
   onProgress?: (step: "preparation" | "envoi" | "enregistrement") => void;
   /** Avancement de l'envoi réseau, en pourcentage. */
-  onUploadProgress?: (percent: number, uploadedBytes: number) => void;
+  /** Avancement réseau : pourcentage, octets envoyés, secondes restantes estimées. */
+  onUploadProgress?: (percent: number, uploadedBytes: number, remainingSeconds: number | null) => void;
   signal?: AbortSignal;
 }): Promise<UploadOutcome> {
   const kind = params.file.type.startsWith("video/") ? "video" : "image";
@@ -53,10 +54,25 @@ export async function uploadMediaDirect(params: {
 
   // Écriture directe sur l'URL signée, pour disposer de la progression : sur
   // une vidéo, une barre qui avance change tout par rapport à une attente muette.
+  // Le débit se mesure sur l'envoi lui-même : une estimation calculée à partir
+  // du transfert réel vaut mieux qu'une moyenne théorique.
+  const startedAt = Date.now();
+
   const upload = await putWithProgress({
     signedUrl: ticket.signedUrl!,
     file: prepared.file,
-    onProgress: params.onUploadProgress,
+    onProgress: (percent, uploadedBytes) => {
+      const elapsedSeconds = (Date.now() - startedAt) / 1000;
+      // On attend deux secondes de transfert avant d'annoncer quoi que ce soit :
+      // les premières mesures sont trop instables pour être crédibles.
+      const remaining =
+        elapsedSeconds > 2 && uploadedBytes > 0
+          ? Math.round(
+              ((prepared.file.size - uploadedBytes) / uploadedBytes) * elapsedSeconds,
+            )
+          : null;
+      params.onUploadProgress?.(percent, uploadedBytes, remaining);
+    },
     signal: params.signal,
   });
 

@@ -51,6 +51,7 @@ interface DraftItem {
   mediaError: string | null;
   mediaSaving: string | null;
   mediaPercent: number | null;
+  mediaRemaining: number | null;
 }
 
 const EMPTY_MEDIA = {
@@ -60,9 +61,10 @@ const EMPTY_MEDIA = {
   mediaError: null,
   mediaSaving: null,
   mediaPercent: null,
+  mediaRemaining: null,
 } satisfies Pick<
   DraftItem,
-  "mediaAssetId" | "mediaName" | "mediaStatus" | "mediaError" | "mediaSaving" | "mediaPercent"
+  "mediaAssetId" | "mediaName" | "mediaStatus" | "mediaError" | "mediaSaving" | "mediaPercent" | "mediaRemaining"
 >;
 
 /**
@@ -264,7 +266,8 @@ export function SheetBuilder({
       clientId: selectedClientId,
       sheetId: null,
       onProgress: (step) => update(key, { mediaStatus: step }),
-      onUploadProgress: (percent) => update(key, { mediaPercent: percent }),
+      onUploadProgress: (percent, _bytes, remaining) =>
+        update(key, { mediaPercent: percent, mediaRemaining: remaining }),
     });
 
     if (!result.ok) {
