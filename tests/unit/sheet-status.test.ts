@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   canApproveAll,
   computeSheetStatus,
+  isClientValidated,
   isSheetFullyApproved,
+  validationRate,
 } from "@/lib/domain/sheet-status";
 import type { ItemApprovalStatus } from "@/lib/domain/types";
 
@@ -172,5 +174,37 @@ describe("§5 — bouton « Tout valider »", () => {
     expect(
       canApproveAll({ items: [item("approved"), item("resent")], ticketStatuses: ["closed"] }),
     ).toBe(true);
+  });
+});
+
+describe("fiches validées par le client", () => {
+  it("reconnaît la validation explicite et la validation tacite", () => {
+    expect(isClientValidated("approved_by_client")).toBe(true);
+    expect(isClientValidated("tacitly_approved")).toBe(true);
+    expect(isClientValidated("partially_approved")).toBe(false);
+    expect(isClientValidated("awaiting_revalidation")).toBe(false);
+    expect(isClientValidated("rejected")).toBe(false);
+  });
+
+  it("calcule la part de fiches validées", () => {
+    expect(
+      validationRate([
+        "approved_by_client",
+        "tacitly_approved",
+        "sent_to_client",
+        "changes_requested",
+      ]),
+    ).toEqual({ validated: 2, total: 4, percentage: 50 });
+  });
+
+  it("exclut les fiches jamais soumises au client", () => {
+    // Un brouillon n'a pas encore été proposé : le compter fausserait le taux.
+    expect(
+      validationRate(["approved_by_client", "draft", "internal_review"]),
+    ).toEqual({ validated: 1, total: 1, percentage: 100 });
+  });
+
+  it("ne divise pas par zéro quand rien n'a été envoyé", () => {
+    expect(validationRate(["draft"])).toEqual({ validated: 0, total: 0, percentage: 0 });
   });
 });

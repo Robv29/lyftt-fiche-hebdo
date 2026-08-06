@@ -54,6 +54,37 @@ export function computeSheetStatus(input: SheetAggregationInput): SheetStatus {
 }
 
 /**
+ * Statuts signifiant que le client a donné son accord sur toute la fiche.
+ * La validation tacite en fait partie : elle vaut accord contractuel (§16).
+ */
+export const CLIENT_VALIDATED_STATUSES: readonly SheetStatus[] = [
+  "approved_by_client",
+  "tacitly_approved",
+];
+
+/** La fiche est-elle entièrement validée par le client ? */
+export function isClientValidated(status: SheetStatus): boolean {
+  return CLIENT_VALIDATED_STATUSES.includes(status);
+}
+
+/** Part des fiches validées, pour le suivi hebdomadaire. */
+export function validationRate(statuses: SheetStatus[]): {
+  validated: number;
+  total: number;
+  percentage: number;
+} {
+  // Les brouillons ne comptent pas : ils n'ont jamais été soumis au client.
+  const submitted = statuses.filter((status) => status !== "draft" && status !== "internal_review");
+  const validated = submitted.filter(isClientValidated).length;
+
+  return {
+    validated,
+    total: submitted.length,
+    percentage: submitted.length ? Math.round((validated / submitted.length) * 100) : 0,
+  };
+}
+
+/**
  * §15 — La fiche n'est réellement validée que si tous les contenus le sont, ou
  * si une règle explicite s'applique (tacite, forçage justifié).
  */

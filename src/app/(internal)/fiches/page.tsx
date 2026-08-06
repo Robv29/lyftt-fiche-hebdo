@@ -8,7 +8,8 @@ import {
   weeklyFormatsForCadence,
   type MonthlyCadence,
 } from "@/lib/domain/planning";
-import { sheetStatusLabel, type MediaFormat, type TicketPriority, type TicketStatus } from "@/lib/domain/types";
+import { sheetStatusLabel, type MediaFormat, type SheetStatus, type TicketPriority, type TicketStatus } from "@/lib/domain/types";
+import { isClientValidated, validationRate } from "@/lib/domain/sheet-status";
 import { isTicketOpen } from "@/lib/domain/workflow";
 import { Icon } from "@/components/Icon";
 import { PlanningTabs } from "./PlanningTabs";
@@ -74,20 +75,22 @@ function ProgressBar({ percentage, label }: { percentage: number; label: string 
 function SheetCard({ sheet, showProgress = false }: { sheet: PlanningSheet; showProgress?: boolean }) {
   const completion = completionForSheet(sheet);
   const urgent = hasHighPriorityChange(sheet);
+  const validated = isClientValidated(sheet.status as SheetStatus);
   const period = formatPeriod(
     new Date(`${sheet.period_start}T00:00:00Z`),
     new Date(`${sheet.period_end}T00:00:00Z`),
   );
 
   return (
-    <li className={`card lift-card overflow-hidden ${urgent ? "ring-2 ring-state-changes/20" : ""}`}>
+    <li className={`card lift-card overflow-hidden ${validated ? "border-state-approved/40 bg-[#f6fdf9]" : urgent ? "ring-2 ring-state-changes/20" : ""}`}>
       <Link href={`/fiches/${sheet.id}`} className="block p-4 hover:bg-canvas sm:p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="truncate text-sm font-semibold">{sheet.clients?.name ?? "Client"}</h3>
-              {urgent && <span className="badge bg-state-changes/10 text-state-changes">Modification haute</span>}
-              {!urgent && completion.percentage < 100 && <span className="badge bg-[#fff7e6] text-[#8a5700]">À compléter</span>}
+              {validated && <span className="badge gap-1 bg-[#e8f8f1] text-state-approved"><Icon name="check" className="h-3 w-3"/>Validée par le client</span>}
+              {!validated && urgent && <span className="badge bg-state-changes/10 text-state-changes">Modification haute</span>}
+              {!validated && !urgent && completion.percentage < 100 && <span className="badge bg-[#fff7e6] text-[#8a5700]">À compléter</span>}
             </div>
             <p className="mt-1 text-xs text-ink-faint">Semaine {sheet.iso_week} · {period}</p>
           </div>
@@ -99,7 +102,7 @@ function SheetCard({ sheet, showProgress = false }: { sheet: PlanningSheet; show
         )}
 
         <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t pt-3 text-xs">
-          <span className="text-ink-soft">{sheetStatusLabel(sheet.status)}</span>
+          <span className={validated ? "font-semibold text-state-approved" : "text-ink-soft"}>{sheetStatusLabel(sheet.status)}</span>
           <span className={completion.percentage === 100 ? "font-semibold text-state-approved" : "text-ink-faint"}>
             {completion.percentage === 100 ? "Fiche complète" : `${completion.completed}/${completion.total} éléments prêts`}
           </span>
@@ -139,6 +142,7 @@ export default async function SheetsPage() {
   const next = sheets.filter((sheet) => planningBucketForPeriod(sheet.period_start, sheet.period_end) === "next");
   const nextClientIds = new Set(next.map((sheet) => sheet.clients?.id).filter(Boolean));
   const proposals = (clients ?? []).filter((client) => !nextClientIds.has(client.id));
+  const validation = validationRate(sheets.map((sheet) => sheet.status as SheetStatus));
 
   return (
     <div className="space-y-8">
@@ -147,6 +151,37 @@ export default async function SheetsPage() {
         <h1 className="page-title mt-1">Planning</h1>
         <p className="mt-2 max-w-2xl text-sm text-ink-soft">Le travail est proposé automatiquement selon les prestations de chaque client. Ouvrez simplement la fiche à préparer.</p>
       </div>
+
+      {/*
+        Part des fiches réellement validées par le client. Les brouillons sont
+        exclus : ils n'ont jamais été soumis, les compter fausserait le taux.
+      */}
+      {validation.total > 0 && (
+        <section className="card flex flex-wrap items-center justify-between gap-4 p-4 sm:p-5">
+          <div className="flex items-center gap-3">
+            <span className={`grid h-11 w-11 place-items-center rounded-2xl ${validation.percentage === 100 ? "bg-[#e8f8f1] text-state-approved" : "bg-[#e8f2ff] text-[#1176d3]"}`}>
+              <Icon name="check" className="h-5 w-5"/>
+            </span>
+            <div>
+              <strong className="text-sm">
+                {validation.validated} fiche{validation.validated > 1 ? "s" : ""} validée{validation.validated > 1 ? "s" : ""} sur {validation.total}
+              </strong>
+              <p className="mt-1 text-xs text-ink-faint">
+                Validation client, explicite ou tacite. Les fiches en préparation ne sont pas comptées.
+              </p>
+            </div>
+          </div>
+          <div className="w-full sm:w-56">
+            <div className="mb-2 flex justify-between text-[11px] text-ink-faint">
+              <span>Taux de validation</span>
+              <strong className={validation.percentage === 100 ? "text-state-approved" : "text-ink"}>{validation.percentage} %</strong>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-[#e8edf4]" role="progressbar" aria-label={`Taux de validation : ${validation.percentage}%`} aria-valuenow={validation.percentage} aria-valuemin={0} aria-valuemax={100}>
+              <span className={`block h-full origin-left rounded-full transition-transform duration-300 ${validation.percentage === 100 ? "bg-state-approved" : "bg-[#1468ff]"}`} style={{ transform: `scaleX(${validation.percentage / 100})` }}/>
+            </div>
+          </div>
+        </section>
+      )}
 
       <PlanningTabs
         counts={{ past: past.length, current: current.length, next: next.length + proposals.length }}
