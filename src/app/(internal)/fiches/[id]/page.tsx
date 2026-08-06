@@ -16,6 +16,7 @@ import { DEFAULT_TEMPLATES } from "@/lib/domain/templates";
 import { SendPanel } from "./SendPanel";
 import { SheetContentEditor } from "./SheetContentEditor";
 import { sheetCompletion } from "@/lib/domain/planning";
+import { resolveMediaUrl } from "@/lib/media/signed-url";
 
 /** §21 — Onglet « Retours et validations » d'une fiche. */
 export default async function SheetDetailPage({
@@ -35,7 +36,7 @@ export default async function SheetDetailPage({
        profiles:community_manager_id ( full_name ),
        weekly_sheet_items ( id, position, scheduled_date, scheduled_time, format, caption, hashtags,
          media_asset_id, media_external_url, approval_status, is_cancelled,
-         media_assets:media_asset_id ( id, file_name, kind ) ),
+         media_assets:media_asset_id ( id, file_name, kind, storage_path, preview_path, purged_at, preview_purged_at ) ),
        weekly_sheet_versions!weekly_sheet_versions_weekly_sheet_id_fkey (
          id, version_number, status, change_summary, created_at, sent_to_client_at
        ),
@@ -72,7 +73,7 @@ export default async function SheetDetailPage({
     hashtags: string[];
     media_asset_id: string | null;
     media_external_url: string | null;
-    media_assets: { id: string; file_name: string; kind: string } | null;
+    media_assets: { id: string; file_name: string; kind: string; storage_path: string; preview_path: string | null; purged_at: string | null; preview_purged_at: string | null } | null;
     approval_status: string;
     is_cancelled: boolean;
   }[];
@@ -127,6 +128,19 @@ export default async function SheetDetailPage({
   const deadlineInfo = deadline ? deadlineState(deadline) : null;
   const primaryContact = contacts?.[0];
   const sheetIsEditable = ["draft", "internal_review", "ready_to_send"].includes(sheet.status);
+
+  // Le bucket est privé : chaque média doit être signé pour être affiché.
+  const mediaByItem = new Map(await Promise.all(items.map(async (item) => [
+    item.id,
+    item.media_assets
+      ? await resolveMediaUrl({
+          storagePath: item.media_assets.storage_path,
+          previewPath: item.media_assets.preview_path,
+          purgedAt: item.media_assets.purged_at,
+          previewPurgedAt: item.media_assets.preview_purged_at,
+        })
+      : null,
+  ] as const)));
   const preparation = sheetCompletion(items.map((item) => ({
     caption: item.caption,
     hashtags: item.hashtags,
@@ -191,6 +205,7 @@ export default async function SheetDetailPage({
           {sheetIsEditable ? (
             <SheetContentEditor
               sheetId={sheet.id}
+              clientId={client.id}
               initialItems={items
                 .filter((item) => !item.is_cancelled)
                 .sort((a, b) => a.position - b.position)
@@ -203,6 +218,9 @@ export default async function SheetDetailPage({
                   caption: item.caption,
                   hashtags: item.hashtags.join(" "),
                   mediaFileName: item.media_assets?.file_name ?? null,
+                  mediaKind: item.media_assets?.kind ?? null,
+                  mediaUrl: mediaByItem.get(item.id)?.url ?? null,
+                  mediaIsPreviewOnly: mediaByItem.get(item.id)?.isPreviewOnly ?? false,
                   mediaExternalUrl: item.media_external_url,
                 }))}
             />

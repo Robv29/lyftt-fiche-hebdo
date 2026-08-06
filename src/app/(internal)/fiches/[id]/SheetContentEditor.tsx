@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import { saveSheetContent, type SheetContentActionResult } from "./actions";
 import { Icon } from "@/components/Icon";
 import { MEDIA_FORMAT_LABELS, type MediaFormat } from "@/lib/domain/types";
+import { uploadMediaDirect } from "@/lib/media/direct-upload";
 
 export interface EditableSheetItem {
   id: string;
@@ -15,28 +16,81 @@ export interface EditableSheetItem {
   caption: string;
   hashtags: string;
   mediaFileName: string | null;
+  mediaKind: string | null;
+  /** URL signée : le bucket est privé, rien n'est affichable sans elle. */
+  mediaUrl: string | null;
+  /** L'original a été purgé après publication ; seul l'aperçu subsiste. */
+  mediaIsPreviewOnly: boolean;
   mediaExternalUrl: string | null;
 }
 
-interface EditorItem extends EditableSheetItem { newMedia: File | null }
+interface EditorItem extends EditableSheetItem {
+  /*
+   * Le fichier part vers Supabase dès le dépôt, jamais par la Server Action :
+   * une fonction Vercel refuse tout corps de requête au-delà de 4,5 Mo, ce
+   * qu'une vidéo dépasse systématiquement.
+   */
+  mediaAssetId: string | null;
+  mediaStatus: "vide" | "envoi" | "enregistrement" | "pret" | "erreur";
+  mediaPercent: number | null;
+  mediaError: string | null;
+  /** Marque une suppression demandée, appliquée à l'enregistrement. */
+  mediaCleared: boolean;
+}
 
 function acceptFor(format: MediaFormat): string {
   return ["video", "reels"].includes(format)
-    ? "video/mp4,video/quicktime"
+    ? "video/mp4,video/quicktime,video/webm"
     : "image/jpeg,image/png,image/webp,image/heic";
 }
 
-export function SheetContentEditor({ sheetId, initialItems }: { sheetId: string; initialItems: EditableSheetItem[] }) {
+const EMPTY_UPLOAD = {
+  mediaAssetId: null,
+  mediaStatus: "vide",
+  mediaPercent: null,
+  mediaError: null,
+  mediaCleared: false,
+} satisfies Pick<
+  EditorItem,
+  "mediaAssetId" | "mediaStatus" | "mediaPercent" | "mediaError" | "mediaCleared"
+>;
+
+/** Un média est présent s'il en existe un, sauf suppression demandée. */
+function hasMedia(item: EditorItem): boolean {
+  if (item.mediaCleared) return Boolean(item.mediaAssetId);
+  return Boolean(item.mediaAssetId || item.mediaFileName || item.mediaExternalUrl);
+}
+
+export function SheetContentEditor({ sheetId, clientId, initialItems }: { sheetId: string; clientId: string; initialItems: EditableSheetItem[] }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<SheetContentActionResult | null>(null);
-  const [items, setItems] = useState<EditorItem[]>(initialItems.map((item) => ({ ...item, newMedia: null })));
+  const [items, setItems] = useState<EditorItem[]>(initialItems.map((item) => ({ ...item, ...EMPTY_UPLOAD })));
   const update = (id: string, patch: Partial<EditorItem>) => setItems((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
+
+  /** Envoi immédiat du fichier, sans attendre l'enregistrement de la fiche. */
+  const handleMedia = async (id: string, file: File | null) => {
+    if (!file) return;
+    update(id, { ...EMPTY_UPLOAD, mediaStatus: "envoi", mediaFileName: file.name });
+
+    const result = await uploadMediaDirect({
+      file,
+      clientId,
+      sheetId,
+      onProgress: (step) => { if (step !== "preparation") update(id, { mediaStatus: step }); },
+      onUploadProgress: (percent) => update(id, { mediaPercent: percent }),
+    });
+
+    update(id, result.ok
+      ? { mediaAssetId: result.mediaAssetId ?? null, mediaStatus: "pret", mediaPercent: null, mediaCleared: false, mediaUrl: null }
+      : { ...EMPTY_UPLOAD, mediaStatus: "erreur", mediaError: result.message ?? "Envoi impossible." });
+  };
+
   const requirements = items.reduce((total, item) => total + (item.format === "texte_seul" ? 2 : 3), 0);
   const completed = items.reduce((total, item) => total
     + Number(Boolean(item.caption.trim()))
     + Number(Boolean(item.hashtags.trim()))
-    + Number(item.format !== "texte_seul" && Boolean(item.newMedia || item.mediaFileName || item.mediaExternalUrl)), 0);
+    + Number(item.format !== "texte_seul" && hasMedia(item)), 0);
   const progress = requirements ? Math.round((completed / requirements) * 100) : 0;
 
   return (
@@ -49,19 +103,15 @@ export function SheetContentEditor({ sheetId, initialItems }: { sheetId: string;
         format: item.format,
         caption: item.caption,
         hashtags: item.hashtags,
+        // Le fichier est déjà stocké : seul son identifiant circule ici.
+        // `null` explicite vaut suppression du média rattaché.
+        mediaAssetId: item.mediaAssetId,
+        mediaCleared: item.mediaCleared,
       }))));
-      items.forEach((item, index) => { if (item.newMedia) formData.set(`media-${index}`, item.newMedia); });
       startTransition(async () => {
         const result = await saveSheetContent(formData);
         setFeedback(result);
-        if (result.ok) {
-          setItems((current) => current.map((item) => ({
-            ...item,
-            mediaFileName: item.newMedia?.name ?? item.mediaFileName,
-            newMedia: null,
-          })));
-          router.refresh();
-        }
+        if (result.ok) router.refresh();
       });
     }} className="space-y-4">
       <div className="card sticky top-3 z-10 p-4 shadow-[0_8px_30px_rgba(31,41,55,.08)]">
@@ -73,7 +123,7 @@ export function SheetContentEditor({ sheetId, initialItems }: { sheetId: string;
       {feedback && <p className={`rounded-xl border px-4 py-3 text-sm ${feedback.ok ? "border-state-approved/30 bg-state-approved/5 text-state-approved" : "border-state-changes/30 bg-state-changes/5 text-state-changes"}`}>{feedback.message}</p>}
 
       {items.map((item, index) => {
-        const mediaReady = item.format === "texte_seul" || Boolean(item.newMedia || item.mediaFileName || item.mediaExternalUrl);
+        const mediaReady = item.format === "texte_seul" || hasMedia(item);
         const itemReady = Boolean(item.caption.trim() && item.hashtags.trim() && mediaReady);
         return (
           <article key={item.id} className="card space-y-4 p-4 sm:p-5">
@@ -81,7 +131,7 @@ export function SheetContentEditor({ sheetId, initialItems }: { sheetId: string;
             <div className="grid gap-3 sm:grid-cols-3">
               <input type="date" className="field" aria-label={`Date de la publication ${index + 1}`} value={item.scheduledDate} onChange={(event) => update(item.id, { scheduledDate: event.target.value })}/>
               <input type="time" className="field" aria-label={`Heure de la publication ${index + 1}`} value={item.scheduledTime.slice(0, 5)} onChange={(event) => update(item.id, { scheduledTime: event.target.value })}/>
-              <select className="field" aria-label={`Format de la publication ${index + 1}`} value={item.format} onChange={(event) => update(item.id, { format: event.target.value as MediaFormat, newMedia: null })}>{Object.entries(MEDIA_FORMAT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+              <select className="field" aria-label={`Format de la publication ${index + 1}`} value={item.format} onChange={(event) => update(item.id, { format: event.target.value as MediaFormat, ...EMPTY_UPLOAD })}>{Object.entries(MEDIA_FORMAT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
             </div>
             <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(16rem,.8fr)]">
               <div className="space-y-3">
@@ -91,12 +141,48 @@ export function SheetContentEditor({ sheetId, initialItems }: { sheetId: string;
               <div>
                 <span className="label">Média · {MEDIA_FORMAT_LABELS[item.format]}</span>
                 {item.format === "texte_seul" ? <p className="rounded-xl bg-canvas p-4 text-xs text-ink-faint">Aucun média nécessaire.</p> : (
-                  <label className={`flex min-h-32 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed p-4 text-center transition-colors ${mediaReady ? "border-state-approved/50 bg-state-approved/5" : "border-[#cdd5df] bg-canvas hover:border-[#8bb5ff]"}`} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); update(item.id, { newMedia: event.dataTransfer.files[0] ?? null }); }}>
-                    <input type="file" className="sr-only" accept={acceptFor(item.format)} onChange={(event) => update(item.id, { newMedia: event.target.files?.[0] ?? null })}/>
-                    <Icon name={mediaReady ? "check" : "upload"} className={`h-5 w-5 ${mediaReady ? "text-state-approved" : "text-[#0759e6]"}`}/>
-                    <strong className="mt-2 max-w-full truncate text-xs">{item.newMedia?.name ?? item.mediaFileName ?? "Déposer le média"}</strong>
-                    <span className="mt-1 text-[11px] text-ink-faint">Glisser-déposer ou cliquer</span>
-                  </label>
+                  <div className="space-y-2">
+                    {/* Le média est visible, pas seulement nommé : c'est ce que verra le client. */}
+                    {item.mediaUrl && !item.mediaCleared && (
+                      <figure className="overflow-hidden rounded-2xl border border-line bg-black/5">
+                        {item.mediaKind === "video"
+                          ? <video controls preload="metadata" className="block max-h-56 w-full bg-black object-contain"><source src={item.mediaUrl}/></video>
+                          // eslint-disable-next-line @next/next/no-img-element
+                          : <img src={item.mediaUrl} alt={`Visuel de la publication ${index + 1}`} className="block max-h-56 w-full object-contain"/>}
+                        {item.mediaIsPreviewOnly && <figcaption className="bg-canvas px-3 py-2 text-[11px] text-ink-faint">Aperçu léger — le fichier original a été purgé après publication.</figcaption>}
+                      </figure>
+                    )}
+
+                    <label
+                      aria-busy={["envoi", "enregistrement"].includes(item.mediaStatus)}
+                      className={`flex min-h-24 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed p-4 text-center transition-colors ${item.mediaStatus === "erreur" ? "border-state-changes/50 bg-state-changes/5" : mediaReady ? "border-state-approved/50 bg-state-approved/5" : "border-[#cdd5df] bg-canvas hover:border-[#8bb5ff]"}`}
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={(event) => { event.preventDefault(); handleMedia(item.id, event.dataTransfer.files[0] ?? null); }}
+                    >
+                      <input type="file" className="sr-only" accept={acceptFor(item.format)} disabled={["envoi", "enregistrement"].includes(item.mediaStatus)} onChange={(event) => handleMedia(item.id, event.target.files?.[0] ?? null)}/>
+                      <Icon name={mediaReady ? "check" : "upload"} className={`h-5 w-5 ${mediaReady ? "text-state-approved" : "text-[#0759e6]"}`}/>
+                      <strong className="mt-2 max-w-full truncate text-xs">
+                        {item.mediaStatus === "envoi" && item.mediaPercent !== null ? `Envoi ${item.mediaPercent} %`
+                          : item.mediaStatus === "enregistrement" ? "Finalisation…"
+                          : item.mediaCleared ? "Déposer un média"
+                          : item.mediaFileName ?? "Déposer le média"}
+                      </strong>
+                      {item.mediaStatus === "envoi" && item.mediaPercent !== null && (
+                        <span className="mt-2 block h-1 w-full max-w-[180px] overflow-hidden rounded-full bg-[#dbe4f0]"><span className="block h-full rounded-full bg-[#1468ff] transition-[width] duration-200" style={{ width: `${item.mediaPercent}%` }}/></span>
+                      )}
+                      <span className="mt-1 text-[11px] text-ink-faint">{item.mediaError ?? "Glisser-déposer ou cliquer pour remplacer"}</span>
+                    </label>
+
+                    {hasMedia(item) && (
+                      <button
+                        type="button"
+                        className="text-xs text-state-changes hover:underline"
+                        onClick={() => update(item.id, { ...EMPTY_UPLOAD, mediaCleared: true, mediaUrl: null, mediaFileName: null })}
+                      >
+                        Retirer le média
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             </div>

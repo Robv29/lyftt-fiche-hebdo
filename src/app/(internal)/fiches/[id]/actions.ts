@@ -8,7 +8,6 @@ import {
   requireEditorialProfile,
   resolveAccessibleSheet,
 } from "@/lib/internal/authorization";
-import { uploadSheetMedia } from "@/lib/media/internal-upload";
 import { normalizeHashtags, sanitizeText } from "@/lib/security/sanitize";
 import type { MediaFormat, PublicationType } from "@/lib/domain/types";
 
@@ -24,6 +23,8 @@ const editableItemSchema = z.object({
   format: z.enum(["visuel", "photo", "reels", "video", "carrousel", "texte_seul"]),
   caption: z.string().max(5000),
   hashtags: z.string().max(1000),
+  mediaAssetId: z.string().uuid().nullable().optional(),
+  mediaCleared: z.boolean().optional(),
 });
 
 function publicationTypeForFormat(format: MediaFormat): PublicationType {
@@ -77,19 +78,11 @@ export async function saveSheetContent(formData: FormData): Promise<SheetContent
       caption: sanitizeText(item.caption, 5000),
       hashtags: normalizeHashtags(item.hashtags),
     };
-    const file = formData.get(`media-${index}`);
-    if (file instanceof File && file.size > 0) {
-      const upload = await uploadSheetMedia({
-        file,
-        clientId: sheet.client_id,
-        sheetId: sheet.id,
-        uploadedBy: profile.id,
-        expectedKind: ["video", "reels"].includes(item.format) ? "video" : "image",
-        replacesMediaId: existing.media_asset_id,
-      });
-      if (!upload.data) return { ok: false, message: upload.error ?? "Média non enregistré." };
-      patch.media_asset_id = upload.data.assetId;
-    }
+    // Le média a déjà été téléversé depuis le navigateur ; on ne reçoit que
+    // son identifiant. Une suppression explicite détache le média du contenu :
+    // la ligne media_assets reste en base pour l'historique.
+    if (item.mediaCleared) patch.media_asset_id = null;
+    else if (item.mediaAssetId) patch.media_asset_id = item.mediaAssetId;
 
     const { error } = await admin.from("weekly_sheet_items").update(patch).eq("id", item.id);
     if (error) return { ok: false, message: `Publication non enregistrée : ${error.message}` };

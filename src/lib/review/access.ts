@@ -11,6 +11,7 @@ import {
   type LinkRejectionReason,
 } from "@/lib/domain/tokens";
 import { rateLimit } from "@/lib/security/rate-limit";
+import { resolveMediaUrl } from "@/lib/media/signed-url";
 import type {
   ItemApprovalStatus,
   MediaFormat,
@@ -232,7 +233,7 @@ export async function loadReviewSheet(
       `id, position, scheduled_date, scheduled_time, publication_type, format,
        networks, caption, hashtags, approval_status, is_cancelled, published_at,
        media_external_url, media_pending_note,
-       media_assets:media_asset_id ( kind, storage_path, thumbnail_path, file_name )`,
+       media_assets:media_asset_id ( kind, storage_path, thumbnail_path, file_name, preview_path, purged_at, preview_purged_at )`,
     )
     .eq("weekly_sheet_id", context.sheetId)
     .order("position", { ascending: true });
@@ -272,7 +273,21 @@ export async function loadReviewSheet(
       storage_path: string;
       thumbnail_path: string | null;
       file_name: string;
+      preview_path: string | null;
+      purged_at: string | null;
+      preview_purged_at: string | null;
     } | null;
+
+    // Après la purge suivant la publication, l'original n'existe plus : le
+    // client verrait une image cassée sans ce repli sur l'aperçu.
+    const resolved = media
+      ? await resolveMediaUrl({
+          storagePath: media.storage_path,
+          previewPath: media.preview_path ?? media.thumbnail_path,
+          purgedAt: media.purged_at,
+          previewPurgedAt: media.preview_purged_at,
+        })
+      : null;
 
     reviewItems.push({
       id: item.id,
@@ -295,10 +310,8 @@ export async function loadReviewSheet(
             kind: media.kind,
             fileName: media.file_name,
             // URLs signées, à durée limitée : le bucket reste privé (§19).
-            url: await signedUrl(media.storage_path),
-            thumbnailUrl: media.thumbnail_path
-              ? await signedUrl(media.thumbnail_path)
-              : null,
+            url: resolved?.url ?? null,
+            thumbnailUrl: media.thumbnail_path ? await signedUrl(media.thumbnail_path) : null,
           }
         : null,
     });

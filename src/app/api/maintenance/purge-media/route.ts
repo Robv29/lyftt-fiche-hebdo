@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
   const { data: assets, error } = await admin
     .from("media_assets")
     .select(
-      `id, storage_path, preview_path, byte_size, preview_byte_size, purged_at, preview_purged_at,
+      `id, storage_path, preview_path, byte_size, preview_byte_size, purged_at, preview_purged_at, created_at,
        clients ( media_preview_retention_days ),
        weekly_sheet_items ( id, published_at, is_cancelled )`,
     )
@@ -77,9 +77,27 @@ export async function POST(request: NextRequest) {
       is_cancelled: boolean;
     }[];
 
+    /*
+     * Média orphelin : téléversé puis jamais rattaché à une publication, parce
+     * que la création de la fiche a échoué ou que le community manager l'a
+     * remplacé avant d'enregistrer. Sans ce traitement, ces fichiers ne sont
+     * jamais purgés et occupent le stockage indéfiniment. On laisse passer
+     * 48 heures pour ne pas supprimer un dépôt en cours de saisie.
+     */
+    if (items.length === 0) {
+      const ageHours = (Date.now() - new Date(asset.created_at).getTime()) / 3_600_000;
+      if (ageHours > 48 && !asset.purged_at) {
+        originalsToRemove.push(asset.storage_path);
+        if (asset.preview_path) previewsToRemove.push(asset.preview_path);
+        purgedIds.push(asset.id);
+        previewPurgedIds.push(asset.id);
+        freed += asset.byte_size ?? 0;
+      }
+      continue;
+    }
+
     // Un média peut être rattaché à plusieurs publications : on ne purge que
     // si toutes sont terminées.
-    if (items.length === 0) continue;
     if (items.some((item) => blocked.has(item.id))) continue;
 
     const allPublished = items.every((item) => item.published_at !== null);
