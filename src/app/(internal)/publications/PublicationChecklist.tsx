@@ -21,7 +21,7 @@ export interface DailyPublication {
   mediaKind:"image"|"video"|"document"|null; mediaRequired:boolean;
 }
 
-export function PublicationChecklist({ initialItems }: { initialItems:DailyPublication[] }) {
+export function PublicationChecklist({ initialItems, nextWithContent }: { initialItems:DailyPublication[]; nextWithContent?:string|null }) {
   const [items,setItems] = useState(initialItems);
   const [pending,startTransition] = useTransition();
   const [feedback,setFeedback] = useState<string|null>(null);
@@ -46,7 +46,7 @@ export function PublicationChecklist({ initialItems }: { initialItems:DailyPubli
     await navigator.clipboard.writeText(content); mark(item.id,"content");
   };
 
-  if (!items.length) return <div className="empty-state"><span className="empty-state-icon !bg-[#e8f8f1] !text-state-approved"><Icon name="check" className="h-6 w-6"/></span><h2 className="mt-4 font-semibold">Rien à publier</h2><p className="mt-1 max-w-sm text-sm text-ink-faint">Aucun contenu planifié dans les deux prochaines semaines.</p></div>;
+  if (!items.length) return <div className="empty-state"><span className="empty-state-icon !bg-[#e8f8f1] !text-state-approved"><Icon name="check" className="h-6 w-6"/></span><h2 className="mt-4 font-semibold">Rien à publier</h2><p className="mt-1 max-w-sm text-sm text-ink-faint">Aucun contenu n’est planifié pour cette date.</p>{nextWithContent && <a href={`/publications?date=${nextWithContent}`} className="btn-secondary mt-4">Prochaine publication : {dayLabel(nextWithContent)}</a>}</div>;
 
   const complete=items.filter((item)=>item.publishedAt).length;
   const percentage=Math.round(complete/items.length*100);
