@@ -4,9 +4,18 @@ import { useState, useTransition } from "react";
 import Image from "next/image";
 import { completePublicationStep } from "./actions";
 import { Icon } from "@/components/Icon";
+import { format } from "date-fns";
+import { fr } from "date-fns/locale";
+
+function todayInParis():string { return new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Paris",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date()); }
+function isToday(day:string):boolean { return day===todayInParis(); }
+function dayLabel(day:string):string {
+  const label=format(new Date(`${day}T12:00:00`),"EEEE d MMMM",{locale:fr});
+  return isToday(day) ? `Aujourd’hui · ${label}` : label;
+}
 
 export interface DailyPublication {
-  id:string; clientName:string; scheduledTime:string|null; formatLabel:string; networks:string[];
+  id:string; scheduledDate:string; clientName:string; scheduledTime:string|null; formatLabel:string; networks:string[];
   caption:string; hashtags:string[]; approvalLabel:string; approved:boolean; publishedAt:string|null;
   mediaDownloadedAt:string|null; contentCopiedAt:string|null; mediaUrl:string|null; mediaFileName:string|null;
   mediaKind:"image"|"video"|"document"|null; mediaRequired:boolean;
@@ -37,23 +46,33 @@ export function PublicationChecklist({ initialItems }: { initialItems:DailyPubli
     await navigator.clipboard.writeText(content); mark(item.id,"content");
   };
 
-  if (!items.length) return <div className="empty-state"><span className="empty-state-icon !bg-[#e8f8f1] !text-state-approved"><Icon name="check" className="h-6 w-6"/></span><h2 className="mt-4 font-semibold">Rien à publier</h2><p className="mt-1 max-w-sm text-sm text-ink-faint">Aucun contenu n’est planifié pour cette date. La checklist est à jour.</p></div>;
+  if (!items.length) return <div className="empty-state"><span className="empty-state-icon !bg-[#e8f8f1] !text-state-approved"><Icon name="check" className="h-6 w-6"/></span><h2 className="mt-4 font-semibold">Rien à publier</h2><p className="mt-1 max-w-sm text-sm text-ink-faint">Aucun contenu planifié dans les deux prochaines semaines.</p></div>;
 
   const complete=items.filter((item)=>item.publishedAt).length;
   const percentage=Math.round(complete/items.length*100);
-  const groups=Object.entries(items.reduce<Record<string,DailyPublication[]>>((result,item)=>{ (result[item.clientName]??=[]).push(item); return result; },{}));
+  // Regroupement par jour : on execute la journee, pas le client.
+  const groups=Object.entries(items.reduce<Record<string,DailyPublication[]>>((result,item)=>{ (result[item.scheduledDate]??=[]).push(item); return result; },{})).sort(([a],[b])=>a.localeCompare(b));
 
   return <div className="space-y-6">
     <section className="card flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex items-center gap-3"><span className={`grid h-11 w-11 place-items-center rounded-2xl ${percentage===100?"bg-[#e8f8f1] text-state-approved":"bg-[#e8f2ff] text-[#1176d3]"}`}><Icon name={percentage===100?"check":"send"} className="h-5 w-5"/></span><div><strong className="text-sm">{complete} sur {items.length} publication{items.length>1?"s":""} terminée{items.length>1?"s":""}</strong><p className="mt-1 text-xs text-ink-faint">Téléchargez le média puis copiez le texte et les hashtags.</p></div></div>
-      <div className="w-full sm:w-56"><div className="mb-2 flex justify-between text-[11px] text-ink-faint"><span>Progression du jour</span><strong className="text-ink">{percentage}%</strong></div><div className="progress-track"><span className={`progress-fill ${percentage===100?"!bg-state-approved":""}`} style={{transform:`scaleX(${percentage/100})`}}/></div></div>
+      <div className="w-full sm:w-56"><div className="mb-2 flex justify-between text-[11px] text-ink-faint"><span>Progression</span><strong className="text-ink">{percentage}%</strong></div><div className="progress-track"><span className={`progress-fill ${percentage===100?"!bg-state-approved":""}`} style={{transform:`scaleX(${percentage/100})`}}/></div></div>
     </section>
 
     {feedback && <p role="status" className="rounded-xl border border-[#c9dcf0] bg-[#f7fafe] px-4 py-3 text-center text-xs text-ink-soft">{feedback}</p>}
 
-    {groups.map(([clientName,clientItems])=><section key={clientName} className="space-y-3" aria-labelledby={`client-${clientItems[0]?.id}`}>
-      <div className="flex items-center justify-between gap-3 px-1"><div className="flex items-center gap-3"><span className="grid h-9 w-9 place-items-center rounded-xl bg-[#e8f2ff] text-[11px] font-bold text-[#0b5e9f]">{clientName.slice(0,2).toUpperCase()}</span><div><h2 id={`client-${clientItems[0]?.id}`} className="text-sm font-semibold">{clientName}</h2><p className="text-[11px] text-ink-faint">{clientItems.length} contenu{clientItems.length>1?"s":""} à exécuter</p></div></div><span className="badge bg-white text-ink-soft shadow-sm">{clientItems.filter((item)=>item.publishedAt).length}/{clientItems.length}</span></div>
-      <div className="grid gap-4 xl:grid-cols-2">{clientItems.map((item)=><PublicationCard key={item.id} item={item} pending={pending} onDownload={()=>download(item)} onCopy={()=>copy(item)}/>)}</div>
+    {groups.map(([day,dayItems])=><section key={day} className="space-y-3" aria-labelledby={`jour-${day}`}>
+      <div className="flex items-center justify-between gap-3 px-1">
+        <div className="flex items-center gap-3">
+          <span className={`grid h-9 w-9 place-items-center rounded-xl text-[11px] font-bold ${isToday(day)?"bg-[#0b5e9f] text-white":"bg-[#e8f2ff] text-[#0b5e9f]"}`}>{day.slice(8,10)}</span>
+          <div>
+            <h2 id={`jour-${day}`} className="text-sm font-semibold capitalize">{dayLabel(day)}</h2>
+            <p className="text-[11px] text-ink-faint">{dayItems.length} contenu{dayItems.length>1?"s":""} · {[...new Set(dayItems.map((item)=>item.clientName))].join(", ")}</p>
+          </div>
+        </div>
+        <span className="badge bg-white text-ink-soft shadow-sm">{dayItems.filter((item)=>item.publishedAt).length}/{dayItems.length}</span>
+      </div>
+      <div className="grid gap-4 xl:grid-cols-2">{dayItems.map((item)=><PublicationCard key={item.id} item={item} pending={pending} onDownload={()=>download(item)} onCopy={()=>copy(item)}/>)}</div>
     </section>)}
   </div>;
 }
