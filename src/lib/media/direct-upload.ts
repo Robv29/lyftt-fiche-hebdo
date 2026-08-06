@@ -20,6 +20,21 @@ export interface UploadOutcome {
   finalBytes?: number;
 }
 
+/**
+ * Borne une étape dans le temps.
+ *
+ * Une promesse qui ne se résout jamais laisse l'interface figée sur « Envoi en
+ * cours… » sans le moindre indice. Mieux vaut échouer explicitement.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} n'a pas répondu (${ms / 1000} s).`)), ms),
+    ),
+  ]);
+}
+
 export async function uploadMediaDirect(params: {
   file: File;
   clientId: string;
@@ -32,11 +47,29 @@ export async function uploadMediaDirect(params: {
 }): Promise<UploadOutcome> {
   const kind = params.file.type.startsWith("video/") ? "video" : "image";
 
+  try {
+    return await runUpload(params, kind);
+  } catch (error) {
+    // Sans ce filet, une exception laissait la zone de dépôt figée pour de bon.
+    console.error("[média] envoi interrompu", error);
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Envoi interrompu.",
+    };
+  }
+}
+
+async function runUpload(
+  params: Parameters<typeof uploadMediaDirect>[0],
+  kind: "image" | "video",
+): Promise<UploadOutcome> {
+
   // Les images sont recompressées ; les vidéos partent telles quelles.
   if (kind === "image") params.onProgress?.("preparation");
-  const prepared = await prepareMedia(params.file);
+  const prepared = await withTimeout(prepareMedia(params.file), 20000, "La préparation du fichier")
+    .catch(() => ({ file: params.file, preview: null, originalBytes: params.file.size, finalBytes: params.file.size }));
 
-  const ticket = await createMediaUploadTicket({
+  const ticket = await withTimeout(createMediaUploadTicket({
     clientId: params.clientId,
     sheetId: params.sheetId,
     fileName: prepared.file.name,
@@ -44,10 +77,19 @@ export async function uploadMediaDirect(params: {
     byteSize: prepared.file.size,
     mimeType: prepared.file.type,
     withPreview: prepared.preview !== null,
-  });
+  }), 30000, "Le serveur");
 
-  if (!ticket.ok || !ticket.path || !ticket.token) {
-    return { ok: false, message: ticket.message ?? "Téléversement refusé." };
+  // `signedUrl` est indispensable : sans elle, XMLHttpRequest lève à l'ouverture
+  // et l'appelant resterait bloqué sur un état d'attente sans fin. Le cas se
+  // produit pendant un déploiement, quand le navigateur exécute un code plus
+  // récent que l'action serveur qui lui répond.
+  if (!ticket.ok || !ticket.path || !ticket.token || !ticket.signedUrl) {
+    return {
+      ok: false,
+      message:
+        ticket.message ??
+        "Téléversement refusé. Rechargez la page : une mise à jour est peut-être en cours.",
+    };
   }
 
   params.onProgress?.("envoi");
@@ -59,7 +101,7 @@ export async function uploadMediaDirect(params: {
   const startedAt = Date.now();
 
   const upload = await putWithProgress({
-    signedUrl: ticket.signedUrl!,
+    signedUrl: ticket.signedUrl,
     file: prepared.file,
     onProgress: (percent, uploadedBytes) => {
       const elapsedSeconds = (Date.now() - startedAt) / 1000;

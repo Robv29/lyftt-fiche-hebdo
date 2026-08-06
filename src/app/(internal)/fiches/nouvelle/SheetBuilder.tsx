@@ -261,14 +261,19 @@ export function SheetBuilder({
       mediaStatus: file.type.startsWith("video/") ? "envoi" : "preparation",
     });
 
-    const result = await uploadMediaDirect({
+    let result;
+    try {
+      result = await uploadMediaDirect({
       file,
       clientId: selectedClientId,
       sheetId: null,
       onProgress: (step) => update(key, { mediaStatus: step }),
-      onUploadProgress: (percent, _bytes, remaining) =>
-        update(key, { mediaPercent: percent, mediaRemaining: remaining }),
-    });
+        onUploadProgress: (percent, _bytes, remaining) =>
+          update(key, { mediaPercent: percent, mediaRemaining: remaining }),
+      });
+    } catch (error) {
+      result = { ok: false, message: error instanceof Error ? error.message : "Envoi interrompu." };
+    }
 
     if (!result.ok) {
       update(key, {

@@ -73,13 +73,18 @@ export function SheetContentEditor({ sheetId, clientId, initialItems }: { sheetI
     if (!file) return;
     update(id, { ...EMPTY_UPLOAD, mediaStatus: "envoi", mediaFileName: file.name });
 
-    const result = await uploadMediaDirect({
+    let result;
+    try {
+      result = await uploadMediaDirect({
       file,
       clientId,
       sheetId,
       onProgress: (step) => { if (step !== "preparation") update(id, { mediaStatus: step }); },
-      onUploadProgress: (percent) => update(id, { mediaPercent: percent }),
-    });
+        onUploadProgress: (percent) => update(id, { mediaPercent: percent }),
+      });
+    } catch (error) {
+      result = { ok: false, message: error instanceof Error ? error.message : "Envoi interrompu." };
+    }
 
     update(id, result.ok
       ? { mediaAssetId: result.mediaAssetId ?? null, mediaStatus: "pret", mediaPercent: null, mediaCleared: false, mediaUrl: null }
