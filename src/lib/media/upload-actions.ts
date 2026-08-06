@@ -8,6 +8,7 @@ import {
   requireEditorialProfile,
 } from "@/lib/internal/authorization";
 import { safeFileName } from "@/lib/security/attachments";
+import { SHEET_MEDIA_MAX_BYTES, SHEET_MEDIA_MIME } from "./limits";
 
 /**
  * Téléversement direct navigateur → Supabase.
@@ -18,16 +19,6 @@ import { safeFileName } from "@/lib/security/attachments";
  * s'appliquant au corps de requête et n'étant pas configurable.
  */
 
-/** Plafonds appliqués aux médias de production, distincts des pièces jointes client. */
-export const SHEET_MEDIA_MAX_BYTES = {
-  image: 15 * 1024 * 1024,
-  video: 200 * 1024 * 1024,
-} as const;
-
-export const SHEET_MEDIA_MIME = {
-  image: ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"],
-  video: ["video/mp4", "video/quicktime", "video/webm"],
-} as const;
 
 export interface UploadTicket {
   ok: boolean;
