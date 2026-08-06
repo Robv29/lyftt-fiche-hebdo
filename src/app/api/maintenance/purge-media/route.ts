@@ -140,9 +140,51 @@ export async function POST(request: NextRequest) {
       .in("id", previewPurgedIds);
   }
 
+  /*
+   * Suppression des fiches au-delà d'une semaine d'historique.
+   *
+   * Opération destructive et irréversible : la cascade emporte les
+   * publications, les versions, les validations client et les tickets de la
+   * fiche. La preuve de validation disparaît avec eux, de même que les
+   * indicateurs calculés sur ces semaines.
+   *
+   * Les fichiers ont déjà été retirés du stockage par la purge ci-dessus ;
+   * ceux qui resteraient rattachés sont supprimés ici avant la ligne.
+   */
+  const horizon = new Date();
+  horizon.setUTCDate(horizon.getUTCDate() - 14);
+  const cutoff = horizon.toISOString().slice(0, 10);
+
+  const { data: expiredSheets } = await admin
+    .from("weekly_sheets")
+    .select("id, media_assets:weekly_sheet_items ( media_assets:media_asset_id ( storage_path, preview_path ) )")
+    .lt("period_end", cutoff)
+    .limit(100);
+
+  let deletedSheets = 0;
+  if (expiredSheets && expiredSheets.length > 0) {
+    const leftovers: string[] = [];
+    for (const sheet of expiredSheets) {
+      for (const item of (sheet.media_assets ?? []) as unknown as {
+        media_assets: { storage_path: string; preview_path: string | null } | null;
+      }[]) {
+        if (item.media_assets?.storage_path) leftovers.push(item.media_assets.storage_path);
+        if (item.media_assets?.preview_path) leftovers.push(item.media_assets.preview_path);
+      }
+    }
+    if (leftovers.length > 0) await admin.storage.from("media").remove(leftovers);
+
+    const { error: deleteError } = await admin
+      .from("weekly_sheets")
+      .delete()
+      .in("id", expiredSheets.map((sheet) => sheet.id));
+    if (!deleteError) deletedSheets = expiredSheets.length;
+  }
+
   return NextResponse.json({
     originauxPurges: purgedIds.length,
     apercusPurges: previewPurgedIds.length,
+    fichesSupprimees: deletedSheets,
     espaceLibere: formatBytes(freed),
   });
 }

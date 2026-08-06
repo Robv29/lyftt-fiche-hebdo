@@ -250,11 +250,17 @@ function StatusBadge({ item }: { item: ReviewItem }) {
 function MediaPreview({ item }: { item: ReviewItem }) {
   if (item.media?.kind === "video" && item.media.url) {
     return (
+      /*
+       * Format réel, sans recadrage : un carré tronquait le haut et le bas des
+       * reels verticaux, et le client validait un cadrage qui n'était pas celui
+       * de la publication. La hauteur est simplement bornée pour que la carte
+       * reste lisible.
+       */
       <video
         controls
         preload="metadata"
         poster={item.media.thumbnailUrl ?? undefined}
-        className="aspect-square w-full rounded-2xl border border-line bg-black object-cover"
+        className="max-h-[70vh] w-full rounded-2xl border border-line bg-black object-contain"
       >
         <source src={item.media.url} />
       </video>
@@ -267,7 +273,7 @@ function MediaPreview({ item }: { item: ReviewItem }) {
       <img
         src={item.media.thumbnailUrl ?? item.media.url}
         alt={`Visuel du ${formatDay(item.scheduledDate)}`}
-        className="aspect-square w-full rounded-2xl border border-line object-cover"
+        className="max-h-[70vh] w-full rounded-2xl border border-line bg-canvas object-contain"
       />
     );
   }

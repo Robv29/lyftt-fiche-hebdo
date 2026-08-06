@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { formatPeriod } from "@/lib/domain/deadline";
 import {
+  civilDaysBefore,
   planningBucketForPeriod,
   planningWeekRange,
   sheetCompletion,
@@ -134,7 +135,12 @@ export default async function SheetsPage() {
   ]);
 
   const sheets = (rawSheets ?? []) as unknown as PlanningSheet[];
-  const past = sheets.filter((sheet) => planningBucketForPeriod(sheet.period_start, sheet.period_end) === "past");
+  // Une seule semaine d'historique est conservee ; la purge planifiee supprime
+  // les fiches plus anciennes.
+  const previousWeekStart = civilDaysBefore(range.currentStart, 7);
+  const past = sheets.filter((sheet) =>
+    planningBucketForPeriod(sheet.period_start, sheet.period_end) === "past"
+    && sheet.period_start >= previousWeekStart);
   const current = sheets
     .filter((sheet) => planningBucketForPeriod(sheet.period_start, sheet.period_end) === "current")
     .sort((a, b) => Number(hasHighPriorityChange(b)) - Number(hasHighPriorityChange(a))
@@ -142,7 +148,7 @@ export default async function SheetsPage() {
   const next = sheets.filter((sheet) => planningBucketForPeriod(sheet.period_start, sheet.period_end) === "next");
   const nextClientIds = new Set(next.map((sheet) => sheet.clients?.id).filter(Boolean));
   const proposals = (clients ?? []).filter((client) => !nextClientIds.has(client.id));
-  const validation = validationRate(sheets.map((sheet) => sheet.status as SheetStatus));
+  const validation = validationRate([...current, ...next].map((sheet) => sheet.status as SheetStatus));
 
   return (
     <div className="space-y-8">
@@ -167,7 +173,7 @@ export default async function SheetsPage() {
                 {validation.validated} fiche{validation.validated > 1 ? "s" : ""} validée{validation.validated > 1 ? "s" : ""} sur {validation.total}
               </strong>
               <p className="mt-1 text-xs text-ink-faint">
-                Validation client, explicite ou tacite. Les fiches en préparation ne sont pas comptées.
+                Semaine en cours et semaine prochaine. Validation explicite ou tacite ; les fiches en préparation ne sont pas comptées.
               </p>
             </div>
           </div>

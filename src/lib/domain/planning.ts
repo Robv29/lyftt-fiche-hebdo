@@ -33,6 +33,16 @@ export function isoWeekIdentity(date: Date): { year: number; week: number } {
   };
 }
 
+/**
+ * Date civile située N jours avant une autre.
+ *
+ * Sert à borner l'historique du planning : une seule semaine passée est
+ * conservée, la purge planifiée supprime au-delà.
+ */
+export function civilDaysBefore(date: string, days: number): string {
+  return civilDate(addDays(new Date(`${date}T00:00:00Z`), -days));
+}
+
 export function planningWeekRange(now = new Date()): PlanningWeekRange {
   const current = isoWeekIdentity(now);
   const currentStartDate = isoWeekStart(current.year, current.week);
