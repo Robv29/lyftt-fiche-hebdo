@@ -42,6 +42,28 @@ export default async function PublicationsPage({ searchParams }:{ searchParams:P
     nextWithContent=(ahead?.[0]?.scheduled_date as string|undefined) ?? null;
   }
 
-  const day=new Date(`${date}T12:00:00`); const previous=format(addDays(day,-1),"yyyy-MM-dd"); const next=format(addDays(day,1),"yyyy-MM-dd");
-  return <div className="space-y-7"><header className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between"><div><p className="eyebrow">Checklist quotidienne</p><h1 className="page-title mt-1">Publications</h1><p className="mt-2 text-sm text-ink-soft">{format(day,"EEEE d MMMM yyyy",{locale:fr})} · texte, hashtags et médias prêts à poster.</p></div><nav className="grid grid-cols-[44px_1fr_44px] gap-2" aria-label="Changer de date"><Link href={`/publications?date=${previous}`} className="mobile-inline-btn btn-secondary px-0" aria-label="Jour précédent">←</Link><Link href="/publications" className="btn-secondary">Aujourd’hui</Link><Link href={`/publications?date=${next}`} className="mobile-inline-btn btn-secondary px-0" aria-label="Jour suivant">→</Link></nav></header><PublicationChecklist initialItems={items} nextWithContent={nextWithContent}/></div>;
+  const day=new Date(`${date}T12:00:00`);
+  const previousDay=addDays(day,-1);
+  const nextDay=addDays(day,1);
+  const previous=format(previousDay,"yyyy-MM-dd");
+  const next=format(nextDay,"yyyy-MM-dd");
+  const selectedDayLabel=format(day,"EEEE d MMMM yyyy",{locale:fr});
+
+  return <div className="space-y-7">
+    <header className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <p className="eyebrow">Checklist quotidienne</p>
+        <h1 className="page-title mt-1">Publications</h1>
+        <p className="mt-2 text-sm text-ink-soft">
+          <time dateTime={date} className="capitalize">{selectedDayLabel}</time> · texte, hashtags et médias prêts à poster.
+        </p>
+      </div>
+      <nav className="grid grid-cols-[44px_1fr_44px] gap-2" aria-label="Changer le jour affiché">
+        <Link href={`/publications?date=${previous}`} className="mobile-inline-btn btn-secondary px-0" aria-label={`Voir le ${format(previousDay,"d MMMM yyyy",{locale:fr})}`}>←</Link>
+        <Link href="/publications" className="btn-secondary">Aujourd’hui</Link>
+        <Link href={`/publications?date=${next}`} className="mobile-inline-btn btn-secondary px-0" aria-label={`Voir le ${format(nextDay,"d MMMM yyyy",{locale:fr})}`}>→</Link>
+      </nav>
+    </header>
+    <PublicationChecklist key={date} initialItems={items} nextWithContent={nextWithContent}/>
+  </div>;
 }
