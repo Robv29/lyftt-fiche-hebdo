@@ -9,6 +9,7 @@ import {
   requireEditorialProfile,
 } from "@/lib/internal/authorization";
 import { isoWeekStart } from "@/lib/domain/deadline";
+import { clientLifecycle, productionBlockedMessage } from "@/lib/domain/client-lifecycle";
 import { normalizeHashtags, sanitizeText } from "@/lib/security/sanitize";
 import { SOCIAL_NETWORKS } from "@/lib/domain/types";
 
@@ -71,7 +72,27 @@ export async function createSheet(formData: FormData): Promise<SheetActionResult
     return { ok: false, message: ACCESS_DENIED_MESSAGE };
   }
 
+  // Un client en pause ou dont la gestion est terminee ne recoit plus de fiche.
+  // Le controle est fait ici, pas seulement dans l interface : le formulaire
+  // reste atteignable par son adresse.
   const admin = createSupabaseAdminClient();
+  const { data: clientRow } = await admin
+    .from("clients")
+    .select("is_active, contract_end_date, pause_start_date, pause_end_date")
+    .eq("id", input.clientId)
+    .maybeSingle();
+
+  if (clientRow) {
+    const lifecycle = clientLifecycle({
+      isActive: clientRow.is_active,
+      contractEndDate: clientRow.contract_end_date,
+      pauseStartDate: clientRow.pause_start_date,
+      pauseEndDate: clientRow.pause_end_date,
+    });
+    if (!lifecycle.canProduce) {
+      return { ok: false, message: productionBlockedMessage(lifecycle) };
+    }
+  }
 
   // La période est déduite de la semaine ISO : l'échéance de validation est
   // ensuite calculée par la base à partir du paramétrage du client (§3).

@@ -404,3 +404,69 @@ export async function setClientActive(
   revalidatePath("/clients");
   return { ok: true, message: isActive ? "Client réactivé." : "Client archivé." };
 }
+
+const lifecycleSchema = z.object({
+  clientId: z.string().uuid(),
+  contractEndDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+  pauseStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+  pauseEndDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+});
+
+/**
+ * Fin de gestion et pause.
+ *
+ * Réservé à l'encadrement : ce sont des décisions contractuelles, pas
+ * éditoriales. Les dates ne sont pas recopiées dans un indicateur d'état —
+ * celui-ci est recalculé à chaque lecture par `clientLifecycle`, ce qui évite
+ * toute dérive si une date change ou si une tâche planifiée ne tourne pas.
+ */
+export async function updateClientLifecycle(formData: FormData): Promise<ClientActionResult> {
+  const profile = await getCurrentProfile();
+  if (!profile || !["super_admin", "production_manager"].includes(profile.role)) {
+    return { ok: false, message: "Seul un administrateur peut modifier la gestion d'un client." };
+  }
+
+  const readDate = (name: string) => {
+    const value = formData.get(name);
+    return typeof value === "string" && value.trim() !== "" ? value : null;
+  };
+
+  const parsed = lifecycleSchema.safeParse({
+    clientId: formData.get("clientId"),
+    contractEndDate: readDate("contractEndDate"),
+    pauseStartDate: readDate("pauseStartDate"),
+    pauseEndDate: readDate("pauseEndDate"),
+  });
+  if (!parsed.success) return { ok: false, message: "Dates invalides." };
+
+  const input = parsed.data;
+  if (input.pauseEndDate && input.pauseStartDate && input.pauseEndDate < input.pauseStartDate) {
+    return { ok: false, message: "La fin de pause précède son début." };
+  }
+  if (input.pauseEndDate && !input.pauseStartDate) {
+    return { ok: false, message: "Indiquez la date de début de pause." };
+  }
+
+  const scoped = await createSupabaseServerClient();
+  const { data: accessible } = await scoped
+    .from("clients")
+    .select("id")
+    .eq("id", input.clientId)
+    .maybeSingle();
+  if (!accessible) return { ok: false, message: "Client introuvable ou accès refusé." };
+
+  const { error } = await createSupabaseAdminClient()
+    .from("clients")
+    .update({
+      contract_end_date: input.contractEndDate,
+      pause_start_date: input.pauseStartDate,
+      pause_end_date: input.pauseEndDate,
+    })
+    .eq("id", input.clientId);
+
+  if (error) return { ok: false, message: `Modification impossible : ${error.message}` };
+
+  revalidatePath("/clients");
+  revalidatePath("/fiches");
+  return { ok: true, message: "Gestion du client mise à jour." };
+}

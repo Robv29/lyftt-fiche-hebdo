@@ -11,6 +11,7 @@ import {
 } from "@/lib/domain/planning";
 import { sheetStatusLabel, type MediaFormat, type SheetStatus, type TicketPriority, type TicketStatus } from "@/lib/domain/types";
 import { isClientValidated, validationRate } from "@/lib/domain/sheet-status";
+import { clientLifecycle } from "@/lib/domain/client-lifecycle";
 import { isTicketOpen } from "@/lib/domain/workflow";
 import { Icon } from "@/components/Icon";
 import { PlanningTabs } from "./PlanningTabs";
@@ -129,7 +130,7 @@ export default async function SheetsPage() {
       .limit(80),
     supabase
       .from("clients")
-      .select("id, name, notes")
+      .select("id, name, notes, is_active, contract_end_date, pause_start_date, pause_end_date")
       .eq("is_active", true)
       .order("name", { ascending: true }),
   ]);
@@ -147,7 +148,14 @@ export default async function SheetsPage() {
       || completionForSheet(a).percentage - completionForSheet(b).percentage);
   const next = sheets.filter((sheet) => planningBucketForPeriod(sheet.period_start, sheet.period_end) === "next");
   const nextClientIds = new Set(next.map((sheet) => sheet.clients?.id).filter(Boolean));
-  const proposals = (clients ?? []).filter((client) => !nextClientIds.has(client.id));
+  // Aucune proposition pour un client en pause ou dont la gestion est terminée.
+  const proposals = (clients ?? []).filter((client) => !nextClientIds.has(client.id)
+    && clientLifecycle({
+      isActive: client.is_active,
+      contractEndDate: client.contract_end_date,
+      pauseStartDate: client.pause_start_date,
+      pauseEndDate: client.pause_end_date,
+    }).canProduce);
   const validation = validationRate([...current, ...next].map((sheet) => sheet.status as SheetStatus));
 
   return (

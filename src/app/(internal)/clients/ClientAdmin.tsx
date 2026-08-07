@@ -2,7 +2,17 @@
 
 import Link from "next/link";
 import { useState, useTransition } from "react";
-import { createClient, setClientActive, type ClientActionResult } from "./actions";
+import { createClient, setClientActive, updateClientLifecycle, type ClientActionResult } from "./actions";
+import { clientLifecycle } from "@/lib/domain/client-lifecycle";
+
+function lifecycleOf(client:{isActive:boolean;contractEndDate:string|null;pauseStartDate:string|null;pauseEndDate:string|null}) {
+  return clientLifecycle({
+    isActive: client.isActive,
+    contractEndDate: client.contractEndDate,
+    pauseStartDate: client.pauseStartDate,
+    pauseEndDate: client.pauseEndDate,
+  });
+}
 import { SOCIAL_NETWORKS, SOCIAL_NETWORK_LABELS } from "@/lib/domain/types";
 import { Icon } from "@/components/Icon";
 import { ClientLogoField } from "@/components/ClientLogoField";
@@ -33,6 +43,9 @@ interface ClientRow {
   contactName: string | null;
   managerName: string;
   cadenceLabel: string;
+  contractEndDate: string | null;
+  pauseStartDate: string | null;
+  pauseEndDate: string | null;
 }
 
 export function ClientAdmin({
@@ -402,15 +415,18 @@ export function ClientAdmin({
       ) : (
         <ul className="grid gap-4 lg:grid-cols-2">
           {filteredClients.map((client) => (
-            <li key={client.id} className="card lift-card p-5">
+            <li key={client.id} className={`card lift-card p-5 ${lifecycleOf(client).canProduce ? "" : "border-line/60 bg-canvas/60"}`}>
+              {(() => { const lifecycle = lifecycleOf(client); return (
               <div className="flex h-full flex-col gap-5">
                 <div className="flex items-start gap-3">
                   <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[#e8f2ff] text-sm font-bold text-[#0b5e9f]">{client.name.slice(0,2).toUpperCase()}</span>
                   <div className="min-w-0 flex-1">
                   <p className="font-semibold tracking-[-.015em]">
                     {client.name}
-                    {!client.isActive && (
-                      <span className="ml-2 badge bg-canvas text-ink-faint">Archivé</span>
+                    {lifecycle.state !== "active" && (
+                      <span className={`ml-2 badge ${lifecycle.state === "paused" ? "bg-state-progress/10 text-state-progress" : "bg-canvas text-ink-faint"}`}>
+                        {lifecycle.label}
+                      </span>
                     )}
                     {client.approvalPolicy === "tacit_allowed" && (
                       <span className="ml-2 badge bg-state-progress/10 text-state-progress">
@@ -418,6 +434,9 @@ export function ClientAdmin({
                       </span>
                     )}
                   </p>
+                  {lifecycle.detail && (
+                    <p className={`mt-1 text-xs ${lifecycle.canProduce ? "text-ink-faint" : "text-state-progress"}`}>{lifecycle.detail}</p>
+                  )}
                   <p className="mt-1 text-xs leading-relaxed text-ink-faint">
                     {client.contactName ?? "Aucun contact"} · échéance{" "}
                     {WEEKDAYS.find((d) => d.value === client.deadlineWeekday)?.label.toLowerCase()}{" "}
@@ -429,9 +448,16 @@ export function ClientAdmin({
 
                 <div className="mt-auto grid grid-cols-[1fr_44px] gap-2 border-t pt-4 sm:grid-cols-[1fr_1fr_44px]">
                   <Link href={`/clients/${client.id}`} className="btn-secondary order-2 text-xs sm:order-1">Voir le dossier</Link>
-                  <Link href={`/fiches/nouvelle?client=${client.id}`} className="btn-primary col-span-2 order-1 text-xs sm:col-span-1 sm:order-2">
-                    <Icon name="plus" className="h-3.5 w-3.5"/>Créer la fiche
-                  </Link>
+                  {/* Aucune fiche pour un client en pause ou dont la gestion est terminée. */}
+                  {lifecycle.canProduce ? (
+                    <Link href={`/fiches/nouvelle?client=${client.id}`} className="btn-primary col-span-2 order-1 text-xs sm:col-span-1 sm:order-2">
+                      <Icon name="plus" className="h-3.5 w-3.5"/>Créer la fiche
+                    </Link>
+                  ) : (
+                    <span className="btn-secondary col-span-2 order-1 cursor-not-allowed text-xs opacity-60 sm:col-span-1 sm:order-2" aria-disabled="true" title={lifecycle.detail ?? lifecycle.label}>
+                      Production suspendue
+                    </span>
+                  )}
                   <button
                     type="button"
                     className="order-3 grid h-11 w-11 shrink-0 place-items-center rounded-xl border bg-surface text-ink-faint transition-colors hover:text-state-changes"
@@ -442,7 +468,39 @@ export function ClientAdmin({
                     <Icon name={client.isActive ? "layers" : "check"} className="h-4 w-4"/>
                   </button>
                 </div>
+
+                {/*
+                  Fin de gestion et pause. Les dates pilotent l'état : inutile de
+                  penser à réactiver le client, il redevient actif tout seul au
+                  lendemain de la fin de pause.
+                */}
+                <details className="border-t pt-3">
+                  <summary className="cursor-pointer text-xs font-semibold text-ink-soft">Gestion et pause</summary>
+                  <form
+                    action={(formData) => { formData.set("clientId", client.id); run(() => updateClientLifecycle(formData)); }}
+                    className="mt-3 space-y-3"
+                  >
+                    <div>
+                      <label className="label text-xs" htmlFor={`fin-${client.id}`}>Fin de gestion</label>
+                      <input id={`fin-${client.id}`} name="contractEndDate" type="date" className="field" defaultValue={client.contractEndDate ?? ""}/>
+                      <p className="mt-1 text-[11px] text-ink-faint">Le client est archivé le lendemain de cette date.</p>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="label text-xs" htmlFor={`pause-debut-${client.id}`}>Début de pause</label>
+                        <input id={`pause-debut-${client.id}`} name="pauseStartDate" type="date" className="field" defaultValue={client.pauseStartDate ?? ""}/>
+                      </div>
+                      <div>
+                        <label className="label text-xs" htmlFor={`pause-fin-${client.id}`}>Fin de pause</label>
+                        <input id={`pause-fin-${client.id}`} name="pauseEndDate" type="date" className="field" defaultValue={client.pauseEndDate ?? ""}/>
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-ink-faint">Pendant la pause le client est archivé ; il se réactive seul au lendemain de la fin.</p>
+                    <button type="submit" className="btn-secondary w-full text-xs" disabled={pending}>Enregistrer la gestion</button>
+                  </form>
+                </details>
               </div>
+              ); })()}
             </li>
           ))}
           {filteredClients.length === 0 && <li className="card col-span-full px-5 py-10 text-center text-sm text-ink-faint">Aucun client ne correspond à « {query} ».</li>}
