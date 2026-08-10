@@ -69,14 +69,26 @@ export type MediaFormat =
   | "photo"
   | "reels"
   | "video"
+  | "story"
   | "carrousel"
   | "texte_seul";
+
+export const MEDIA_FORMATS: readonly MediaFormat[] = [
+  "visuel",
+  "photo",
+  "reels",
+  "video",
+  "story",
+  "carrousel",
+  "texte_seul",
+];
 
 export const MEDIA_FORMAT_LABELS: Record<MediaFormat, string> = {
   visuel: "VISUEL",
   photo: "PHOTO",
   reels: "REELS",
   video: "VIDÉO",
+  story: "STORY",
   carrousel: "CARROUSEL",
   texte_seul: "TEXTE SEUL",
 };

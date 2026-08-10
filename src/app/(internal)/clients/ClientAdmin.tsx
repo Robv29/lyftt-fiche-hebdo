@@ -23,6 +23,26 @@ import {
   type LyfttClientType,
 } from "@/lib/domain/hashtags";
 
+type FieldErrors = Record<string, string> | undefined;
+
+/**
+ * Signale visuellement un champ refusé par la validation serveur, sans rien
+ * effacer de ce qui a déjà été saisi.
+ */
+function fieldProps(errors: FieldErrors, name: string, base = "field") {
+  const invalid = Boolean(errors?.[name]);
+  return {
+    className: invalid ? `${base} border-state-changes ring-2 ring-state-changes/20` : base,
+    "aria-invalid": invalid || undefined,
+  };
+}
+
+function FieldError({ errors, name, tone = "text-state-changes" }: { errors: FieldErrors; name: string; tone?: string }) {
+  const message = errors?.[name];
+  if (!message) return null;
+  return <p className={`mt-1 text-xs ${tone}`} role="alert">{message}</p>;
+}
+
 const WEEKDAYS = [
   { value: 1, label: "Lundi" },
   { value: 2, label: "Mardi" },
@@ -81,6 +101,8 @@ export function ClientAdmin({
     ));
   };
 
+  const fieldErrors = feedback?.ok === false ? feedback.fieldErrors : undefined;
+
   const run = (action: () => Promise<ClientActionResult>) => {
     startTransition(async () => {
       try {
@@ -121,7 +143,17 @@ export function ClientAdmin({
 
       {showForm && (
         <form
-          action={(formData) => run(() => createClient(formData))}
+          /*
+            `onSubmit` plutôt que `action` : React réinitialise automatiquement
+            un formulaire dont l'action est une fonction, y compris quand elle
+            échoue. Un champ mal rempli effaçait donc tout l'onboarding, qui
+            devait être ressaisi de zéro.
+          */
+          onSubmit={(event) => {
+            event.preventDefault();
+            const formData = new FormData(event.currentTarget);
+            run(() => createClient(formData));
+          }}
           className="card reveal-panel space-y-7 p-5 sm:p-7"
         >
           <div><p className="eyebrow">Nouveau dossier</p><h2 className="mt-1 text-lg font-semibold">Onboarding éditorial complet</h2><p className="mt-1 text-sm text-ink-faint">Tous les champs sont nécessaires : ils alimentent le planning, les messages clients et la bibliothèque éditoriale.</p></div>
@@ -130,19 +162,21 @@ export function ClientAdmin({
               <label className="label" htmlFor="name">
                 Nom du client
               </label>
-              <input id="name" name="name" required className="field" placeholder="Un été à la campagne"/>
+              <input id="name" name="name" required maxLength={120} {...fieldProps(fieldErrors,"name")} placeholder="Un été à la campagne"/>
+              <FieldError errors={fieldErrors} name="name"/>
             </div>
             <div>
               <label className="label" htmlFor="communityManagerId">
                 Community manager référent
               </label>
-              <select id="communityManagerId" name="communityManagerId" className="field" required>
+              <select id="communityManagerId" name="communityManagerId" required {...fieldProps(fieldErrors,"communityManagerId")}>
                 {managers.map((m) => (
                   <option key={m.id} value={m.id}>
                     {m.name}
                   </option>
                 ))}
               </select>
+              <FieldError errors={fieldErrors} name="communityManagerId"/>
             </div>
           </div>
 
@@ -175,10 +209,10 @@ export function ClientAdmin({
                     )}
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                    <div><label className="label" htmlFor={`contactFirstName-${rowId}`}>Prénom</label><input id={`contactFirstName-${rowId}`} name="contactFirstName" required className="field bg-white" autoComplete="given-name"/></div>
-                    <div><label className="label" htmlFor={`contactLastName-${rowId}`}>Nom</label><input id={`contactLastName-${rowId}`} name="contactLastName" required className="field bg-white" autoComplete="family-name"/></div>
-                    <div><label className="label" htmlFor={`contactPhone-${rowId}`}>Téléphone</label><input id={`contactPhone-${rowId}`} name="contactPhone" type="tel" required className="field bg-white" placeholder="+33 6 12 34 56 78" autoComplete="tel"/></div>
-                    <div><label className="label" htmlFor={`contactEmail-${rowId}`}>E-mail</label><input id={`contactEmail-${rowId}`} name="contactEmail" type="email" required className="field bg-white" autoComplete="email"/></div>
+                    <div><label className="label" htmlFor={`contactFirstName-${rowId}`}>Prénom</label><input id={`contactFirstName-${rowId}`} name="contactFirstName" required autoComplete="given-name" {...fieldProps(fieldErrors,`contacts.${index}.firstName`,"field bg-white")}/><FieldError errors={fieldErrors} name={`contacts.${index}.firstName`}/></div>
+                    <div><label className="label" htmlFor={`contactLastName-${rowId}`}>Nom</label><input id={`contactLastName-${rowId}`} name="contactLastName" required autoComplete="family-name" {...fieldProps(fieldErrors,`contacts.${index}.lastName`,"field bg-white")}/><FieldError errors={fieldErrors} name={`contacts.${index}.lastName`}/></div>
+                    <div><label className="label" htmlFor={`contactPhone-${rowId}`}>Téléphone</label><input id={`contactPhone-${rowId}`} name="contactPhone" type="tel" required maxLength={30} placeholder="+33 6 12 34 56 78" autoComplete="tel" {...fieldProps(fieldErrors,`contacts.${index}.phone`,"field bg-white")}/><FieldError errors={fieldErrors} name={`contacts.${index}.phone`}/></div>
+                    <div><label className="label" htmlFor={`contactEmail-${rowId}`}>E-mail</label><input id={`contactEmail-${rowId}`} name="contactEmail" type="email" required autoComplete="email" {...fieldProps(fieldErrors,`contacts.${index}.email`,"field bg-white")}/><FieldError errors={fieldErrors} name={`contacts.${index}.email`}/></div>
                   </div>
                 </div>
               ))}
@@ -197,13 +231,13 @@ export function ClientAdmin({
             <legend className="label px-1">Profil de marque</legend>
             <p className="mb-4 text-xs text-ink-faint">Ce contexte sert à préparer les sujets et le ton de chaque publication.</p>
             <div className="grid gap-4 sm:grid-cols-2">
-              <div><label className="label" htmlFor="activity">Activité principale</label><input id="activity" name="activity" required className="field" placeholder="Restaurant bistronomique"/></div>
-              <div><label className="label" htmlFor="website">Site internet</label><input id="website" name="website" type="text" inputMode="url" required className="field" placeholder="exemple.fr ou https://exemple.fr"/><p className="mt-1 text-xs text-ink-faint">Vous pouvez saisir simplement le domaine : https:// sera ajouté automatiquement.</p></div>
-              <div><label className="label" htmlFor="city">Ville ou zone principale</label><input id="city" name="city" required className="field" placeholder="Toulouse"/></div>
-              <div><label className="label" htmlFor="postalCode">Code postal</label><input id="postalCode" name="postalCode" required className="field" inputMode="numeric" pattern="[0-9]{5}" placeholder="31000"/></div>
-              <div><label className="label" htmlFor="audience">Clientèle cible</label><input id="audience" name="audience" required className="field" placeholder="Familles, actifs de 30 à 55 ans"/></div>
+              <div><label className="label" htmlFor="activity">Activité principale</label><input id="activity" name="activity" required maxLength={120} {...fieldProps(fieldErrors,"activity")} placeholder="Restaurant bistronomique"/><FieldError errors={fieldErrors} name="activity"/></div>
+              <div><label className="label" htmlFor="website">Site internet</label><input id="website" name="website" type="text" inputMode="url" required {...fieldProps(fieldErrors,"website")} placeholder="exemple.fr ou https://exemple.fr"/><FieldError errors={fieldErrors} name="website"/><p className="mt-1 text-xs text-ink-faint">Vous pouvez saisir simplement le domaine : https:// sera ajouté automatiquement.</p></div>
+              <div><label className="label" htmlFor="city">Ville ou zone principale</label><input id="city" name="city" required maxLength={100} {...fieldProps(fieldErrors,"city")} placeholder="Toulouse"/><FieldError errors={fieldErrors} name="city"/></div>
+              <div><label className="label" htmlFor="postalCode">Code postal</label><input id="postalCode" name="postalCode" required inputMode="numeric" pattern="[0-9]{5}" placeholder="31000" {...fieldProps(fieldErrors,"postalCode")}/><FieldError errors={fieldErrors} name="postalCode"/></div>
+              <div><label className="label" htmlFor="audience">Clientèle cible</label><input id="audience" name="audience" required maxLength={300} {...fieldProps(fieldErrors,"audience")} placeholder="Familles, actifs de 30 à 55 ans"/><FieldError errors={fieldErrors} name="audience"/></div>
               <div><label className="label" htmlFor="brandTone">Ton de communication</label><select id="brandTone" name="brandTone" required className="field" defaultValue="chaleureux"><option value="chaleureux">Chaleureux et proche</option><option value="premium">Premium et élégant</option><option value="expert">Expert et pédagogique</option><option value="dynamique">Dynamique et direct</option><option value="institutionnel">Institutionnel et rassurant</option></select></div>
-              <div className="sm:col-span-2"><label className="label" htmlFor="keywords">Produits, services et mots-clés prioritaires</label><textarea id="keywords" name="keywords" required rows={3} className="field" placeholder="terrasse, cuisine maison, privatisation, produits locaux"/><p className="mt-1 text-xs text-ink-faint">Séparez les thèmes par des virgules. Ils serviront de pistes lors de la rédaction des publications.</p></div>
+              <div className="sm:col-span-2"><label className="label" htmlFor="keywords">Produits, services et mots-clés prioritaires</label><textarea id="keywords" name="keywords" required rows={3} maxLength={1000} {...fieldProps(fieldErrors,"keywords")} placeholder="terrasse, cuisine maison, privatisation, produits locaux"/><FieldError errors={fieldErrors} name="keywords"/><p className="mt-1 text-xs text-ink-faint">Séparez les thèmes par des virgules. Ils serviront de pistes lors de la rédaction des publications.</p></div>
             </div>
           </fieldset>
 
@@ -222,29 +256,31 @@ export function ClientAdmin({
                 </label>
               ))}
             </div>
+            <FieldError errors={fieldErrors} name="networks"/>
           </fieldset>
 
           <fieldset>
             <legend className="label">Rythme mensuel vendu</legend>
             <p className="mb-3 text-xs text-ink-faint">Ces volumes prépareront automatiquement les futures fiches. Indiquez 0 pour une prestation non incluse.</p>
-            <div className="grid gap-4 sm:grid-cols-3">
-              <div><label className="label" htmlFor="photoPerMonth">Photos</label><input id="photoPerMonth" name="photoPerMonth" type="number" min="0" max="31" defaultValue="4" required className="field"/></div>
-              <div><label className="label" htmlFor="videoPerMonth">Vidéos / Reels</label><input id="videoPerMonth" name="videoPerMonth" type="number" min="0" max="31" defaultValue="2" required className="field"/></div>
-              <div><label className="label" htmlFor="visualPerMonth">Visuels / carrousels</label><input id="visualPerMonth" name="visualPerMonth" type="number" min="0" max="31" defaultValue="2" required className="field"/></div>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div><label className="label" htmlFor="photoPerMonth">Photos</label><input id="photoPerMonth" name="photoPerMonth" type="number" min="0" max="31" defaultValue="4" required {...fieldProps(fieldErrors,"photoPerMonth")}/><FieldError errors={fieldErrors} name="photoPerMonth"/></div>
+              <div><label className="label" htmlFor="videoPerMonth">Vidéos / Reels</label><input id="videoPerMonth" name="videoPerMonth" type="number" min="0" max="31" defaultValue="2" required {...fieldProps(fieldErrors,"videoPerMonth")}/><FieldError errors={fieldErrors} name="videoPerMonth"/></div>
+              <div><label className="label" htmlFor="storyPerMonth">Stories</label><input id="storyPerMonth" name="storyPerMonth" type="number" min="0" max="31" defaultValue="0" required {...fieldProps(fieldErrors,"storyPerMonth")}/><FieldError errors={fieldErrors} name="storyPerMonth"/></div>
+              <div><label className="label" htmlFor="visualPerMonth">Visuels / carrousels</label><input id="visualPerMonth" name="visualPerMonth" type="number" min="0" max="31" defaultValue="2" required {...fieldProps(fieldErrors,"visualPerMonth")}/><FieldError errors={fieldErrors} name="visualPerMonth"/></div>
             </div>
           </fieldset>
 
           <fieldset>
             <legend className="label">Échéance de validation</legend>
             <div className="grid gap-4 sm:grid-cols-2">
-              <select name="deadlineWeekday" className="field" defaultValue={2} required aria-label="Jour limite de validation">
+              <select name="deadlineWeekday" defaultValue={2} required aria-label="Jour limite de validation" {...fieldProps(fieldErrors,"deadlineWeekday")}>
                 {WEEKDAYS.map((d) => (
                   <option key={d.value} value={d.value}>
                     {d.label}
                   </option>
                 ))}
               </select>
-              <input name="deadlineTime" type="time" className="field" defaultValue="10:00" required aria-label="Heure limite de validation"/>
+              <input name="deadlineTime" type="time" defaultValue="10:00" required aria-label="Heure limite de validation" {...fieldProps(fieldErrors,"deadlineTime")}/>
             </div>
             <p className="mt-1 text-xs text-ink-faint">
               La date exacte est recalculée à chaque semaine de publication.
@@ -273,8 +309,9 @@ export function ClientAdmin({
                   id="tacitNotice"
                   name="tacitNotice"
                   rows={2}
-                  className="field"
+                  maxLength={500}
                   required
+                  {...fieldProps(fieldErrors,"tacitNotice")}
                   defaultValue="Sans retour avant cette échéance, les contenus seront considérés comme validés, selon les modalités prévues ensemble."
                 />
                 <p className="mt-1 text-xs text-state-progress">
@@ -289,7 +326,8 @@ export function ClientAdmin({
             <label className="label" htmlFor="whatsappGroup">
               Nom exact du groupe WhatsApp
             </label>
-            <input id="whatsappGroup" name="whatsappGroup" required className="field bg-white" placeholder="Ex. LYFTT × Canal du Midi" />
+            <input id="whatsappGroup" name="whatsappGroup" required maxLength={120} placeholder="Ex. LYFTT × Canal du Midi" {...fieldProps(fieldErrors,"whatsappGroup","field bg-white")} />
+            <FieldError errors={fieldErrors} name="whatsappGroup"/>
             <p className="mt-2 text-xs leading-relaxed text-ink-soft"><strong>Information attendue :</strong> recopiez le nom du groupe tel qu’il apparaît dans WhatsApp — pas un numéro ni un lien d’invitation. LYFTT l’affichera au moment de copier le message de validation pour éviter de l’envoyer au mauvais groupe.</p>
           </div>
 
@@ -303,9 +341,10 @@ export function ClientAdmin({
               name="postSignature"
               rows={2}
               maxLength={300}
-              className="field bg-white"
               placeholder={"Ex. \u{1F4CD} 1987 Rte d'Auch, 82000 Montauban"}
+              {...fieldProps(fieldErrors,"postSignature","field bg-white")}
             />
+            <FieldError errors={fieldErrors} name="postSignature"/>
             <p className="mt-2 text-xs leading-relaxed text-ink-soft">
               Phrase répétée à la fin de chaque publication : adresse, horaires,
               accroche de marque. Elle sera <strong>préremplie automatiquement</strong> en
@@ -370,6 +409,7 @@ export function ClientAdmin({
                     const normalized = normalizedCustomHashtags[index];
                     const key = customKeys[index];
                     const isDuplicate = Boolean(key) && (baseHashtagKeys.has(key) || customKeys.indexOf(key) !== index);
+                    const serverError = fieldErrors?.[`customHashtags.${index}`];
                     return (
                       <div key={index}>
                         <label className="sr-only" htmlFor={`customHashtag${index + 1}`}>Hashtag client {index + 1} sur 5</label>
@@ -381,15 +421,16 @@ export function ClientAdmin({
                             required
                             minLength={2}
                             maxLength={60}
-                            className={`field bg-white pl-7 text-ink ${isDuplicate ? "border-state-changes ring-2 ring-state-changes/20" : ""}`}
+                            className={`field bg-white pl-7 text-ink ${isDuplicate || serverError ? "border-state-changes ring-2 ring-state-changes/20" : ""}`}
                             placeholder={["NomDuClient", "ProduitSignature", "Quartier", "Slogan", "RendezVous"][index]}
                             value={value.replace(/^#+/, "")}
                             onChange={(event) => updateCustomHashtag(index, event.target.value)}
-                            aria-invalid={isDuplicate || undefined}
+                            aria-invalid={isDuplicate || Boolean(serverError) || undefined}
                           />
                         </div>
                         {normalized && !isDuplicate && <p className="mt-1 truncate text-[11px] text-white/55">Sera enregistré : {normalized}</p>}
                         {isDuplicate && <p className="mt-1 text-[11px] text-[#fda4af]">Choisissez un hashtag différent.</p>}
+                        {!isDuplicate && serverError && <p className="mt-1 text-[11px] text-[#fda4af]" role="alert">{serverError}</p>}
                       </div>
                     );
                   })}

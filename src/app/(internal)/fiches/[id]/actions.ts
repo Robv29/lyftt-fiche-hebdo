@@ -20,7 +20,7 @@ const editableItemSchema = z.object({
   id: z.string().uuid(),
   scheduledDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   scheduledTime: z.string().regex(/^\d{2}:\d{2}$/),
-  format: z.enum(["visuel", "photo", "reels", "video", "carrousel", "texte_seul"]),
+  format: z.enum(["visuel", "photo", "reels", "video", "story", "carrousel", "texte_seul"]),
   caption: z.string().max(5000),
   hashtags: z.string().max(1000),
   mediaAssetId: z.string().uuid().nullable().optional(),
@@ -29,6 +29,7 @@ const editableItemSchema = z.object({
 
 function publicationTypeForFormat(format: MediaFormat): PublicationType {
   if (format === "reels") return "reel";
+  if (format === "story") return "story";
   if (format === "video") return "video";
   if (format === "carrousel") return "carousel";
   return "post";

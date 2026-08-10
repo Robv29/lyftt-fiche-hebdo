@@ -18,6 +18,25 @@ export interface ClientActionResult {
   ok: boolean;
   message?: string;
   clientId?: string;
+  /**
+   * Erreurs rattachées à leur champ, pour les signaler sur place plutôt que
+   * de renvoyer un message unique en haut du formulaire.
+   */
+  fieldErrors?: Record<string, string>;
+}
+
+/**
+ * Première erreur par champ, indexée par son chemin complet
+ * (« contacts.1.email », « customHashtags.3 ») pour viser le bon champ
+ * jusque dans les listes répétées.
+ */
+function fieldErrorsFrom(error: z.ZodError): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const issue of error.issues) {
+    const field = issue.path.length > 0 ? issue.path.join(".") : "_";
+    if (!(field in result)) result[field] = issue.message;
+  }
+  return result;
 }
 
 const EDITORIAL_ROLES = ["super_admin", "production_manager", "community_manager"];
@@ -29,34 +48,35 @@ async function requireEditorial() {
 }
 
 const clientSchema = z.object({
-  name: z.string().trim().min(2, "Le nom du client est requis."),
+  name: z.string().trim().min(2, "Le nom du client est requis.").max(120, "Nom de client trop long (120 caractères maximum)."),
   contacts: z.array(z.object({
     firstName: z.string().trim().min(1, "Le prénom du contact est requis."),
     lastName: z.string().trim().min(1, "Le nom du contact est requis."),
-    phone: z.string().trim().min(8, "Le téléphone du contact est requis.").max(30),
+    phone: z.string().trim().min(8, "Le téléphone du contact est requis.").max(30, "Téléphone trop long (30 caractères maximum)."),
     email: z.string().trim().email("E-mail invalide."),
   })).min(1, "Au moins un contact est requis."),
-  activity: z.string().trim().min(2, "L’activité est requise.").max(120),
+  activity: z.string().trim().min(2, "L’activité est requise.").max(120, "Activité trop longue (120 caractères maximum)."),
   website: z.string().trim().url("L’adresse du site internet est invalide."),
-  city: z.string().trim().min(2, "La ville est requise.").max(100),
+  city: z.string().trim().min(2, "La ville est requise.").max(100, "Ville trop longue (100 caractères maximum)."),
   postalCode: z.string().regex(/^\d{5}$/, "Le code postal doit contenir 5 chiffres."),
-  audience: z.string().trim().min(3, "La clientèle cible est requise.").max(300),
+  audience: z.string().trim().min(3, "La clientèle cible est requise.").max(300, "Clientèle cible trop longue (300 caractères maximum)."),
   brandTone: z.enum(["chaleureux", "premium", "expert", "dynamique", "institutionnel"]),
-  keywords: z.string().trim().min(3, "Ajoutez au moins un mot-clé.").max(1000),
+  keywords: z.string().trim().min(3, "Ajoutez au moins un mot-clé.").max(1000, "Mots-clés trop longs : 1000 caractères maximum."),
   clientType: z.enum(LYFTT_CLIENT_TYPE_IDS),
-  customHashtags: z.array(z.string().trim().min(2, "Les 5 hashtags client sont obligatoires.").max(60)).length(5),
+  customHashtags: z.array(z.string().trim().min(2, "Les 5 hashtags client sont obligatoires.").max(60, "Hashtag trop long (60 caractères maximum).")).length(5),
   networks: z.array(z.enum(SOCIAL_NETWORKS as unknown as [string, ...string[]])).min(1,
     "Sélectionnez au moins un réseau."),
   deadlineWeekday: z.coerce.number().int().min(1).max(7),
   deadlineTime: z.string().regex(/^\d{2}:\d{2}$/, "Heure invalide."),
   approvalPolicy: z.enum(["explicit_required", "tacit_allowed"]),
-  tacitNotice: z.string().trim().max(500).optional(),
-  whatsappGroup: z.string().trim().min(2, "Le nom du groupe WhatsApp est requis.").max(120),
+  tacitNotice: z.string().trim().max(500, "Mention contractuelle trop longue (500 caractères maximum).").optional(),
+  whatsappGroup: z.string().trim().min(2, "Le nom du groupe WhatsApp est requis.").max(120, "Nom de groupe trop long (120 caractères maximum)."),
   communityManagerId: z.string().uuid("Sélectionnez un community manager."),
   photoPerMonth: z.coerce.number().int().min(0).max(31),
   videoPerMonth: z.coerce.number().int().min(0).max(31),
+  storyPerMonth: z.coerce.number().int().min(0).max(31),
   visualPerMonth: z.coerce.number().int().min(0).max(31),
-  postSignature: z.string().trim().max(300).optional(),
+  postSignature: z.string().trim().max(300, "Signature trop longue (300 caractères maximum).").optional(),
 });
 
 function clientFormValues(formData: FormData) {
@@ -86,6 +106,7 @@ function clientFormValues(formData: FormData) {
     communityManagerId: formData.get("communityManagerId") ?? undefined,
     photoPerMonth: formData.get("photoPerMonth"),
     videoPerMonth: formData.get("videoPerMonth"),
+    storyPerMonth: formData.get("storyPerMonth"),
     visualPerMonth: formData.get("visualPerMonth"),
     postSignature: formData.get("postSignature") ?? undefined,
   };
@@ -136,7 +157,11 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
   const parsed = clientSchema.safeParse(clientFormValues(formData));
 
   if (!parsed.success) {
-    return { ok: false, message: parsed.error.issues[0]?.message ?? "Formulaire invalide." };
+    return {
+      ok: false,
+      message: parsed.error.issues[0]?.message ?? "Formulaire invalide.",
+      fieldErrors: fieldErrorsFrom(parsed.error),
+    };
   }
 
   const input = parsed.data;
@@ -166,6 +191,7 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
     monthlyCadence: {
       photo: input.photoPerMonth,
       video: input.videoPerMonth,
+      story: input.storyPerMonth,
       visual: input.visualPerMonth,
     },
   });
@@ -265,7 +291,11 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
   const parsed = clientSchema.safeParse(clientFormValues(formData));
   if (!clientId.success) return { ok: false, message: "Client invalide." };
   if (!parsed.success) {
-    return { ok: false, message: parsed.error.issues[0]?.message ?? "Formulaire invalide." };
+    return {
+      ok: false,
+      message: parsed.error.issues[0]?.message ?? "Formulaire invalide.",
+      fieldErrors: fieldErrorsFrom(parsed.error),
+    };
   }
 
   const scopedClient = await createSupabaseServerClient();
@@ -322,6 +352,7 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
     monthlyCadence: {
       photo: input.photoPerMonth,
       video: input.videoPerMonth,
+      story: input.storyPerMonth,
       visual: input.visualPerMonth,
     },
   };

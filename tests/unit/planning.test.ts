@@ -43,11 +43,19 @@ describe("planning hebdomadaire", () => {
 
   it("répartit les formats selon la cadence mensuelle", () => {
     const fourWeeks = [33, 34, 35, 36].flatMap((week) =>
-      weeklyFormatsForCadence({ photo: 4, video: 2, visual: 2 }, week),
+      weeklyFormatsForCadence({ photo: 4, video: 2, story: 6, visual: 2 }, week),
     );
     expect(fourWeeks.filter((format) => format === "photo")).toHaveLength(4);
     expect(fourWeeks.filter((format) => format === "video")).toHaveLength(2);
+    expect(fourWeeks.filter((format) => format === "story")).toHaveLength(6);
     expect(fourWeeks.filter((format) => format === "visuel")).toHaveLength(2);
+  });
+
+  it("ne produit aucune story quand le client n'en a pas vendu", () => {
+    const fourWeeks = [33, 34, 35, 36].flatMap((week) =>
+      weeklyFormatsForCadence({ photo: 4, video: 2, visual: 2 }, week),
+    );
+    expect(fourWeeks.filter((format) => format === "story")).toHaveLength(0);
   });
 
   it("sélectionne des hashtags variés mais stables", () => {

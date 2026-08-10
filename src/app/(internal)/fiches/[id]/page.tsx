@@ -71,7 +71,7 @@ export default async function SheetDetailPage({
     position: number;
     scheduled_date: string;
     scheduled_time: string | null;
-    format: "visuel" | "photo" | "reels" | "video" | "carrousel" | "texte_seul";
+    format: "visuel" | "photo" | "reels" | "video" | "story" | "carrousel" | "texte_seul";
     caption: string;
     hashtags: string[];
     media_asset_id: string | null;

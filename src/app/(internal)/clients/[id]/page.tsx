@@ -29,7 +29,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
     brandProfile?: { clientType?: string; activity?: string; website?: string; city?: string; postalCode?: string; audience?: string; tone?: string; keywords?: string };
     customHashtags?: string[];
     recommendedHashtags?: string[];
-    monthlyCadence?: { photo?: number; video?: number; visual?: number };
+    monthlyCadence?: { photo?: number; video?: number; story?: number; visual?: number };
   } = {};
   try { settings = typeof client.notes === "string" ? JSON.parse(client.notes) : {}; } catch { settings = {}; }
   const rawClientType = settings.brandProfile?.clientType;
@@ -45,6 +45,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
   const cadence = {
     photo:Number(settings.monthlyCadence?.photo ?? 0),
     video:Number(settings.monthlyCadence?.video ?? 0),
+    story:Number(settings.monthlyCadence?.story ?? 0),
     visual:Number(settings.monthlyCadence?.visual ?? 0),
   };
   const rawTone = settings.brandProfile?.tone;

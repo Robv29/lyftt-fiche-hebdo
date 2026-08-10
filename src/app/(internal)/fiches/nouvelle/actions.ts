@@ -23,7 +23,7 @@ const itemSchema = z.object({
   scheduledDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   scheduledTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
   publicationType: z.enum(["post", "reel", "story", "carousel", "video", "article", "other"]),
-  format: z.enum(["visuel", "photo", "reels", "video", "carrousel", "texte_seul"]),
+  format: z.enum(["visuel", "photo", "reels", "video", "story", "carrousel", "texte_seul"]),
   caption: z.string().max(5000).default(""),
   hashtags: z.string().max(1000).default(""),
   mediaPendingNote: z.string().max(200).optional(),

@@ -86,6 +86,7 @@ function hasWrittenCaption(caption: string, signature: string): boolean {
 function publicationTypeForFormat(format: MediaFormat): PublicationType {
   switch (format) {
     case "reels": return "reel";
+    case "story": return "story";
     case "video": return "video";
     case "carrousel": return "carousel";
     default: return "post";
@@ -94,6 +95,8 @@ function publicationTypeForFormat(format: MediaFormat): PublicationType {
 
 function mediaAccept(format: MediaFormat): string {
   if (["video", "reels"].includes(format)) return "video/mp4,video/quicktime,video/webm";
+  // Une story se tourne en vidéo comme en photo : on accepte les deux.
+  if (format === "story") return "image/jpeg,image/png,image/webp,image/heic,video/mp4,video/quicktime,video/webm";
   if (format === "texte_seul") return "";
   return "image/jpeg,image/png,image/webp,image/heic";
 }
@@ -127,7 +130,11 @@ function MediaDropzone({ item, onFile }: { item: DraftItem; onFile: (file: File 
   if (!requiresMedia) return <p className="rounded-xl bg-canvas px-4 py-3 text-xs text-ink-faint">Aucun média nécessaire pour un texte seul.</p>;
 
   const isVideo = ["video", "reels"].includes(item.format);
-  const expected = isVideo ? "une vidéo MP4, MOV ou WEBM" : "une photo JPG, PNG, WEBP ou HEIC";
+  const expected = item.format === "story"
+    ? "une photo ou une vidéo"
+    : isVideo
+      ? "une vidéo MP4, MOV ou WEBM"
+      : "une photo JPG, PNG, WEBP ou HEIC";
   const busy = ["preparation", "envoi", "enregistrement"].includes(item.mediaStatus);
   const ready = item.mediaStatus === "pret";
   const failed = item.mediaStatus === "erreur";

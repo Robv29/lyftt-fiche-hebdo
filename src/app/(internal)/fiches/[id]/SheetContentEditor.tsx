@@ -38,10 +38,14 @@ interface EditorItem extends EditableSheetItem {
   mediaCleared: boolean;
 }
 
+const IMAGE_ACCEPT = "image/jpeg,image/png,image/webp,image/heic";
+const VIDEO_ACCEPT = "video/mp4,video/quicktime,video/webm";
+
 function acceptFor(format: MediaFormat): string {
-  return ["video", "reels"].includes(format)
-    ? "video/mp4,video/quicktime,video/webm"
-    : "image/jpeg,image/png,image/webp,image/heic";
+  if (["video", "reels"].includes(format)) return VIDEO_ACCEPT;
+  // Une story se tourne en vidéo comme en photo : on accepte les deux.
+  if (format === "story") return `${IMAGE_ACCEPT},${VIDEO_ACCEPT}`;
+  return IMAGE_ACCEPT;
 }
 
 const EMPTY_UPLOAD = {

@@ -108,13 +108,15 @@ export function sheetCompletion(items: CompletionItem[]): {
 export interface MonthlyCadence {
   photo?: number;
   video?: number;
+  story?: number;
   visual?: number;
 }
 
 const CADENCE_FORMATS: Array<{ key: keyof MonthlyCadence; format: MediaFormat; offset: number }> = [
   { key: "photo", format: "photo", offset: 0 },
   { key: "video", format: "video", offset: 1 },
-  { key: "visual", format: "visuel", offset: 2 },
+  { key: "story", format: "story", offset: 2 },
+  { key: "visual", format: "visuel", offset: 3 },
 ];
 
 /** Répartit un volume mensuel sur quatre semaines, sans changer le contrat client. */

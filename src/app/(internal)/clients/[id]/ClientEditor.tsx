@@ -32,7 +32,7 @@ export interface EditableClient {
     clientType: LyfttClientType;
   };
   networks: SocialNetwork[];
-  cadence: { photo: number; video: number; visual: number };
+  cadence: { photo: number; video: number; story: number; visual: number };
   validation: {
     deadlineWeekday: number;
     deadlineTime: string;
@@ -206,9 +206,10 @@ export function ClientEditor({ initial, managers }: { initial: EditableClient; m
 
               <fieldset>
                 <legend className="eyebrow">Rythme mensuel vendu</legend>
-                <div className="mt-3 grid gap-4 sm:grid-cols-3">
+                <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                   <div><label className="label" htmlFor="edit-photo">Photos</label><input id="edit-photo" name="photoPerMonth" type="number" min="0" max="31" required className="field" defaultValue={initial.cadence.photo}/></div>
                   <div><label className="label" htmlFor="edit-video">Vidéos / Reels</label><input id="edit-video" name="videoPerMonth" type="number" min="0" max="31" required className="field" defaultValue={initial.cadence.video}/></div>
+                  <div><label className="label" htmlFor="edit-story">Stories</label><input id="edit-story" name="storyPerMonth" type="number" min="0" max="31" required className="field" defaultValue={initial.cadence.story}/></div>
                   <div><label className="label" htmlFor="edit-visual">Visuels / carrousels</label><input id="edit-visual" name="visualPerMonth" type="number" min="0" max="31" required className="field" defaultValue={initial.cadence.visual}/></div>
                 </div>
               </fieldset>
