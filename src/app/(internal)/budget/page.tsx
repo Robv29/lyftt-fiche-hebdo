@@ -40,7 +40,7 @@ export default async function BudgetPage() {
     supabase.from("client_budgets").select("client_id, billing_mode, budget_cents"),
     supabase
       .from("client_budget_lines")
-      .select("id, client_id, label, billing, unit_price_cents, quantity, months, performed_on"),
+      .select("id, client_id, service_key, label, billing, unit_price_cents, quantity, months, performed_on"),
   ]);
 
   const budgetByClient = new Map(
@@ -51,6 +51,7 @@ export default async function BudgetPage() {
     const list = linesByClient.get(row.client_id as string) ?? [];
     list.push({
       id: row.id as string,
+      serviceKey: row.service_key as string,
       label: row.label as string,
       billing: row.billing as BudgetLine["billing"],
       unitPriceCents: row.unit_price_cents as number,

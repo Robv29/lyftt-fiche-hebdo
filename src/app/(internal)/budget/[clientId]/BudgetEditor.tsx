@@ -8,6 +8,7 @@ import {
   CATEGORY_LABELS,
   SERVICE_CATALOGUE,
   formatEuros,
+  isManagementMonth,
   lineTotalCents,
   type BillingMode,
   type BudgetLine,
@@ -249,10 +250,15 @@ export function BudgetEditor({
               </p>
             ) : (
               <ul className="divide-y">
-                {lines.map((line) => (
-                  <li key={line.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
+                {lines.map((line) => {
+                  const automatic = isManagementMonth(line);
+                  return (
+                  <li key={line.id} className={`flex flex-wrap items-center justify-between gap-3 p-4 ${automatic ? "bg-canvas/60" : ""}`}>
                     <div className="min-w-0">
-                      <p className="text-sm font-medium">{line.label}</p>
+                      <p className="text-sm font-medium">
+                        {line.label}
+                        {automatic && <span className="ml-2 badge bg-[#e8f2ff] text-[#0b5e9f]">Automatique</span>}
+                      </p>
                       <p className="mt-0.5 text-xs text-ink-faint">
                         {line.quantity} × {formatEuros(line.unitPriceCents)}
                         {line.billing === "mensuel" && line.months ? ` × ${line.months} mois` : ""}
@@ -262,17 +268,21 @@ export function BudgetEditor({
                     </div>
                     <div className="flex items-center gap-3">
                       <strong className="text-sm">{formatEuros(lineTotalCents(line))}</strong>
-                      <button
-                        type="button"
-                        className="text-xs text-state-changes hover:underline"
-                        disabled={pending}
-                        onClick={() => run(() => removeBudgetLine(line.id, clientId))}
-                      >
-                        Retirer
-                      </button>
+                      {/* Un mois écoulé a bien été produit : il ne se retire pas. */}
+                      {!automatic && (
+                        <button
+                          type="button"
+                          className="text-xs text-state-changes hover:underline"
+                          disabled={pending}
+                          onClick={() => run(() => removeBudgetLine(line.id, clientId))}
+                        >
+                          Retirer
+                        </button>
+                      )}
                     </div>
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             )}
           </section>
@@ -330,14 +340,13 @@ function SummaryPanel({
         <div className="mt-5 grid gap-2 rounded-2xl bg-canvas p-4 text-xs sm:grid-cols-2">
           <p className="flex items-center justify-between gap-3">
             <span className="text-ink-faint">
-              Production livrée{contractStartDate ? ` depuis le ${contractStartDate}` : ""}
-              {summary.monthsElapsed > 0 ? ` · ${summary.monthsElapsed.toFixed(1)} mois` : ""}
+              Mois de gestion inscrits{contractStartDate ? ` depuis le ${contractStartDate}` : ""}
             </span>
             <strong>{formatEuros(summary.recurringConsumedCents)}</strong>
           </p>
           <p className="flex items-center justify-between gap-3">
-            <span className="text-ink-faint">Prestations de l’addition</span>
-            <strong>{formatEuros(summary.lineCents)}</strong>
+            <span className="text-ink-faint">Prestations ponctuelles ajoutées</span>
+            <strong>{formatEuros(summary.lineCents - summary.recurringConsumedCents)}</strong>
           </p>
         </div>
 

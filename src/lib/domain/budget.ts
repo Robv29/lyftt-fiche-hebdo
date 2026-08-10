@@ -186,8 +186,19 @@ export function findService(key: string): ServiceDefinition | undefined {
   return SERVICE_CATALOGUE.find((service) => service.key === key);
 }
 
+/**
+ * Clé des lignes de production mensuelle.
+ *
+ * Ces lignes ne sont pas choisies dans le catalogue : elles sont inscrites
+ * automatiquement dès qu'un mois de gestion est écoulé, au tarif du rythme
+ * vendu à ce moment-là. Une fois posées, elles ne bougent plus — un
+ * changement de formule ne réécrit pas les mois déjà facturés.
+ */
+export const MANAGEMENT_MONTH_KEY = "production_mensuelle";
+
 export interface BudgetLine {
   id: string;
+  serviceKey: string;
   label: string;
   billing: ServiceBilling;
   unitPriceCents: number;
@@ -206,6 +217,57 @@ export function lineTotalCents(line: BudgetLine): number {
 
 export function totalCents(lines: BudgetLine[]): number {
   return lines.reduce((total, line) => total + lineTotalCents(line), 0);
+}
+
+export function isManagementMonth(line: BudgetLine): boolean {
+  return line.serviceKey === MANAGEMENT_MONTH_KEY;
+}
+
+/** Même jour, n mois plus tard. Un 31 tombe sur le dernier jour du mois visé. */
+export function addMonths(date: string, months: number): string {
+  const origin = new Date(`${date}T00:00:00Z`);
+  const day = origin.getUTCDate();
+  const shifted = new Date(Date.UTC(origin.getUTCFullYear(), origin.getUTCMonth() + months, 1));
+  const lastDay = new Date(Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth() + 1, 0)).getUTCDate();
+  shifted.setUTCDate(Math.min(day, lastDay));
+  return shifted.toISOString().slice(0, 10);
+}
+
+export interface ManagementMonth {
+  /** Rang du mois de gestion, à partir de 1. */
+  index: number;
+  /** Jour où le mois s'est achevé : c'est la date portée par la ligne. */
+  closedOn: string;
+  amountCents: number;
+}
+
+/**
+ * Mois de gestion déjà écoulés, à inscrire à l'addition.
+ *
+ * Les mois courent d'anniversaire à anniversaire depuis le début de gestion,
+ * pas en mois calendaires : une gestion démarrée le 15 se facture le 15.
+ * Le décompte s'arrête à la fin de gestion, après quoi plus rien n'est produit.
+ */
+export function closedManagementMonths(input: {
+  contractStartDate: string | null;
+  contractEndDate: string | null;
+  monthlyCostCents: number;
+  today: string;
+}): ManagementMonth[] {
+  if (!input.contractStartDate || input.monthlyCostCents <= 0) return [];
+
+  const limit = input.contractEndDate && input.contractEndDate < input.today
+    ? input.contractEndDate
+    : input.today;
+
+  const months: ManagementMonth[] = [];
+  // Une gestion de plusieurs années reste bornée : 120 mois suffisent.
+  for (let index = 1; index <= 120; index += 1) {
+    const closedOn = addMonths(input.contractStartDate, index);
+    if (closedOn > limit) break;
+    months.push({ index, closedOn, amountCents: input.monthlyCostCents });
+  }
+  return months;
 }
 
 /**
@@ -261,9 +323,9 @@ export interface BudgetInput {
 export interface BudgetSummary {
   applicable: boolean;
   budgetCents: number;
-  /** Prestations inscrites à l'addition. */
+  /** Total de l'addition, mois de gestion compris. */
   lineCents: number;
-  /** Production récurrente déjà livrée depuis le début de gestion. */
+  /** Part des mois de gestion déjà inscrits. */
   recurringConsumedCents: number;
   /** Mois écoulés depuis le début de gestion. */
   monthsElapsed: number;
@@ -288,21 +350,21 @@ export function budgetSummary(input: BudgetInput): BudgetSummary {
   const monthlyCadenceCostCents = cadenceMonthlyCostCents(input.cadence);
 
   /*
-   * La production récurrente consomme le budget mois après mois, qu'on pense
-   * à l'inscrire ou non. Sans elle, le restant serait systématiquement
-   * surévalué : on croirait disposer d'une enveloppe déjà largement entamée.
-   *
-   * Elle est bornée à la fin de gestion : après cette date, plus rien n'est
-   * produit, et le compteur ne doit pas continuer de tourner.
+   * Chaque mois de gestion écoulé est inscrit à l'addition dès qu'il s'achève.
+   * Le consommé se lit donc entièrement dans les lignes — rien n'est ajouté
+   * par-dessus, sans quoi la production serait comptée deux fois.
    */
+  const recurringConsumedCents = input.lines
+    .filter(isManagementMonth)
+    .reduce((total, line) => total + lineTotalCents(line), 0);
+  const consumedCents = lineCents;
+
   const measuredUpTo = input.contractEndDate && input.today > input.contractEndDate
     ? input.contractEndDate
     : input.today;
   const monthsElapsed = input.contractStartDate
     ? monthsBetween(input.contractStartDate, measuredUpTo)
     : 0;
-  const recurringConsumedCents = Math.round(monthlyCadenceCostCents * monthsElapsed);
-  const consumedCents = lineCents + recurringConsumedCents;
 
   // Un client comptant est facturé à la prestation : aucun plafond à suivre.
   if (input.billingMode !== "financement") {

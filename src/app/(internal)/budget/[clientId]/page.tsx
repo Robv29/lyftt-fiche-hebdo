@@ -5,6 +5,7 @@ import { budgetSummary, type BillingMode, type BudgetLine } from "@/lib/domain/b
 import { todayInParis } from "@/lib/domain/client-lifecycle";
 import type { MonthlyCadence } from "@/lib/domain/planning";
 import { BudgetEditor } from "./BudgetEditor";
+import { cadenceFromNotes, syncManagementMonths } from "@/lib/budget/management-months";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,7 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
   const { clientId } = await params;
   const supabase = await createSupabaseServerClient();
 
-  const [{ data: client }, { data: budget }, { data: rawLines }] = await Promise.all([
+  const [{ data: client }, { data: budget }] = await Promise.all([
     supabase
       .from("clients")
       .select("id, name, notes, contract_start_date, contract_end_date, pause_start_date, pause_end_date")
@@ -33,14 +34,29 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
       .select("billing_mode, budget_cents, note")
       .eq("client_id", clientId)
       .maybeSingle(),
-    supabase
-      .from("client_budget_lines")
-      .select("id, label, billing, unit_price_cents, quantity, months, performed_on, note")
-      .eq("client_id", clientId)
-      .order("performed_on", { ascending: false }),
   ]);
 
   if (!client) notFound();
+
+  /*
+   * La tâche planifiée inscrit les mois écoulés chaque nuit ; on rattrape ici
+   * ce qui s'est achevé depuis, pour que l'addition affichée soit toujours à
+   * jour. L'opération est sans effet quand il n'y a rien à ajouter.
+   */
+  if (budget?.billing_mode === "financement") {
+    await syncManagementMonths(supabase, {
+      id: client.id,
+      contractStartDate: client.contract_start_date,
+      contractEndDate: client.contract_end_date,
+      cadence: cadenceFromNotes(client.notes),
+    });
+  }
+
+  const { data: rawLines } = await supabase
+    .from("client_budget_lines")
+    .select("id, service_key, label, billing, unit_price_cents, quantity, months, performed_on, note")
+    .eq("client_id", clientId)
+    .order("performed_on", { ascending: false });
 
   let settings: { monthlyCadence?: MonthlyCadence } = {};
   try {
@@ -51,6 +67,7 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
 
   const lines: (BudgetLine & { note: string | null })[] = (rawLines ?? []).map((row) => ({
     id: row.id as string,
+    serviceKey: row.service_key as string,
     label: row.label as string,
     billing: row.billing as BudgetLine["billing"],
     unitPriceCents: row.unit_price_cents as number,

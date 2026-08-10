@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { decideMediaRetention, formatBytes } from "@/lib/domain/media-retention";
+import { cadenceFromNotes, syncManagementMonths } from "@/lib/budget/management-months";
 
 /**
  * Entretien planifié : validations tacites, puis purge des médias.
@@ -57,6 +58,38 @@ async function handle(request: NextRequest) {
   const { data: tacit, error: tacitError } = await admin.rpc("apply_tacit_approvals");
   if (tacitError) {
     console.error("[entretien] validations tacites impossibles", tacitError.message);
+  }
+
+  /*
+   * Mois de gestion écoulés. Chacun est inscrit à l'addition du client au
+   * tarif du rythme en vigueur, puis figé : c'est ce qui rend le budget
+   * consommé exact sans que personne ait à y penser.
+   */
+  let managementMonths = 0;
+  const { data: financed } = await admin
+    .from("client_budgets")
+    .select("client_id, clients ( id, notes, contract_start_date, contract_end_date )")
+    .eq("billing_mode", "financement");
+
+  for (const row of financed ?? []) {
+    const client = row.clients as unknown as {
+      id: string;
+      notes: string | null;
+      contract_start_date: string | null;
+      contract_end_date: string | null;
+    } | null;
+    if (!client) continue;
+    try {
+      managementMonths += await syncManagementMonths(admin, {
+        id: client.id,
+        contractStartDate: client.contract_start_date,
+        contractEndDate: client.contract_end_date,
+        cadence: cadenceFromNotes(client.notes),
+      });
+    } catch (error) {
+      // Un budget en échec ne doit pas empêcher la purge des médias.
+      console.error("[entretien] mois de gestion impossibles", client.id, error);
+    }
   }
 
   // Chaque média, avec la publication qui le porte et la règle du client.
@@ -202,6 +235,7 @@ async function handle(request: NextRequest) {
 
   return NextResponse.json({
     fichesValideesTacitement: Array.isArray(tacit) ? tacit.length : 0,
+    moisDeGestionInscrits: managementMonths,
     originauxPurges: purgedIds.length,
     apercusPurges: previewPurgedIds.length,
     fichesSupprimees: deletedSheets,
