@@ -62,6 +62,7 @@ interface ClientRow {
   approvalPolicy: string;
   contactName: string | null;
   managerName: string;
+  logoUrl: string | null;
   cadenceLabel: string;
   contractEndDate: string | null;
   pauseStartDate: string | null;
@@ -460,7 +461,12 @@ export function ClientAdmin({
               {(() => { const lifecycle = lifecycleOf(client); return (
               <div className="flex h-full flex-col gap-5">
                 <div className="flex items-start gap-3">
-                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[#e8f2ff] text-sm font-bold text-[#0b5e9f]">{client.name.slice(0,2).toUpperCase()}</span>
+                  {client.logoUrl
+                    // Le logo prime sur les initiales : c'est ce qui permet de
+                    // repérer un client d'un coup d'œil dans un portefeuille.
+                    // eslint-disable-next-line @next/next/no-img-element
+                    ? <img src={client.logoUrl} alt="" className="h-11 w-11 shrink-0 rounded-xl border border-line bg-white object-contain"/>
+                    : <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[#e8f2ff] text-sm font-bold text-[#0b5e9f]">{client.name.slice(0,2).toUpperCase()}</span>}
                   <div className="min-w-0 flex-1">
                   <p className="font-semibold tracking-[-.015em]">
                     {client.name}

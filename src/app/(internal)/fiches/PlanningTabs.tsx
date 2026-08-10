@@ -5,25 +5,39 @@ import { Icon } from "@/components/Icon";
 
 type PlanningTab = "past" | "current" | "next";
 
+export interface PlanningValidation {
+  validated: number;
+  total: number;
+  percentage: number;
+}
+
 const TABS: Array<{
   id: PlanningTab;
   label: string;
   shortLabel: string;
   icon: string;
   description: string;
+  /** Période couverte par l'indicateur de validation, en tête d'écran. */
+  scope: string;
 }> = [
-  { id: "past", label: "Passé", shortLabel: "Passé", icon: "clock", description: "Historique des semaines terminées, de la plus récente à la plus ancienne." },
-  { id: "current", label: "Cette semaine", shortLabel: "Cette semaine", icon: "calendar", description: "Les fiches incomplètes et les modifications de priorité haute apparaissent en premier." },
-  { id: "next", label: "Semaine prochaine", shortLabel: "Prochaine", icon: "layers", description: "Les fiches préprogrammées à préparer pour chaque client actif." },
+  { id: "past", label: "Passé", shortLabel: "Passé", icon: "clock", description: "Historique des semaines terminées, de la plus récente à la plus ancienne.", scope: "Semaine passée." },
+  { id: "current", label: "Cette semaine", shortLabel: "Cette semaine", icon: "calendar", description: "Les fiches incomplètes et les modifications de priorité haute apparaissent en premier.", scope: "Semaine en cours." },
+  { id: "next", label: "Semaine prochaine", shortLabel: "Prochaine", icon: "layers", description: "Les fiches préprogrammées à préparer pour chaque client actif.", scope: "Semaine prochaine." },
 ];
 
 export function PlanningTabs({
   counts,
+  validation,
+  toCreate,
   past,
   current,
   next,
 }: {
   counts: Record<PlanningTab, number>;
+  /** Taux de validation propre à chaque période. */
+  validation: Record<PlanningTab, PlanningValidation>;
+  /** Fiches de la semaine prochaine restant à créer. */
+  toCreate: number;
   past: ReactNode;
   current: ReactNode;
   next: ReactNode;
@@ -31,6 +45,9 @@ export function PlanningTabs({
   const [active, setActive] = useState<PlanningTab>("current");
   const content = { past, current, next }[active];
   const activeTab = TABS.find((tab) => tab.id === active)!;
+  // L'indicateur suit l'onglet : un taux affiché sur une autre période que
+  // celle qu'on regarde se lit comme une erreur.
+  const rate = validation[active];
 
   const move = (event: KeyboardEvent<HTMLButtonElement>, direction: -1 | 1) => {
     event.preventDefault();
@@ -42,6 +59,39 @@ export function PlanningTabs({
 
   return (
     <section className="space-y-5">
+      {rate.total > 0 ? (
+        <div className="card flex flex-wrap items-center justify-between gap-4 p-4 sm:p-5">
+          <div className="flex items-center gap-3">
+            <span className={`grid h-11 w-11 place-items-center rounded-2xl ${rate.percentage === 100 ? "bg-[#e8f8f1] text-state-approved" : "bg-[#e8f2ff] text-[#1176d3]"}`}>
+              <Icon name="check" className="h-5 w-5"/>
+            </span>
+            <div>
+              <strong className="text-sm">
+                {rate.validated} fiche{rate.validated > 1 ? "s" : ""} validée{rate.validated > 1 ? "s" : ""} sur {rate.total}
+              </strong>
+              <p className="mt-1 text-xs text-ink-faint">
+                {activeTab.scope} Validation explicite ou tacite ; les fiches en préparation ne sont pas comptées.
+                {active === "next" && toCreate > 0 && ` ${toCreate} fiche${toCreate > 1 ? "s" : ""} reste${toCreate > 1 ? "nt" : ""} à créer.`}
+              </p>
+            </div>
+          </div>
+          <div className="w-full sm:w-56">
+            <div className="mb-2 flex justify-between text-[11px] text-ink-faint">
+              <span>Taux de validation</span>
+              <strong className={rate.percentage === 100 ? "text-state-approved" : "text-ink"}>{rate.percentage} %</strong>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-[#e8edf4]" role="progressbar" aria-label={`Taux de validation : ${rate.percentage}%`} aria-valuenow={rate.percentage} aria-valuemin={0} aria-valuemax={100}>
+              <span className={`block h-full origin-left rounded-full transition-transform duration-300 ${rate.percentage === 100 ? "bg-state-approved" : "bg-[#1468ff]"}`} style={{ transform: `scaleX(${rate.percentage / 100})` }}/>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <p className="card px-4 py-3 text-xs text-ink-faint">
+          {activeTab.scope} Aucune fiche soumise au client sur cette période.
+          {active === "next" && toCreate > 0 && ` ${toCreate} fiche${toCreate > 1 ? "s" : ""} reste${toCreate > 1 ? "nt" : ""} à créer.`}
+        </p>
+      )}
+
       <div className="grid grid-cols-3 gap-1.5 rounded-2xl border border-line bg-[#e9eff6] p-1.5 shadow-inner" role="tablist" aria-label="Période du planning">
         {TABS.map((tab) => {
           const selected = tab.id === active;

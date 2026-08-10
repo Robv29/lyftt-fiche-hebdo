@@ -156,7 +156,10 @@ export default async function SheetsPage() {
       pauseStartDate: client.pause_start_date,
       pauseEndDate: client.pause_end_date,
     }).canProduce);
-  const validation = validationRate([...current, ...next].map((sheet) => sheet.status as SheetStatus));
+  // Un taux par période : l'indicateur en tête suit l'onglet consulté.
+  const rateOf = (group: PlanningSheet[]) =>
+    validationRate(group.map((sheet) => sheet.status as SheetStatus));
+  const validation = { past: rateOf(past), current: rateOf(current), next: rateOf(next) };
 
   return (
     <div className="space-y-8">
@@ -166,39 +169,10 @@ export default async function SheetsPage() {
         <p className="mt-2 max-w-2xl text-sm text-ink-soft">Le travail est proposé automatiquement selon les prestations de chaque client. Ouvrez simplement la fiche à préparer.</p>
       </div>
 
-      {/*
-        Part des fiches réellement validées par le client. Les brouillons sont
-        exclus : ils n'ont jamais été soumis, les compter fausserait le taux.
-      */}
-      {validation.total > 0 && (
-        <section className="card flex flex-wrap items-center justify-between gap-4 p-4 sm:p-5">
-          <div className="flex items-center gap-3">
-            <span className={`grid h-11 w-11 place-items-center rounded-2xl ${validation.percentage === 100 ? "bg-[#e8f8f1] text-state-approved" : "bg-[#e8f2ff] text-[#1176d3]"}`}>
-              <Icon name="check" className="h-5 w-5"/>
-            </span>
-            <div>
-              <strong className="text-sm">
-                {validation.validated} fiche{validation.validated > 1 ? "s" : ""} validée{validation.validated > 1 ? "s" : ""} sur {validation.total}
-              </strong>
-              <p className="mt-1 text-xs text-ink-faint">
-                Semaine en cours et semaine prochaine. Validation explicite ou tacite ; les fiches en préparation ne sont pas comptées.
-              </p>
-            </div>
-          </div>
-          <div className="w-full sm:w-56">
-            <div className="mb-2 flex justify-between text-[11px] text-ink-faint">
-              <span>Taux de validation</span>
-              <strong className={validation.percentage === 100 ? "text-state-approved" : "text-ink"}>{validation.percentage} %</strong>
-            </div>
-            <div className="h-1.5 overflow-hidden rounded-full bg-[#e8edf4]" role="progressbar" aria-label={`Taux de validation : ${validation.percentage}%`} aria-valuenow={validation.percentage} aria-valuemin={0} aria-valuemax={100}>
-              <span className={`block h-full origin-left rounded-full transition-transform duration-300 ${validation.percentage === 100 ? "bg-state-approved" : "bg-[#1468ff]"}`} style={{ transform: `scaleX(${validation.percentage / 100})` }}/>
-            </div>
-          </div>
-        </section>
-      )}
-
       <PlanningTabs
         counts={{ past: past.length, current: current.length, next: next.length + proposals.length }}
+        validation={validation}
+        toCreate={proposals.length}
         past={past.length ? (
           <ul className="grid gap-3 lg:grid-cols-2">{past.map((sheet) => <SheetCard key={sheet.id} sheet={sheet}/>)}</ul>
         ) : (
