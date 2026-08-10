@@ -100,6 +100,9 @@ export default async function BudgetPage() {
     return { client, summary, toInvoice };
   });
 
+  const totalToInvoice = rows
+    .filter((row) => !row.summary.applicable)
+    .reduce((total, row) => total + row.toInvoice, 0);
   const financed = rows.filter((row) => row.summary.applicable);
   const cash = rows.filter((row) => !row.summary.applicable);
   const critical = financed.filter((row) =>
@@ -108,13 +111,22 @@ export default async function BudgetPage() {
 
   return (
     <div className="space-y-7">
-      <header>
-        <p className="eyebrow">Direction</p>
-        <h1 className="page-title mt-1">Budget</h1>
-        <p className="mt-2 max-w-2xl text-sm text-ink-soft">
-          Suivi des enveloppes de financement. Un budget non consommé à la fin de
-          gestion est perdu : l&apos;objectif est de le remplir entièrement.
-        </p>
+      <header className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="eyebrow">Direction</p>
+          <h1 className="page-title mt-1">Budget</h1>
+          <p className="mt-2 max-w-2xl text-sm text-ink-soft">
+            Suivi des enveloppes de financement. Un budget non consommé à la fin de
+            gestion est perdu : l&apos;objectif est de le remplir entièrement.
+          </p>
+        </div>
+        <Link href="/budget/facturation" className="btn-primary">
+          <Icon name="chart" className="h-4 w-4"/>
+          Factures du mois
+          {totalToInvoice > 0 && (
+            <span className="rounded-full bg-white/20 px-2 py-0.5 text-[11px]">{totalToInvoice}</span>
+          )}
+        </Link>
       </header>
 
       {critical.length > 0 && (

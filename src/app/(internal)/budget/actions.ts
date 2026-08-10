@@ -183,3 +183,54 @@ export async function setInvoiceStatus(
   revalidatePath(`/budget/${parsed.data.clientId}`);
   return { ok: true, message: "Facturation mise à jour." };
 }
+
+const bulkSchema = z.object({
+  periodMonth: z.string().regex(/^\d{4}-\d{2}-01$/, "Mois invalide."),
+  status: z.enum(["a_faire", "faite", "prelevement_programme"]),
+  clientIds: z.array(z.string().uuid()).min(1, "Aucun client à traiter."),
+});
+
+/**
+ * Avancement groupé d'un mois entier de facturation.
+ *
+ * Établir trente factures se fait d'une traite, pas client par client : le
+ * mois se marque en un geste, et chaque dossier reste corrigeable ensuite
+ * depuis la fiche du client.
+ */
+export async function setMonthInvoiceStatus(
+  periodMonth: string,
+  status: string,
+  clientIds: string[],
+): Promise<BudgetActionResult> {
+  const profile = await requireAdmin();
+  if (!profile) return { ok: false, message: ACCESS_DENIED };
+
+  const parsed = bulkSchema.safeParse({ periodMonth, status, clientIds });
+  if (!parsed.success) {
+    return { ok: false, message: parsed.error.issues[0]?.message ?? "Demande invalide." };
+  }
+
+  const now = new Date().toISOString();
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase.from("client_invoices").upsert(
+    parsed.data.clientIds.map((clientId) => ({
+      client_id: clientId,
+      period_month: parsed.data.periodMonth,
+      status: parsed.data.status,
+      invoiced_at: parsed.data.status === "faite" ? now : undefined,
+      scheduled_at: parsed.data.status === "prelevement_programme" ? now : undefined,
+      updated_at: now,
+      updated_by: profile.id,
+    })),
+    { onConflict: "client_id,period_month" },
+  );
+
+  if (error) return { ok: false, message: `Enregistrement impossible : ${error.message}` };
+
+  revalidatePath("/budget");
+  revalidatePath("/budget/facturation");
+  return {
+    ok: true,
+    message: `${parsed.data.clientIds.length} facture${parsed.data.clientIds.length > 1 ? "s" : ""} mise${parsed.data.clientIds.length > 1 ? "s" : ""} à jour.`,
+  };
+}
