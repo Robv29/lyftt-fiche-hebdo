@@ -64,6 +64,7 @@ interface ClientRow {
   managerName: string;
   logoUrl: string | null;
   cadenceLabel: string;
+  contractStartDate: string | null;
   contractEndDate: string | null;
   pauseStartDate: string | null;
   pauseEndDate: string | null;
@@ -527,10 +528,17 @@ export function ClientAdmin({
                     action={(formData) => { formData.set("clientId", client.id); run(() => updateClientLifecycle(formData)); }}
                     className="mt-3 space-y-3"
                   >
-                    <div>
-                      <label className="label text-xs" htmlFor={`fin-${client.id}`}>Fin de gestion</label>
-                      <input id={`fin-${client.id}`} name="contractEndDate" type="date" className="field" defaultValue={client.contractEndDate ?? ""}/>
-                      <p className="mt-1 text-[11px] text-ink-faint">Le client est archivé le lendemain de cette date.</p>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="label text-xs" htmlFor={`debut-${client.id}`}>Début de gestion</label>
+                        <input id={`debut-${client.id}`} name="contractStartDate" type="date" className="field" defaultValue={client.contractStartDate ?? ""}/>
+                        <p className="mt-1 text-[11px] text-ink-faint">Sert au décompte du budget consommé.</p>
+                      </div>
+                      <div>
+                        <label className="label text-xs" htmlFor={`fin-${client.id}`}>Fin de gestion</label>
+                        <input id={`fin-${client.id}`} name="contractEndDate" type="date" className="field" defaultValue={client.contractEndDate ?? ""}/>
+                        <p className="mt-1 text-[11px] text-ink-faint">Le client est archivé le lendemain.</p>
+                      </div>
                     </div>
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div>

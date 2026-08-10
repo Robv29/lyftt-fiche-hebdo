@@ -438,6 +438,7 @@ export async function setClientActive(
 
 const lifecycleSchema = z.object({
   clientId: z.string().uuid(),
+  contractStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
   contractEndDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
   pauseStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
   pauseEndDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
@@ -464,6 +465,7 @@ export async function updateClientLifecycle(formData: FormData): Promise<ClientA
 
   const parsed = lifecycleSchema.safeParse({
     clientId: formData.get("clientId"),
+    contractStartDate: readDate("contractStartDate"),
     contractEndDate: readDate("contractEndDate"),
     pauseStartDate: readDate("pauseStartDate"),
     pauseEndDate: readDate("pauseEndDate"),
@@ -477,6 +479,10 @@ export async function updateClientLifecycle(formData: FormData): Promise<ClientA
   if (input.pauseEndDate && !input.pauseStartDate) {
     return { ok: false, message: "Indiquez la date de début de pause." };
   }
+  if (input.contractStartDate && input.contractEndDate
+    && input.contractEndDate < input.contractStartDate) {
+    return { ok: false, message: "La fin de gestion précède son début." };
+  }
 
   const scoped = await createSupabaseServerClient();
   const { data: accessible } = await scoped
@@ -489,6 +495,7 @@ export async function updateClientLifecycle(formData: FormData): Promise<ClientA
   const { error } = await createSupabaseAdminClient()
     .from("clients")
     .update({
+      contract_start_date: input.contractStartDate,
       contract_end_date: input.contractEndDate,
       pause_start_date: input.pauseStartDate,
       pause_end_date: input.pauseEndDate,

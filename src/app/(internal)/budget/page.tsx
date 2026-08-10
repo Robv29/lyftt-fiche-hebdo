@@ -12,6 +12,7 @@ interface ClientRow {
   id: string;
   name: string;
   notes: string | null;
+  contract_start_date: string | null;
   contract_end_date: string | null;
   is_active: boolean;
 }
@@ -33,7 +34,7 @@ export default async function BudgetPage() {
   const [{ data: clients }, { data: budgets }, { data: lines }] = await Promise.all([
     supabase
       .from("clients")
-      .select("id, name, notes, contract_end_date, is_active")
+      .select("id, name, notes, contract_start_date, contract_end_date, is_active")
       .eq("is_active", true)
       .order("name"),
     supabase.from("client_budgets").select("client_id, billing_mode, budget_cents"),
@@ -73,6 +74,7 @@ export default async function BudgetPage() {
       annualBudgetCents: budget?.budget_cents ?? 0,
       lines: linesByClient.get(client.id) ?? [],
       cadence: settings.monthlyCadence ?? {},
+      contractStartDate: client.contract_start_date,
       contractEndDate: client.contract_end_date,
       today,
     });

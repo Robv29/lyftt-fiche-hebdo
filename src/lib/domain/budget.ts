@@ -47,6 +47,15 @@ export const SERVICE_CATALOGUE: readonly ServiceDefinition[] = [
     description: "Réflexion globale, positionnement, recommandations.",
   },
   {
+    key: "shooting_express",
+    label: "Shooting express",
+    category: "entree",
+    billing: "ponctuel",
+    unitPriceCents: 22_500,
+    unitLabel: "le shooting",
+    description: "Format court, sur un point précis.",
+  },
+  {
     key: "shooting_demi",
     label: "Shooting ½ journée",
     category: "entree",
@@ -242,6 +251,8 @@ export interface BudgetInput {
   annualBudgetCents: number;
   lines: BudgetLine[];
   cadence: MonthlyCadence;
+  /** Début de gestion, repris de la fiche client. */
+  contractStartDate: string | null;
   /** Fin de gestion, reprise de la fiche client. */
   contractEndDate: string | null;
   today: string;
@@ -250,6 +261,12 @@ export interface BudgetInput {
 export interface BudgetSummary {
   applicable: boolean;
   budgetCents: number;
+  /** Prestations inscrites à l'addition. */
+  lineCents: number;
+  /** Production récurrente déjà livrée depuis le début de gestion. */
+  recurringConsumedCents: number;
+  /** Mois écoulés depuis le début de gestion. */
+  monthsElapsed: number;
   consumedCents: number;
   remainingCents: number;
   /** Part du budget déjà engagée, bornée à 100 pour l'affichage. */
@@ -266,15 +283,35 @@ export interface BudgetSummary {
 }
 
 export function budgetSummary(input: BudgetInput): BudgetSummary {
-  const consumedCents = totalCents(input.lines);
+  const lineCents = totalCents(input.lines);
   const budgetCents = Math.max(0, input.annualBudgetCents);
   const monthlyCadenceCostCents = cadenceMonthlyCostCents(input.cadence);
+
+  /*
+   * La production récurrente consomme le budget mois après mois, qu'on pense
+   * à l'inscrire ou non. Sans elle, le restant serait systématiquement
+   * surévalué : on croirait disposer d'une enveloppe déjà largement entamée.
+   *
+   * Elle est bornée à la fin de gestion : après cette date, plus rien n'est
+   * produit, et le compteur ne doit pas continuer de tourner.
+   */
+  const measuredUpTo = input.contractEndDate && input.today > input.contractEndDate
+    ? input.contractEndDate
+    : input.today;
+  const monthsElapsed = input.contractStartDate
+    ? monthsBetween(input.contractStartDate, measuredUpTo)
+    : 0;
+  const recurringConsumedCents = Math.round(monthlyCadenceCostCents * monthsElapsed);
+  const consumedCents = lineCents + recurringConsumedCents;
 
   // Un client comptant est facturé à la prestation : aucun plafond à suivre.
   if (input.billingMode !== "financement") {
     return {
       applicable: false,
       budgetCents: 0,
+      lineCents,
+      recurringConsumedCents,
+      monthsElapsed,
       consumedCents,
       remainingCents: 0,
       consumedPercentage: 0,
@@ -306,6 +343,16 @@ export function budgetSummary(input: BudgetInput): BudgetSummary {
         "Sans date de fin, impossible de savoir en combien de temps ce budget "
         + "doit être consommé : ni le rythme ni le reliquat ne peuvent être calculés. "
         + "Renseignez-la sur la fiche client.",
+    });
+  }
+
+  if (!input.contractStartDate && monthlyCadenceCostCents > 0) {
+    alerts.push({
+      level: "attention",
+      title: "Date de début de gestion manquante",
+      detail:
+        "La production déjà livrée n'est donc pas décomptée du budget : le "
+        + "restant affiché est surévalué. Renseignez-la sur la fiche client.",
     });
   }
 
@@ -361,6 +408,9 @@ export function budgetSummary(input: BudgetInput): BudgetSummary {
   return {
     applicable: true,
     budgetCents,
+    lineCents,
+    recurringConsumedCents,
+    monthsElapsed,
     consumedCents,
     remainingCents,
     consumedPercentage: budgetCents === 0

@@ -25,7 +25,7 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
   const [{ data: client }, { data: budget }, { data: rawLines }] = await Promise.all([
     supabase
       .from("clients")
-      .select("id, name, notes, contract_end_date, pause_start_date, pause_end_date")
+      .select("id, name, notes, contract_start_date, contract_end_date, pause_start_date, pause_end_date")
       .eq("id", clientId)
       .maybeSingle(),
     supabase
@@ -66,6 +66,7 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
     annualBudgetCents: budget?.budget_cents ?? 0,
     lines,
     cadence,
+    contractStartDate: client.contract_start_date,
     contractEndDate: client.contract_end_date,
     today: todayInParis(),
   });
@@ -81,6 +82,7 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
       <BudgetEditor
         clientId={client.id}
         clientName={client.name}
+        contractStartDate={client.contract_start_date}
         contractEndDate={client.contract_end_date}
         cadence={cadence}
         initialMode={(budget?.billing_mode ?? "comptant") as BillingMode}

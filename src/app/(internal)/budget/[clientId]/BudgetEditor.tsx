@@ -24,6 +24,7 @@ const CATEGORY_ORDER: ServiceDefinition["category"][] = ["entree", "plat", "dess
 export function BudgetEditor({
   clientId,
   clientName,
+  contractStartDate,
   contractEndDate,
   cadence,
   initialMode,
@@ -34,6 +35,7 @@ export function BudgetEditor({
 }: {
   clientId: string;
   clientName: string;
+  contractStartDate: string | null;
   contractEndDate: string | null;
   cadence: MonthlyCadence;
   initialMode: BillingMode;
@@ -163,7 +165,7 @@ export function BudgetEditor({
 
       {financed && (
         <>
-          <SummaryPanel summary={summary} cadence={cadence} contractEndDate={contractEndDate}/>
+          <SummaryPanel summary={summary} cadence={cadence} contractStartDate={contractStartDate} contractEndDate={contractEndDate}/>
 
           <form
             onSubmit={(event) => {
@@ -283,10 +285,12 @@ export function BudgetEditor({
 function SummaryPanel({
   summary,
   cadence,
+  contractStartDate,
   contractEndDate,
 }: {
   summary: BudgetSummary;
   cadence: MonthlyCadence;
+  contractStartDate: string | null;
   contractEndDate: string | null;
 }) {
   const overspent = summary.remainingCents < 0;
@@ -321,6 +325,20 @@ function SummaryPanel({
             className={`block h-full origin-left rounded-full transition-transform duration-300 ${overspent ? "bg-state-changes" : summary.consumedPercentage >= 90 ? "bg-state-approved" : "bg-[#1468ff]"}`}
             style={{ transform: `scaleX(${summary.consumedPercentage / 100})` }}
           />
+        </div>
+
+        <div className="mt-5 grid gap-2 rounded-2xl bg-canvas p-4 text-xs sm:grid-cols-2">
+          <p className="flex items-center justify-between gap-3">
+            <span className="text-ink-faint">
+              Production livrée{contractStartDate ? ` depuis le ${contractStartDate}` : ""}
+              {summary.monthsElapsed > 0 ? ` · ${summary.monthsElapsed.toFixed(1)} mois` : ""}
+            </span>
+            <strong>{formatEuros(summary.recurringConsumedCents)}</strong>
+          </p>
+          <p className="flex items-center justify-between gap-3">
+            <span className="text-ink-faint">Prestations de l’addition</span>
+            <strong>{formatEuros(summary.lineCents)}</strong>
+          </p>
         </div>
 
         <p className="mt-4 text-xs leading-relaxed text-ink-faint">

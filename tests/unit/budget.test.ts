@@ -35,6 +35,7 @@ describe("catalogue", () => {
     expect(findService("video")?.unitPriceCents).toBe(22_000);
     // La story est tarifée à l'unité hebdomadaire, pas au binôme de la carte.
     expect(findService("story")?.unitPriceCents).toBe(2_500);
+    expect(findService("shooting_express")?.unitPriceCents).toBe(22_500);
   });
 
   it("n'a aucune clé en double", () => {
@@ -90,6 +91,8 @@ describe("synthèse budgétaire", () => {
     annualBudgetCents: 600_000,
     lines: [],
     cadence: { photo: 4, video: 2 },
+    // Par défaut : gestion démarrant aujourd'hui, donc rien encore livré.
+    contractStartDate: today,
     contractEndDate: "2027-08-10",
     today,
   };
@@ -132,6 +135,43 @@ describe("synthèse budgétaire", () => {
     const summary = budgetSummary({ ...base, annualBudgetCents: 2_000_000 });
     expect(summary.projectedGapCents).toBeLessThan(0);
     expect(summary.alerts.some((a) => a.title === "Budget non consommé à la fin")).toBe(true);
+  });
+
+  it("décompte la production déjà livrée depuis le début de gestion", () => {
+    // Six mois écoulés à 19 000 c/mois de production récurrente.
+    const summary = budgetSummary({ ...base, contractStartDate: "2026-02-10" });
+    expect(summary.monthsElapsed).toBeCloseTo(5.9, 1);
+    expect(summary.recurringConsumedCents).toBeGreaterThan(110_000);
+    expect(summary.lineCents).toBe(0);
+    expect(summary.consumedCents).toBe(summary.recurringConsumedCents);
+    expect(summary.remainingCents).toBe(600_000 - summary.recurringConsumedCents);
+  });
+
+  it("ne compte rien tant que le début de gestion n'est pas renseigné", () => {
+    const summary = budgetSummary({ ...base, contractStartDate: null });
+    expect(summary.recurringConsumedCents).toBe(0);
+    expect(summary.alerts.some((a) => a.title.includes("Date de début"))).toBe(true);
+  });
+
+  it("arrête le décompte à la fin de gestion", () => {
+    // Contrat clos depuis un an : la production ne court plus depuis.
+    const closed = budgetSummary({
+      ...base,
+      contractStartDate: "2025-08-10",
+      contractEndDate: "2026-02-10",
+      today,
+    });
+    expect(closed.monthsElapsed).toBeCloseTo(6, 0);
+  });
+
+  it("additionne production livrée et prestations ajoutées", () => {
+    const summary = budgetSummary({
+      ...base,
+      contractStartDate: "2026-05-10",
+      lines: [line({ unitPriceCents: 22_500 })],
+    });
+    expect(summary.lineCents).toBe(22_500);
+    expect(summary.consumedCents).toBe(summary.recurringConsumedCents + 22_500);
   });
 
   it("donne le rythme mensuel à tenir pour tout consommer", () => {
