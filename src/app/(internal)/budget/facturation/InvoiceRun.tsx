@@ -11,7 +11,7 @@ import {
   nextInvoiceStatus,
   type InvoiceStatus,
 } from "@/lib/domain/invoicing";
-import { setInvoiceStatus, setMonthInvoiceStatus, type BudgetActionResult } from "../actions";
+import { deleteMonthInvoice, setInvoiceStatus, setMonthInvoiceStatus, type BudgetActionResult } from "../actions";
 
 export interface ClientDossier {
   clientId: string;
@@ -160,6 +160,28 @@ export function InvoiceRun({ dossiers }: { dossiers: MonthDossier[] }) {
                             onClick={() => run(() => setInvoiceStatus(client.clientId, dossier.month, next))}
                           >
                             {next === "faite" ? "Facture faite" : "Prélèvement programmé"}
+                          </button>
+                        )}
+                        {/*
+                          Supprimer efface les prestations du mois : sans elles
+                          la facture n'a plus d'objet. Irréversible, donc
+                          confirmé, et fermé dès la facture établie.
+                        */}
+                        {client.status === "a_faire" && (
+                          <button
+                            type="button"
+                            className="text-xs text-state-changes hover:underline"
+                            disabled={pending}
+                            onClick={() => {
+                              const confirmed = window.confirm(
+                                `Supprimer la facture de ${client.clientName} pour ${dossier.label} ?\n\n`
+                                + `${client.lineCount} prestation${client.lineCount > 1 ? "s" : ""} `
+                                + `(${formatEuros(client.totalCents)}) seront définitivement retirées.`,
+                              );
+                              if (confirmed) run(() => deleteMonthInvoice(client.clientId, dossier.month));
+                            }}
+                          >
+                            Supprimer
                           </button>
                         )}
                       </div>

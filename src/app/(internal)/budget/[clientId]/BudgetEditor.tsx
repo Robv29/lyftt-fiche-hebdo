@@ -23,7 +23,7 @@ import {
   pendingInvoiceCount,
   type InvoiceMonth,
 } from "@/lib/domain/invoicing";
-import { addBudgetLine, removeBudgetLine, saveBudgetSettings, setInvoiceStatus, type BudgetActionResult } from "../actions";
+import { addBudgetLine, deleteMonthInvoice, removeBudgetLine, saveBudgetSettings, setInvoiceStatus, type BudgetActionResult } from "../actions";
 
 type EditorLine = BudgetLine & { note: string | null };
 
@@ -260,6 +260,7 @@ export function BudgetEditor({
               months={months}
               pending={pending}
               onAdvance={(month, status) => run(() => setInvoiceStatus(clientId, month, status))}
+              onDelete={(month) => run(() => deleteMonthInvoice(clientId, month))}
             />
           )}
 
@@ -328,10 +329,12 @@ function InvoiceBoard({
   months,
   pending,
   onAdvance,
+  onDelete,
 }: {
   months: InvoiceMonth[];
   pending: boolean;
   onAdvance: (month: string, status: string) => void;
+  onDelete: (month: string) => void;
 }) {
   const remaining = pendingInvoiceCount(months);
 
@@ -416,6 +419,29 @@ function InvoiceBoard({
                       onClick={() => onAdvance(month.month, month.status === "faite" ? "a_faire" : "faite")}
                     >
                       Revenir en arrière
+                    </button>
+                  )}
+
+                  {/*
+                    Supprimer efface les prestations du mois : sans elles la
+                    facture n'a plus d'objet. Irréversible, donc confirmé, et
+                    fermé dès la facture établie.
+                  */}
+                  {month.status === "a_faire" && (
+                    <button
+                      type="button"
+                      className="ml-auto text-xs text-state-changes hover:underline"
+                      disabled={pending}
+                      onClick={() => {
+                        const confirmed = window.confirm(
+                          `Supprimer la facture de ${month.label} ?\n\n`
+                          + `${month.lines.length} prestation${month.lines.length > 1 ? "s" : ""} `
+                          + `(${formatEuros(month.totalCents)}) seront définitivement retirées.`,
+                        );
+                        if (confirmed) onDelete(month.month);
+                      }}
+                    >
+                      Supprimer la facture
                     </button>
                   )}
                 </div>

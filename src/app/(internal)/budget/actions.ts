@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { sanitizeText } from "@/lib/security/sanitize";
-import { findService } from "@/lib/domain/budget";
+import { addMonths, findService, MANAGEMENT_MONTH_KEY } from "@/lib/domain/budget";
 
 export interface BudgetActionResult {
   ok: boolean;
@@ -232,5 +232,75 @@ export async function setMonthInvoiceStatus(
   return {
     ok: true,
     message: `${parsed.data.clientIds.length} facture${parsed.data.clientIds.length > 1 ? "s" : ""} mise${parsed.data.clientIds.length > 1 ? "s" : ""} à jour.`,
+  };
+}
+
+/**
+ * Suppression d'une facture avant son établissement.
+ *
+ * Supprimer la facture, c'est supprimer ce qui la compose : les prestations
+ * notées ce mois-là pour ce client. Sans cela le mois se reformerait au
+ * prochain affichage, puisque le récapitulatif se déduit des prestations.
+ *
+ * L'opération n'est ouverte que tant que la facture reste à faire : une fois
+ * établie, elle existe hors de l'application et ne peut plus être effacée
+ * d'un clic.
+ */
+export async function deleteMonthInvoice(
+  clientId: string,
+  periodMonth: string,
+): Promise<BudgetActionResult> {
+  const profile = await requireAdmin();
+  if (!profile) return { ok: false, message: ACCESS_DENIED };
+
+  const parsed = z.object({
+    clientId: z.string().uuid(),
+    periodMonth: z.string().regex(/^\d{4}-\d{2}-01$/, "Mois invalide."),
+  }).safeParse({ clientId, periodMonth });
+  if (!parsed.success) {
+    return { ok: false, message: parsed.error.issues[0]?.message ?? "Demande invalide." };
+  }
+
+  const supabase = await createSupabaseServerClient();
+
+  const { data: invoice } = await supabase
+    .from("client_invoices")
+    .select("status")
+    .eq("client_id", parsed.data.clientId)
+    .eq("period_month", parsed.data.periodMonth)
+    .maybeSingle();
+
+  if (invoice && invoice.status !== "a_faire") {
+    return {
+      ok: false,
+      message: "Cette facture est déjà établie : elle ne peut plus être supprimée ici.",
+    };
+  }
+
+  // Bornes du mois : du premier jour inclus au premier jour du mois suivant.
+  const nextMonth = addMonths(parsed.data.periodMonth, 1);
+
+  const { error, count } = await supabase
+    .from("client_budget_lines")
+    .delete({ count: "exact" })
+    .eq("client_id", parsed.data.clientId)
+    .neq("service_key", MANAGEMENT_MONTH_KEY)
+    .gte("performed_on", parsed.data.periodMonth)
+    .lt("performed_on", nextMonth);
+
+  if (error) return { ok: false, message: `Suppression impossible : ${error.message}` };
+
+  await supabase
+    .from("client_invoices")
+    .delete()
+    .eq("client_id", parsed.data.clientId)
+    .eq("period_month", parsed.data.periodMonth);
+
+  revalidatePath("/budget");
+  revalidatePath("/budget/facturation");
+  revalidatePath(`/budget/${parsed.data.clientId}`);
+  return {
+    ok: true,
+    message: `Facture supprimée : ${count ?? 0} prestation${(count ?? 0) > 1 ? "s" : ""} retirée${(count ?? 0) > 1 ? "s" : ""}.`,
   };
 }
