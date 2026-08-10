@@ -6,6 +6,7 @@ import { todayInParis } from "@/lib/domain/client-lifecycle";
 import type { MonthlyCadence } from "@/lib/domain/planning";
 import { BudgetEditor } from "./BudgetEditor";
 import { cadenceFromNotes, syncManagementMonths } from "@/lib/budget/management-months";
+import { invoiceMonths, type InvoiceStatus } from "@/lib/domain/invoicing";
 
 export const dynamic = "force-dynamic";
 
@@ -52,6 +53,11 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
     });
   }
 
+  const { data: invoices } = await supabase
+    .from("client_invoices")
+    .select("period_month, status")
+    .eq("client_id", clientId);
+
   const { data: rawLines } = await supabase
     .from("client_budget_lines")
     .select("id, service_key, label, billing, unit_price_cents, quantity, months, performed_on, note")
@@ -76,6 +82,11 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
     performedOn: row.performed_on as string,
     note: (row.note as string | null) ?? null,
   }));
+
+  const invoiceStatuses = Object.fromEntries(
+    (invoices ?? []).map((row) => [row.period_month as string, row.status as InvoiceStatus]),
+  );
+  const months = invoiceMonths(lines, invoiceStatuses);
 
   const cadence = settings.monthlyCadence ?? {};
   const summary = budgetSummary({
@@ -106,6 +117,7 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
         initialBudgetCents={budget?.budget_cents ?? 0}
         initialNote={budget?.note ?? ""}
         lines={lines}
+        months={months}
         summary={summary}
       />
     </div>

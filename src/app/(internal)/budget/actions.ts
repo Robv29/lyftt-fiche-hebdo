@@ -137,3 +137,49 @@ export async function removeBudgetLine(lineId: string, clientId: string): Promis
   revalidatePath(`/budget/${ids.data.clientId}`);
   return { ok: true, message: "Prestation retirée." };
 }
+
+const invoiceSchema = z.object({
+  clientId: z.string().uuid(),
+  // Premier jour du mois facturé.
+  periodMonth: z.string().regex(/^\d{4}-\d{2}-01$/, "Mois invalide."),
+  status: z.enum(["a_faire", "faite", "prelevement_programme"]),
+});
+
+/**
+ * Avancement d'un dossier de facturation.
+ *
+ * Les horodatages ne sont posés qu'au franchissement, et conservés en cas de
+ * retour en arrière : savoir quand une facture a été établie reste utile même
+ * si son état est corrigé ensuite.
+ */
+export async function setInvoiceStatus(
+  clientId: string,
+  periodMonth: string,
+  status: string,
+): Promise<BudgetActionResult> {
+  const profile = await requireAdmin();
+  if (!profile) return { ok: false, message: ACCESS_DENIED };
+
+  const parsed = invoiceSchema.safeParse({ clientId, periodMonth, status });
+  if (!parsed.success) {
+    return { ok: false, message: parsed.error.issues[0]?.message ?? "Demande invalide." };
+  }
+
+  const now = new Date().toISOString();
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase.from("client_invoices").upsert({
+    client_id: parsed.data.clientId,
+    period_month: parsed.data.periodMonth,
+    status: parsed.data.status,
+    invoiced_at: parsed.data.status === "faite" ? now : undefined,
+    scheduled_at: parsed.data.status === "prelevement_programme" ? now : undefined,
+    updated_at: now,
+    updated_by: profile.id,
+  }, { onConflict: "client_id,period_month" });
+
+  if (error) return { ok: false, message: `Enregistrement impossible : ${error.message}` };
+
+  revalidatePath("/budget");
+  revalidatePath(`/budget/${parsed.data.clientId}`);
+  return { ok: true, message: "Facturation mise à jour." };
+}

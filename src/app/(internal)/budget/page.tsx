@@ -5,6 +5,7 @@ import { Icon } from "@/components/Icon";
 import { budgetSummary, formatEuros, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
 import { todayInParis } from "@/lib/domain/client-lifecycle";
 import type { MonthlyCadence } from "@/lib/domain/planning";
+import { invoiceMonths, pendingInvoiceCount, type InvoiceStatus } from "@/lib/domain/invoicing";
 
 export const dynamic = "force-dynamic";
 
@@ -43,6 +44,18 @@ export default async function BudgetPage() {
       .select("id, client_id, service_key, label, billing, unit_price_cents, quantity, months, performed_on"),
   ]);
 
+  const { data: invoices } = await supabase
+    .from("client_invoices")
+    .select("client_id, period_month, status");
+
+  const invoiceStatusByClient = new Map<string, Record<string, InvoiceStatus>>();
+  for (const row of invoices ?? []) {
+    const clientId = row.client_id as string;
+    const statuses = invoiceStatusByClient.get(clientId) ?? {};
+    statuses[row.period_month as string] = row.status as InvoiceStatus;
+    invoiceStatusByClient.set(clientId, statuses);
+  }
+
   const budgetByClient = new Map(
     (budgets ?? []).map((row) => [row.client_id as string, row]),
   );
@@ -79,7 +92,12 @@ export default async function BudgetPage() {
       contractEndDate: client.contract_end_date,
       today,
     });
-    return { client, summary };
+    // Un client comptant se suit au nombre de factures encore à traiter.
+    const toInvoice = pendingInvoiceCount(invoiceMonths(
+      linesByClient.get(client.id) ?? [],
+      invoiceStatusByClient.get(client.id) ?? {},
+    ));
+    return { client, summary, toInvoice };
   });
 
   const financed = rows.filter((row) => row.summary.applicable);
@@ -189,18 +207,20 @@ export default async function BudgetPage() {
       <section className="space-y-3">
         <h2 className="text-sm font-semibold">Clients au comptant</h2>
         <p className="text-xs text-ink-faint">
-          Facturés à la prestation : aucune enveloppe à suivre. Le suivi budgétaire
-          est grisé sur leur fiche.
+          Facturés à la prestation : aucune enveloppe à suivre, mais une facture à
+          établir chaque mois où ils ont consommé.
         </p>
         {cash.length === 0 ? (
           <p className="card px-4 py-6 text-center text-sm text-ink-faint">Aucun client au comptant.</p>
         ) : (
           <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {cash.map(({ client }) => (
+            {cash.map(({ client, toInvoice }) => (
               <li key={client.id}>
                 <Link href={`/budget/${client.id}`} className="card flex items-center justify-between gap-3 px-4 py-3 text-sm hover:bg-canvas">
                   <span className="truncate text-ink-soft">{client.name}</span>
-                  <span className="badge bg-canvas text-ink-faint">Comptant</span>
+                  {toInvoice > 0
+                    ? <span className="badge shrink-0 bg-[#fff4e5] text-[#8a5700]">{toInvoice} à facturer</span>
+                    : <span className="badge shrink-0 bg-canvas text-ink-faint">À jour</span>}
                 </Link>
               </li>
             ))}

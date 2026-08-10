@@ -16,7 +16,14 @@ import {
   type ServiceDefinition,
 } from "@/lib/domain/budget";
 import type { MonthlyCadence } from "@/lib/domain/planning";
-import { addBudgetLine, removeBudgetLine, saveBudgetSettings, type BudgetActionResult } from "../actions";
+import {
+  INVOICE_STATUS_LABELS,
+  isInvoiceSettled,
+  nextInvoiceStatus,
+  pendingInvoiceCount,
+  type InvoiceMonth,
+} from "@/lib/domain/invoicing";
+import { addBudgetLine, removeBudgetLine, saveBudgetSettings, setInvoiceStatus, type BudgetActionResult } from "../actions";
 
 type EditorLine = BudgetLine & { note: string | null };
 
@@ -32,6 +39,7 @@ export function BudgetEditor({
   initialBudgetCents,
   initialNote,
   lines,
+  months,
   summary,
 }: {
   clientId: string;
@@ -43,6 +51,7 @@ export function BudgetEditor({
   initialBudgetCents: number;
   initialNote: string;
   lines: EditorLine[];
+  months: InvoiceMonth[];
   summary: BudgetSummary;
 }) {
   const router = useRouter();
@@ -165,9 +174,11 @@ export function BudgetEditor({
       </form>
 
       {financed && (
-        <>
-          <SummaryPanel summary={summary} cadence={cadence} contractStartDate={contractStartDate} contractEndDate={contractEndDate}/>
+        <SummaryPanel summary={summary} cadence={cadence} contractStartDate={contractStartDate} contractEndDate={contractEndDate}/>
+      )}
 
+      {(
+        <>
           <form
             onSubmit={(event) => {
               event.preventDefault();
@@ -177,10 +188,15 @@ export function BudgetEditor({
             className="card space-y-4 p-5"
           >
             <div>
-              <h2 className="font-semibold">Ajouter une prestation</h2>
+              <h2 className="font-semibold">
+                {financed ? "Ajouter une prestation" : "Prestation réalisée"}
+              </h2>
               <p className="mt-1 text-xs text-ink-faint">
-                Chaque ajout s&apos;empile comme une addition. Le tarif est figé au moment
-                de l&apos;ajout : une révision de la carte ne réécrira pas cette ligne.
+                {financed
+                  ? "Chaque ajout s’empile comme une addition."
+                  : "Notez chaque prestation au fil du mois : elle rejoint la facture du mois de sa date."}
+                {" "}Le tarif est figé au moment de l&apos;ajout : une révision de la carte
+                ne réécrira pas cette ligne.
               </p>
             </div>
             <input type="hidden" name="clientId" value={clientId}/>
@@ -239,10 +255,18 @@ export function BudgetEditor({
             </button>
           </form>
 
+          {!financed && (
+            <InvoiceBoard
+              months={months}
+              pending={pending}
+              onAdvance={(month, status) => run(() => setInvoiceStatus(clientId, month, status))}
+            />
+          )}
+
           <section className="card overflow-hidden">
             <header className="flex items-center justify-between gap-3 border-b p-5">
-              <h2 className="font-semibold">L’addition</h2>
-              <strong className="text-sm">{formatEuros(summary.consumedCents)}</strong>
+              <h2 className="font-semibold">{financed ? "L’addition" : "Toutes les prestations"}</h2>
+              <strong className="text-sm">{formatEuros(summary.lineCents)}</strong>
             </header>
             {lines.length === 0 ? (
               <p className="px-4 py-8 text-center text-sm text-ink-faint">
@@ -289,6 +313,118 @@ export function BudgetEditor({
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * Récapitulatif mois par mois des factures à établir.
+ *
+ * Le mois est l'unité de facturation : chaque prestation notée rejoint le mois
+ * de sa date, et le total du mois est le montant à facturer. On avance ensuite
+ * d'un cran à la fois — facture faite, puis prélèvement programmé — pour qu'un
+ * dossier à moitié traité reste visible.
+ */
+function InvoiceBoard({
+  months,
+  pending,
+  onAdvance,
+}: {
+  months: InvoiceMonth[];
+  pending: boolean;
+  onAdvance: (month: string, status: string) => void;
+}) {
+  const remaining = pendingInvoiceCount(months);
+
+  return (
+    <section className="space-y-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="font-semibold">Facturation</h2>
+        <p className="text-xs text-ink-faint">
+          {remaining === 0
+            ? "Tout est facturé et prélevé."
+            : `${remaining} mois à traiter`}
+        </p>
+      </div>
+
+      {months.length === 0 ? (
+        <p className="card px-4 py-8 text-center text-sm text-ink-faint">
+          Aucune prestation notée. Ajoutez-en une : elle ouvrira la facture de son mois.
+        </p>
+      ) : (
+        <ul className="space-y-3">
+          {months.map((month) => {
+            const settled = isInvoiceSettled(month.status);
+            const next = nextInvoiceStatus(month.status);
+            return (
+              <li key={month.month} className={`card overflow-hidden ${settled ? "border-state-approved/40 bg-[#f6fdf9]" : ""}`}>
+                <header className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
+                  <div>
+                    <h3 className="font-semibold capitalize">{month.label}</h3>
+                    <p className="mt-0.5 text-xs text-ink-faint">
+                      {month.lines.length} prestation{month.lines.length > 1 ? "s" : ""}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <strong className="text-sm">{formatEuros(month.totalCents)}</strong>
+                    <span className={`badge ${
+                      month.status === "prelevement_programme"
+                        ? "bg-[#e8f8f1] text-state-approved"
+                        : month.status === "faite"
+                          ? "bg-[#e8f2ff] text-[#0b5e9f]"
+                          : "bg-[#fff4e5] text-[#8a5700]"
+                    }`}>
+                      {INVOICE_STATUS_LABELS[month.status]}
+                    </span>
+                  </div>
+                </header>
+
+                <ul className="divide-y text-sm">
+                  {month.lines.map((line) => (
+                    <li key={line.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                      <span className="min-w-0 truncate">
+                        {line.label}
+                        <span className="ml-2 text-xs text-ink-faint">{line.performedOn}</span>
+                      </span>
+                      <span className="text-xs text-ink-soft">{formatEuros(lineTotalCents(line))}</span>
+                    </li>
+                  ))}
+                </ul>
+
+                <div className="flex flex-wrap items-center gap-2 border-t bg-[#fbfcfe] p-4">
+                  {next ? (
+                    <button
+                      type="button"
+                      className={next === "prelevement_programme" ? "btn-primary bg-state-approved" : "btn-primary"}
+                      disabled={pending}
+                      onClick={() => onAdvance(month.month, next)}
+                    >
+                      <Icon name="check" className="h-4 w-4"/>
+                      {next === "faite" ? "Facture faite" : "Prélèvement programmé"}
+                    </button>
+                  ) : (
+                    <p className="text-xs font-semibold text-state-approved">
+                      Facture établie et prélèvement programmé.
+                    </p>
+                  )}
+
+                  {/* Une erreur de clic ne doit pas figer un dossier. */}
+                  {month.status !== "a_faire" && (
+                    <button
+                      type="button"
+                      className="text-xs text-ink-faint hover:underline"
+                      disabled={pending}
+                      onClick={() => onAdvance(month.month, month.status === "faite" ? "a_faire" : "faite")}
+                    >
+                      Revenir en arrière
+                    </button>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
   );
 }
 
