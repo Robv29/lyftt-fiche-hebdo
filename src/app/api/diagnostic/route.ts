@@ -17,14 +17,31 @@ export function GET() {
   return NextResponse.json({
     // Marqueur de build : permet de savoir si le déploiement contient bien
     // le dernier commit poussé.
-    marqueur: "diagnostic-v1",
-    variables: {
+    marqueur: "diagnostic-v2",
+    // Sans l'une de ces variables, l'application ne démarre pas.
+    indispensable: {
       NEXT_PUBLIC_SUPABASE_URL: Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL),
       NEXT_PUBLIC_SUPABASE_ANON_KEY: Boolean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY),
       SUPABASE_SERVICE_ROLE_KEY: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
       IP_HASH_SALT: Boolean(process.env.IP_HASH_SALT),
       NEXT_PUBLIC_APP_URL: Boolean(process.env.NEXT_PUBLIC_APP_URL),
     },
+    /*
+     * Absentes, l'application fonctionne mais en silence : aucune alerte
+     * e-mail sur un retour client, aucune validation tacite appliquée et
+     * aucun média purgé. Autant de choses qui ne se voient pas tant qu'on ne
+     * les cherche pas — d'où leur présence ici.
+     */
+    fonctionnementComplet: {
+      RESEND_API_KEY: Boolean(process.env.RESEND_API_KEY),
+      MAIL_FROM: Boolean(process.env.MAIL_FROM),
+      CRON_SECRET: Boolean(process.env.CRON_SECRET),
+    },
+    // Un secret non ASCII ne peut pas voyager dans un en-tête HTTP : la tâche
+    // planifiée échouerait à chaque exécution.
+    cronSecretUtilisable: process.env.CRON_SECRET
+      ? /^[\x21-\x7E]+$/.test(process.env.CRON_SECRET)
+      : null,
     // Utile pour vérifier que l'URL publique correspond au domaine réel :
     // c'est elle qui construit les liens envoyés aux clients.
     appUrlHote: process.env.NEXT_PUBLIC_APP_URL

@@ -18,7 +18,7 @@ export default async function DashboardPage() {
 
   const [ticketsResult, sheetsResult, publicationsResult, clientsResult, preparationResult] = await Promise.all([
     supabase.from("client_tickets").select("id, ticket_number, title, ticket_type, status, priority, due_at, created_at, clients ( name )").not("status", "in", "(closed,cancelled,rejected,approved_by_client)").order("created_at", { ascending: false }).limit(50),
-    supabase.from("weekly_sheets").select("id, iso_week, status, validation_deadline_at, clients ( name )").in("status", ["sent_to_client", "partially_approved", "changes_requested", "corrections_in_progress", "new_version_to_send", "awaiting_revalidation"]).order("validation_deadline_at", { ascending: true }).limit(20),
+    supabase.from("weekly_sheets").select("id, iso_week, status, validation_deadline_at, clients ( name )").in("status", ["sent_to_client", "partially_approved", "changes_requested", "corrections_in_progress", "new_version_to_send", "awaiting_revalidation"]).order("validation_deadline_at", { ascending: true }).limit(120),
     supabase.from("weekly_sheet_items").select("id, published_at").eq("scheduled_date", today).eq("is_cancelled", false),
     supabase.from("clients").select("id", { count: "exact", head: true }).eq("is_active", true),
     supabase.from("weekly_sheets").select("id", { count: "exact", head: true }).in("status", ["draft", "internal_review"]),

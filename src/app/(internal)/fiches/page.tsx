@@ -127,7 +127,7 @@ export default async function SheetsPage() {
         client_tickets ( priority, status )`)
       .lte("period_start", range.nextEnd)
       .order("period_start", { ascending: false })
-      .limit(80),
+      .limit(300),
     supabase
       .from("clients")
       .select("id, name, notes, is_active, contract_end_date, pause_start_date, pause_end_date")

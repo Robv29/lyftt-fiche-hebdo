@@ -3,18 +3,26 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { decideMediaRetention, formatBytes } from "@/lib/domain/media-retention";
 
 /**
- * Purge planifiée des fichiers médias.
+ * Entretien planifié : validations tacites, puis purge des médias.
  *
- * Déclenchée par une tâche cron. Supprime du stockage les originaux dont la
- * publication est faite, puis les aperçus dont la rétention est écoulée. Les
- * lignes `media_assets` sont conservées : la preuve de validation, l'historique
- * des versions et les indicateurs restent complets.
+ * Déclenchée par une tâche cron. Applique d'abord les validations tacites
+ * échues, puis supprime du stockage les originaux dont la publication est
+ * faite et les aperçus dont la rétention est écoulée. Les lignes
+ * `media_assets` sont conservées : la preuve de validation, l'historique des
+ * versions et les indicateurs restent complets.
+ *
+ * Vercel déclenche ses tâches planifiées en **GET**. La route n'exposait que
+ * POST : la tâche répondait 405 chaque nuit et rien n'était jamais purgé ni
+ * validé tacitement. Les deux verbes pointent donc sur le même traitement.
  */
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-export async function POST(request: NextRequest) {
+export const GET = handle;
+export const POST = handle;
+
+async function handle(request: NextRequest) {
   const secret = process.env.CRON_SECRET;
   if (!secret) {
     return NextResponse.json({ error: "CRON_SECRET non configuré." }, { status: 503 });
@@ -39,6 +47,17 @@ export async function POST(request: NextRequest) {
   }
 
   const admin = createSupabaseAdminClient();
+
+  /*
+   * §16 — Validation tacite. Elle ne peut être appliquée que par une tâche
+   * planifiée : c'est l'écoulement du délai qui la déclenche, sans action
+   * humaine. La fonction vérifie elle-même que le client l'a autorisée, qu'un
+   * message a bien été envoyé et qu'aucune demande n'est en cours.
+   */
+  const { data: tacit, error: tacitError } = await admin.rpc("apply_tacit_approvals");
+  if (tacitError) {
+    console.error("[entretien] validations tacites impossibles", tacitError.message);
+  }
 
   // Chaque média, avec la publication qui le porte et la règle du client.
   const { data: assets, error } = await admin
@@ -182,6 +201,7 @@ export async function POST(request: NextRequest) {
   }
 
   return NextResponse.json({
+    fichesValideesTacitement: Array.isArray(tacit) ? tacit.length : 0,
     originauxPurges: purgedIds.length,
     apercusPurges: previewPurgedIds.length,
     fichesSupprimees: deletedSheets,
