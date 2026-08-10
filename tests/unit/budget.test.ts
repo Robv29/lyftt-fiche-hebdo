@@ -33,6 +33,8 @@ describe("catalogue", () => {
     expect(findService("shooting_jour")?.unitPriceCents).toBe(85_000);
     expect(findService("site_one_page")?.unitPriceCents).toBe(125_000);
     expect(findService("video")?.unitPriceCents).toBe(22_000);
+    // La story est tarifée à l'unité hebdomadaire, pas au binôme de la carte.
+    expect(findService("story")?.unitPriceCents).toBe(2_500);
   });
 
   it("n'a aucune clé en double", () => {

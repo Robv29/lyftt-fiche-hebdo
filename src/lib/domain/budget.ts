@@ -115,7 +115,7 @@ export const SERVICE_CATALOGUE: readonly ServiceDefinition[] = [
     label: "Story",
     category: "plat",
     billing: "mensuel",
-    unitPriceCents: 5_000,
+    unitPriceCents: 2_500,
     unitLabel: "par story / semaine",
     description: "Photo ou visuel, retouche rapide et appel à l'action.",
   },
