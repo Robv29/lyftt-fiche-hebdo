@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { sheetStatusLabel, SOCIAL_NETWORKS, type SocialNetwork } from "@/lib/domain/types";
 import { LYFTT_CLIENT_TYPE_IDS, type LyfttClientType } from "@/lib/domain/hashtags";
 import { Icon } from "@/components/Icon";
@@ -12,6 +12,7 @@ const brandTones = ["chaleureux","premium","expert","dynamique","institutionnel"
 
 export default async function ClientPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const profile = await getCurrentProfile();
   const supabase = await createSupabaseServerClient();
   const [{ data: client }, { data: managers }] = await Promise.all([
     supabase.from("clients").select(`id, name, logo_url, notes, timezone, is_active, approval_policy, tacit_approval_notice, validation_deadline_weekday, validation_deadline_time, reminders_enabled, reminder_channel_email, reminder_channel_whatsapp, whatsapp_group_name, post_signature, client_contacts ( id, first_name, last_name, email, phone, role_label, is_primary ), client_assignments ( role, profiles ( id, full_name ) ), weekly_sheets ( id, iso_week, iso_year, status, period_start, weekly_sheet_items ( id, publication_type, format, hashtags ) )`).eq("id",id).maybeSingle(),
@@ -57,7 +58,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
     <header><Link href="/clients" className="mb-5 inline-flex min-h-11 items-center text-sm text-ink-soft hover:text-ink">← Clients</Link><div className="flex flex-wrap items-center justify-between gap-4"><div className="flex min-w-0 items-center gap-3 sm:gap-4">{clientLogoUrl ? <span className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-2xl border border-line bg-white shadow-sm sm:h-14 sm:w-14">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={clientLogoUrl} alt={`Logo ${client.name}`} className="h-full w-full object-contain p-1.5"/>
-    </span> : <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[#e8effa] text-base font-bold text-[#3e526f] sm:h-14 sm:w-14 sm:text-lg">{client.name.slice(0,2).toUpperCase()}</span>}<div className="min-w-0"><h1 className="page-title break-words">{client.name}</h1><p className="mt-1 break-words text-sm text-ink-soft">{client.is_active ? "Collaboration active" : "Client en pause"} · {client.timezone}</p></div></div><ClientEditor initial={{
+    </span> : <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[#e8effa] text-base font-bold text-[#3e526f] sm:h-14 sm:w-14 sm:text-lg">{client.name.slice(0,2).toUpperCase()}</span>}<div className="min-w-0"><h1 className="page-title break-words">{client.name}</h1><p className="mt-1 break-words text-sm text-ink-soft">{client.is_active ? "Collaboration active" : "Client en pause"} · {client.timezone}</p></div></div>{profile?.role === "super_admin" && <Link href={`/budget/${client.id}`} className="btn-secondary"><Icon name="chart" className="h-4 w-4"/>Budget</Link>}<ClientEditor initial={{
       id: client.id,
       name: client.name,
       logoUrl: clientLogoUrl,
