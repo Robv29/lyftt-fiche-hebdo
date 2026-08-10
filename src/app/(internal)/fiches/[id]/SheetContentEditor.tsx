@@ -1,10 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { saveSheetContent, type SheetContentActionResult } from "./actions";
 import { Icon } from "@/components/Icon";
 import { MEDIA_FORMAT_LABELS, type MediaFormat } from "@/lib/domain/types";
+import { mediaFrameBackground, mediaFrameClass } from "@/lib/domain/media-frame";
 import { uploadMediaDirect } from "@/lib/media/direct-upload";
 
 export interface EditableSheetItem {
@@ -72,9 +73,16 @@ export function SheetContentEditor({ sheetId, clientId, initialItems }: { sheetI
   const [items, setItems] = useState<EditorItem[]>(initialItems.map((item) => ({ ...item, ...EMPTY_UPLOAD })));
   const update = (id: string, patch: Partial<EditorItem>) => setItems((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
 
+  // Les aperçus locaux sont libérés au démontage : un blob retenu garde le
+  // fichier entier en mémoire, ce qui compte vite avec des vidéos.
+  const localPreviews = useRef<string[]>([]);
+  useEffect(() => () => { for (const url of localPreviews.current) URL.revokeObjectURL(url); }, []);
+
   /** Envoi immédiat du fichier, sans attendre l'enregistrement de la fiche. */
   const handleMedia = async (id: string, file: File | null) => {
     if (!file) return;
+    const localPreview = URL.createObjectURL(file);
+    localPreviews.current.push(localPreview);
     update(id, { ...EMPTY_UPLOAD, mediaStatus: "envoi", mediaFileName: file.name });
 
     let result;
@@ -91,7 +99,20 @@ export function SheetContentEditor({ sheetId, clientId, initialItems }: { sheetI
     }
 
     update(id, result.ok
-      ? { mediaAssetId: result.mediaAssetId ?? null, mediaStatus: "pret", mediaPercent: null, mediaCleared: false, mediaUrl: null }
+      ? {
+          mediaAssetId: result.mediaAssetId ?? null,
+          mediaStatus: "pret",
+          mediaPercent: null,
+          mediaCleared: false,
+          /*
+           * Le lien signé du fichier stocké n'existe qu'au prochain rendu
+           * serveur. En attendant, on montre le fichier local : sans cela le
+           * média déposé restait invisible jusqu'au rechargement de la fiche.
+           */
+          mediaUrl: localPreview,
+          mediaKind: file.type.startsWith("video/") ? "video" : "image",
+          mediaIsPreviewOnly: false,
+        }
       : { ...EMPTY_UPLOAD, mediaStatus: "erreur", mediaError: result.message ?? "Envoi impossible." });
   };
 
@@ -153,11 +174,13 @@ export function SheetContentEditor({ sheetId, clientId, initialItems }: { sheetI
                   <div className="space-y-2">
                     {/* Le média est visible, pas seulement nommé : c'est ce que verra le client. */}
                     {item.mediaUrl && !item.mediaCleared && (
-                      <figure className="overflow-hidden rounded-2xl border border-line bg-black/5">
-                        {item.mediaKind === "video"
-                          ? <video controls preload="metadata" className="block max-h-56 w-full bg-black object-contain"><source src={item.mediaUrl}/></video>
-                          // eslint-disable-next-line @next/next/no-img-element
-                          : <img src={item.mediaUrl} alt={`Visuel de la publication ${index + 1}`} className="block max-h-56 w-full object-contain"/>}
+                      <figure className={`mx-auto w-full max-w-[220px] overflow-hidden rounded-2xl border border-line ${mediaFrameBackground(item.format)}`}>
+                        <div className={mediaFrameClass(item.format)}>
+                          {item.mediaKind === "video"
+                            ? <video controls playsInline preload="metadata" className="block h-full w-full object-contain"><source src={item.mediaUrl}/></video>
+                            // eslint-disable-next-line @next/next/no-img-element
+                            : <img src={item.mediaUrl} alt={`Visuel de la publication ${index + 1}`} className="block h-full w-full object-contain"/>}
+                        </div>
                         {item.mediaIsPreviewOnly && <figcaption className="bg-canvas px-3 py-2 text-[11px] text-ink-faint">Aperçu léger — le fichier original a été purgé après publication.</figcaption>}
                       </figure>
                     )}

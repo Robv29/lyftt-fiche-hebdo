@@ -6,6 +6,8 @@ import { completePublicationStep } from "./actions";
 import { Icon } from "@/components/Icon";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
+import { mediaFrameBackground, mediaFrameClass } from "@/lib/domain/media-frame";
+import type { MediaFormat } from "@/lib/domain/types";
 
 function todayInParis():string { return new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Paris",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date()); }
 function isToday(day:string):boolean { return day===todayInParis(); }
@@ -15,7 +17,7 @@ function dayLabel(day:string):string {
 }
 
 export interface DailyPublication {
-  id:string; scheduledDate:string; clientName:string; scheduledTime:string|null; formatLabel:string; networks:string[];
+  id:string; scheduledDate:string; clientName:string; scheduledTime:string|null; format:MediaFormat; formatLabel:string; networks:string[];
   caption:string; hashtags:string[]; approvalLabel:string; approved:boolean; publishedAt:string|null;
   mediaDownloadedAt:string|null; contentCopiedAt:string|null; mediaUrl:string|null; mediaFileName:string|null;
   mediaKind:"image"|"video"|"document"|null; mediaRequired:boolean;
@@ -77,6 +79,23 @@ export function PublicationChecklist({ initialItems, nextWithContent }: { initia
   </div>;
 }
 
+/**
+ * Le média est montré entier, dans la forme où il sera publié : cadre
+ * téléphone pour une story ou une vidéo, carré pour un post de feed.
+ */
+function MediaPreview({ item }:{ item:DailyPublication }) {
+  const frame=`${mediaFrameClass(item.format)} w-full`;
+  if (!item.mediaUrl) {
+    return <div className={`grid place-items-center overflow-hidden rounded-2xl border bg-canvas p-3 text-center text-xs text-ink-faint ${frame}`}>
+      <span><Icon name={item.mediaRequired?"photo":"check"} className="mx-auto mb-2 h-5 w-5"/>{item.mediaRequired?"Média manquant":"Aucun média requis"}</span>
+    </div>;
+  }
+  const media=item.mediaKind==="video"
+    ? <video src={item.mediaUrl} controls playsInline preload="metadata" className="h-full w-full object-contain"/>
+    : <Image src={item.mediaUrl} alt="Aperçu du média à publier" width={720} height={1280} unoptimized className="h-full w-full object-contain"/>;
+  return <div className={`overflow-hidden rounded-2xl border ${mediaFrameBackground(item.format)} ${frame}`}>{media}</div>;
+}
+
 function PublicationCard({item,pending,onDownload,onCopy}:{item:DailyPublication;pending:boolean;onDownload:()=>void;onCopy:()=>void}) {
   const mediaDone=!item.mediaRequired||Boolean(item.mediaDownloadedAt); const contentDone=Boolean(item.contentCopiedAt); const done=Boolean(item.publishedAt);
   // Publier un contenu que le client n'a pas validé est le risque que tout le
@@ -84,8 +103,8 @@ function PublicationCard({item,pending,onDownload,onCopy}:{item:DailyPublication
   const locked=!item.approved&&!done;
   return <article className={`card lift-card overflow-hidden transition-colors ${done?"border-state-approved/30 bg-[#fbfffd]":locked?"border-state-progress/30":""}`}>
     <header className="flex flex-wrap items-start justify-between gap-3 border-b p-5"><div><div className="flex items-center gap-2"><h3 className="font-semibold">{item.scheduledTime?.slice(0,5)??"Heure libre"}</h3>{done&&<span className="badge gap-1 bg-[#e8f8f1] text-state-approved"><Icon name="check" className="h-3 w-3"/>Publié</span>}</div><p className="mt-1 text-xs text-ink-faint">{item.formatLabel} · {item.networks.join(", ")}</p></div><span className={`badge ${item.approved?"bg-[#e8f8f1] text-state-approved":"bg-[#fff4e5] text-state-progress"}`}>{item.approvalLabel}</span></header>
-    <div className="grid gap-5 p-5 sm:grid-cols-[160px_1fr]">
-      <div className="overflow-hidden rounded-2xl border bg-canvas">{item.mediaUrl ? item.mediaKind==="video" ? <video src={item.mediaUrl} controls preload="metadata" className="aspect-square h-full w-full object-cover"/> : <Image src={item.mediaUrl} alt="Aperçu du média à publier" width={600} height={600} unoptimized className="aspect-square h-full w-full object-cover"/> : <div className="grid aspect-square place-items-center p-3 text-center text-xs text-ink-faint"><Icon name={item.mediaRequired?"photo":"check"} className="mb-2 h-5 w-5"/>{item.mediaRequired?"Média manquant":"Aucun média requis"}</div>}</div>
+    <div className="grid gap-5 p-5 sm:grid-cols-[168px_1fr]">
+      <MediaPreview item={item}/>
       <div className="min-w-0"><p className="line-clamp-6 whitespace-pre-wrap text-sm leading-relaxed">{item.caption||"Texte vide"}</p>{item.hashtags.length>0&&<p className="mt-3 break-words text-xs leading-relaxed text-[#0b63ad]">{item.hashtags.join(" ")}</p>}</div>
     </div>
     <div className="border-t bg-[#fbfcfe] p-4">{locked&&<p className="mb-3 rounded-xl bg-[#fff4e5] px-3 py-2 text-xs leading-relaxed text-[#8a5700]">En attente de validation client. Le média et le texte se débloqueront dès que le client aura validé cette publication.</p>}<div className="grid gap-2 sm:grid-cols-2"><button type="button" className={mediaDone?"btn-secondary border-state-approved/30 text-state-approved":"btn-secondary"} disabled={pending||locked||(!item.mediaUrl&&item.mediaRequired)} onClick={onDownload}>{mediaDone?<Icon name="check" className="h-4 w-4"/>:<Icon name="download" className="h-4 w-4"/>}{mediaDone?"Média téléchargé":item.mediaRequired?"Télécharger le média":"Aucun média requis"}</button><button type="button" className={contentDone?"btn-secondary border-state-approved/30 text-state-approved":"btn-primary"} disabled={pending||locked} onClick={onCopy}>{contentDone?<Icon name="check" className="h-4 w-4"/>:<Icon name="copy" className="h-4 w-4"/>}{contentDone?"Texte copié":"Copier texte + hashtags"}</button></div></div>

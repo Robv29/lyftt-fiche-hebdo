@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { createSheet, type SheetActionResult } from "./actions";
 import { isoWeekStart } from "@/lib/domain/deadline";
 import {
@@ -10,6 +10,7 @@ import {
   weeklyFormatsForCadence,
   type MonthlyCadence,
 } from "@/lib/domain/planning";
+import { mediaFrameBackground, mediaFrameClass } from "@/lib/domain/media-frame";
 import {
   MEDIA_FORMAT_LABELS,
   SOCIAL_NETWORKS,
@@ -52,6 +53,9 @@ interface DraftItem {
   mediaSaving: string | null;
   mediaPercent: number | null;
   mediaRemaining: number | null;
+  /** Aperçu local du fichier déposé, avant tout aller-retour serveur. */
+  mediaPreviewUrl: string | null;
+  mediaPreviewKind: "image" | "video" | null;
 }
 
 const EMPTY_MEDIA = {
@@ -62,9 +66,12 @@ const EMPTY_MEDIA = {
   mediaSaving: null,
   mediaPercent: null,
   mediaRemaining: null,
+  mediaPreviewUrl: null,
+  mediaPreviewKind: null,
 } satisfies Pick<
   DraftItem,
   "mediaAssetId" | "mediaName" | "mediaStatus" | "mediaError" | "mediaSaving" | "mediaPercent" | "mediaRemaining"
+  | "mediaPreviewUrl" | "mediaPreviewKind"
 >;
 
 /**
@@ -139,6 +146,17 @@ function MediaDropzone({ item, onFile }: { item: DraftItem; onFile: (file: File 
   const ready = item.mediaStatus === "pret";
   const failed = item.mediaStatus === "erreur";
 
+  const preview = item.mediaPreviewUrl && (
+    <span className={`mb-3 block w-full max-w-[132px] overflow-hidden rounded-xl border border-line ${mediaFrameBackground(item.format)}`}>
+      <span className={`block ${mediaFrameClass(item.format)}`}>
+        {item.mediaPreviewKind === "video"
+          ? <video src={item.mediaPreviewUrl} muted playsInline preload="metadata" className="block h-full w-full object-contain"/>
+          // eslint-disable-next-line @next/next/no-img-element
+          : <img src={item.mediaPreviewUrl} alt="" className="block h-full w-full object-contain"/>}
+      </span>
+    </span>
+  );
+
   const border = dragging
     ? "border-[#1468ff] bg-[#edf4ff]"
     : failed
@@ -167,6 +185,7 @@ function MediaDropzone({ item, onFile }: { item: DraftItem; onFile: (file: File 
         disabled={busy}
         onChange={(event) => onFile(event.target.files?.[0] ?? null)}
       />
+      {preview}
       <span className={`grid h-9 w-9 place-items-center rounded-xl ${ready ? "bg-state-approved/10 text-state-approved" : failed ? "bg-state-changes/10 text-state-changes" : "bg-white text-[#0759e6] shadow-sm"}`}>
         <Icon name={ready ? "check" : "upload"} className={`h-4 w-4 ${busy ? "animate-pulse" : ""}`}/>
       </span>
@@ -250,6 +269,11 @@ export function SheetBuilder({
     currentItems.map((item) => item.key === key ? { ...item, ...patch } : item),
   );
 
+  // Un blob non libéré retient le fichier entier en mémoire, ce qui pèse vite
+  // avec plusieurs vidéos : on relâche tous les aperçus au démontage.
+  const localPreviews = useRef<string[]>([]);
+  useEffect(() => () => { for (const url of localPreviews.current) URL.revokeObjectURL(url); }, []);
+
   /**
    * Le fichier part vers Supabase dès le dépôt, sans attendre l'enregistrement
    * de la fiche : c'est ce qui permet d'accepter une vidéo, et l'utilisateur
@@ -262,10 +286,15 @@ export function SheetBuilder({
     }
 
     // Seules les images sont préparées ; une vidéo part directement à l'envoi.
+    // L'aperçu, lui, est affiché tout de suite depuis le fichier local.
+    const previewUrl = URL.createObjectURL(file);
+    localPreviews.current.push(previewUrl);
     update(key, {
       ...EMPTY_MEDIA,
       mediaName: file.name,
       mediaStatus: file.type.startsWith("video/") ? "envoi" : "preparation",
+      mediaPreviewUrl: previewUrl,
+      mediaPreviewKind: file.type.startsWith("video/") ? "video" : "image",
     });
 
     let result;
@@ -287,6 +316,8 @@ export function SheetBuilder({
         ...EMPTY_MEDIA,
         mediaName: file.name,
         mediaStatus: "erreur",
+        mediaPreviewUrl: previewUrl,
+        mediaPreviewKind: file.type.startsWith("video/") ? "video" : "image",
         mediaError: result.message ?? "Envoi impossible.",
       });
       return;
