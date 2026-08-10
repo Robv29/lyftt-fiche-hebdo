@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { normalizeSupabaseUrl } from "@/lib/supabase/url";
 
 /**
  * Route de diagnostic de déploiement — temporaire.
@@ -47,8 +48,21 @@ export function GET() {
     appUrlHote: process.env.NEXT_PUBLIC_APP_URL
       ? safeHost(process.env.NEXT_PUBLIC_APP_URL)
       : null,
-    supabaseHote: process.env.NEXT_PUBLIC_SUPABASE_URL
-      ? safeHost(process.env.NEXT_PUBLIC_SUPABASE_URL)
+    /*
+     * L'hôte réellement utilisé, après réparation. L'application normalise
+     * cette valeur avant de créer le moindre client Supabase : un schéma
+     * oublié ou une barre oblique finale ne l'empêchent pas de fonctionner.
+     */
+    supabaseHote: normalizeSupabaseUrl(process.env.NEXT_PUBLIC_SUPABASE_URL)
+      ? safeHost(normalizeSupabaseUrl(process.env.NEXT_PUBLIC_SUPABASE_URL)!)
+      : null,
+    /*
+     * Vrai si la valeur configurée est directement exploitable. Faux signale
+     * une variable mal saisie — schéma absent, guillemets ou espace collés.
+     * L'application s'en accommode, mais autant la corriger à la source.
+     */
+    supabaseUrlPropre: process.env.NEXT_PUBLIC_SUPABASE_URL
+      ? safeHost(process.env.NEXT_PUBLIC_SUPABASE_URL) !== "valeur invalide"
       : null,
   });
 }
