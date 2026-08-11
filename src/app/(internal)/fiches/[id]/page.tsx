@@ -217,6 +217,7 @@ export default async function SheetDetailPage({
             <SheetContentEditor
               sheetId={sheet.id}
               clientId={client.id}
+              clientName={client.name}
               initialItems={items
                 .filter((item) => !item.is_cancelled)
                 .sort((a, b) => a.position - b.position)

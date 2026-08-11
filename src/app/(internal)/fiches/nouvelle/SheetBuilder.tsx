@@ -12,6 +12,7 @@ import {
   type MonthlyCadence,
 } from "@/lib/domain/planning";
 import { mediaFrameBackground, mediaFrameClass } from "@/lib/domain/media-frame";
+import { PostPreview } from "@/components/PostPreview";
 import {
   MEDIA_FORMAT_LABELS,
   SOCIAL_NETWORKS,
@@ -285,6 +286,11 @@ export function SheetBuilder({
 
   // Un blob non libéré retient le fichier entier en mémoire, ce qui pèse vite
   // avec plusieurs vidéos : on relâche tous les aperçus au démontage.
+  /*
+   * Aperçu ouvert par publication : on rédige en voyant le visuel déposé,
+   * plutôt qu'à l'aveugle au-dessus d'un nom de fichier.
+   */
+  const [previewing, setPreviewing] = useState<Record<string, boolean>>({});
   const localPreviews = useRef<string[]>([]);
   useEffect(() => () => { for (const url of localPreviews.current) URL.revokeObjectURL(url); }, []);
 
@@ -456,8 +462,31 @@ export function SheetBuilder({
                     <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl text-xs font-bold ${itemComplete ? "bg-state-approved/10 text-state-approved" : "bg-[#edf4ff] text-[#0759e6]"}`}>{itemComplete ? <Icon name="check" className="h-4 w-4"/> : index + 1}</span>
                     <div className="min-w-0"><h3 className="truncate text-sm font-semibold">Publication {index + 1} · {MEDIA_FORMAT_LABELS[item.format]}</h3><p className="text-xs text-ink-faint">{itemComplete ? "Contenu complet" : "Texte et média à préparer"}</p></div>
                   </div>
-                  {items.length > 1 && <button type="button" className="min-h-11 shrink-0 px-2 text-xs text-state-changes hover:underline" onClick={() => setItems((currentItems) => currentItems.filter((candidate) => candidate.key !== item.key))}>Retirer</button>}
+                  <div className="flex shrink-0 items-center gap-3">
+                    <button
+                      type="button"
+                      className={`min-h-11 px-2 text-xs font-semibold hover:underline ${previewing[item.key] ? "text-[#0759e6]" : "text-ink-faint"}`}
+                      aria-expanded={Boolean(previewing[item.key])}
+                      onClick={() => setPreviewing((current) => ({ ...current, [item.key]: !current[item.key] }))}
+                    >
+                      {previewing[item.key] ? "Masquer l’aperçu" : "Aperçu"}
+                    </button>
+                    {items.length > 1 && <button type="button" className="min-h-11 px-2 text-xs text-state-changes hover:underline" onClick={() => setItems((currentItems) => currentItems.filter((candidate) => candidate.key !== item.key))}>Retirer</button>}
+                  </div>
                 </div>
+
+                {previewing[item.key] && (
+                  <div className="reveal-panel rounded-2xl bg-canvas p-4">
+                    <PostPreview
+                      clientName={activeClient.name}
+                      format={item.format}
+                      mediaUrl={item.mediaPreviewUrl}
+                      mediaKind={item.mediaPreviewKind}
+                      caption={item.caption}
+                      hashtags={item.hashtags}
+                    />
+                  </div>
+                )}
 
                 <div className="grid gap-3 sm:grid-cols-3">
                   <input type="date" className="field" aria-label={`Date de la publication ${index + 1}`} value={item.scheduledDate} onChange={(event) => update(item.key, { scheduledDate: event.target.value })}/>

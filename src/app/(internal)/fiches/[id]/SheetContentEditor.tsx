@@ -6,6 +6,7 @@ import { saveSheetContent, type SheetContentActionResult } from "./actions";
 import { Icon } from "@/components/Icon";
 import { MEDIA_FORMAT_LABELS, type MediaFormat } from "@/lib/domain/types";
 import { mediaFrameBackground, mediaFrameClass } from "@/lib/domain/media-frame";
+import { PostPreview } from "@/components/PostPreview";
 import { uploadMediaDirect } from "@/lib/media/direct-upload";
 
 export interface EditableSheetItem {
@@ -66,12 +67,19 @@ function hasMedia(item: EditorItem): boolean {
   return Boolean(item.mediaAssetId || item.mediaFileName || item.mediaExternalUrl);
 }
 
-export function SheetContentEditor({ sheetId, clientId, initialItems }: { sheetId: string; clientId: string; initialItems: EditableSheetItem[] }) {
+export function SheetContentEditor({ sheetId, clientId, clientName, initialItems }: { sheetId: string; clientId: string; clientName: string; initialItems: EditableSheetItem[] }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<SheetContentActionResult | null>(null);
   const [items, setItems] = useState<EditorItem[]>(initialItems.map((item) => ({ ...item, ...EMPTY_UPLOAD })));
   const update = (id: string, patch: Partial<EditorItem>) => setItems((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
+
+  /*
+   * Aperçu ouvert par publication. Rédiger en voyant le visuel évite les
+   * légendes qui redisent l'image — mais l'aperçu prend de la place, donc il
+   * se déplie à la demande.
+   */
+  const [previewing, setPreviewing] = useState<Record<string, boolean>>({});
 
   // Les aperçus locaux sont libérés au démontage : un blob retenu garde le
   // fichier entier en mémoire, ce qui compte vite avec des vidéos.
@@ -157,7 +165,31 @@ export function SheetContentEditor({ sheetId, clientId, initialItems }: { sheetI
         const itemReady = Boolean(item.caption.trim() && item.hashtags.trim() && mediaReady);
         return (
           <article key={item.id} className="card space-y-4 p-4 sm:p-5">
-            <div className="flex items-center gap-3"><span className={`grid h-9 w-9 place-items-center rounded-xl text-xs font-bold ${itemReady ? "bg-state-approved/10 text-state-approved" : "bg-[#edf4ff] text-[#0759e6]"}`}>{itemReady ? <Icon name="check" className="h-4 w-4"/> : index + 1}</span><div><h3 className="text-sm font-semibold">Publication {index + 1} · {MEDIA_FORMAT_LABELS[item.format]}</h3><p className="text-xs text-ink-faint">{itemReady ? "Prête" : "À compléter"}</p></div></div>
+            <div className="flex items-center gap-3">
+              <span className={`grid h-9 w-9 place-items-center rounded-xl text-xs font-bold ${itemReady ? "bg-state-approved/10 text-state-approved" : "bg-[#edf4ff] text-[#0759e6]"}`}>{itemReady ? <Icon name="check" className="h-4 w-4"/> : index + 1}</span>
+              <div className="min-w-0 flex-1"><h3 className="text-sm font-semibold">Publication {index + 1} · {MEDIA_FORMAT_LABELS[item.format]}</h3><p className="text-xs text-ink-faint">{itemReady ? "Prête" : "À compléter"}</p></div>
+              <button
+                type="button"
+                className={`shrink-0 text-xs font-semibold hover:underline ${previewing[item.id] ? "text-[#0759e6]" : "text-ink-faint"}`}
+                aria-expanded={Boolean(previewing[item.id])}
+                onClick={() => setPreviewing((current) => ({ ...current, [item.id]: !current[item.id] }))}
+              >
+                {previewing[item.id] ? "Masquer l’aperçu" : "Aperçu du post"}
+              </button>
+            </div>
+
+            {previewing[item.id] && (
+              <div className="reveal-panel rounded-2xl bg-canvas p-4">
+                <PostPreview
+                  clientName={clientName}
+                  format={item.format}
+                  mediaUrl={item.mediaCleared ? null : item.mediaUrl}
+                  mediaKind={(item.mediaKind ?? null) as "image" | "video" | "document" | null}
+                  caption={item.caption}
+                  hashtags={item.hashtags}
+                />
+              </div>
+            )}
             <div className="grid gap-3 sm:grid-cols-3">
               <input type="date" className="field" aria-label={`Date de la publication ${index + 1}`} value={item.scheduledDate} onChange={(event) => update(item.id, { scheduledDate: event.target.value })}/>
               <input type="time" className="field" aria-label={`Heure de la publication ${index + 1}`} value={item.scheduledTime.slice(0, 5)} onChange={(event) => update(item.id, { scheduledTime: event.target.value })}/>
