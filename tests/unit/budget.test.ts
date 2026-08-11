@@ -3,7 +3,8 @@ import {
   addMonths,
   billableLines,
   budgetSummary,
-  closedManagementMonths,
+  BASE_MONTHLY_FEE_CENTS,
+  dueManagementMonths,
   cadenceMonthlyCostCents,
   findService,
   envelopeLines,
@@ -73,12 +74,14 @@ describe("montant d'une ligne", () => {
 
 describe("coût du rythme vendu", () => {
   it("convertit un volume mensuel en prix hebdomadaire du catalogue", () => {
-    // 4 photos/mois = 1/semaine = 80 € ; 2 vidéos/mois = 0,5/semaine = 110 €.
-    expect(cadenceMonthlyCostCents({ photo: 4, video: 2 })).toBe(19_000);
+    // 4 photos/mois = 1/semaine = 80 € ; 2 vidéos/mois = 0,5/semaine = 110 €,
+    // plus le forfait de base de 50 €.
+    expect(cadenceMonthlyCostCents({ photo: 4, video: 2 })).toBe(19_000 + BASE_MONTHLY_FEE_CENTS);
   });
 
-  it("ne coûte rien sans rythme", () => {
-    expect(cadenceMonthlyCostCents({})).toBe(0);
+  it("facture le forfait de base même sans publication vendue", () => {
+    expect(cadenceMonthlyCostCents({})).toBe(BASE_MONTHLY_FEE_CENTS);
+    expect(BASE_MONTHLY_FEE_CENTS).toBe(5_000);
   });
 });
 
@@ -188,44 +191,59 @@ describe("synthèse budgétaire", () => {
   });
 });
 
-describe("mois de gestion écoulés", () => {
-  it("court d'anniversaire en anniversaire", () => {
-    const months = closedManagementMonths({
+describe("mois de gestion dus", () => {
+  it("facture d'avance : le mois est dû le jour où il commence", () => {
+    const months = dueManagementMonths({
+      contractStartDate: "2026-02-15",
+      contractEndDate: null,
+      monthlyCostCents: 19_000,
+      today: "2026-08-11",
+    });
+    // Février à juillet sont dus ; le 15 août n'est pas encore arrivé.
+    expect(months).toHaveLength(6);
+    expect(months[0]!.dueOn).toBe("2026-02-15");
+    expect(months.at(-1)!.dueOn).toBe("2026-07-15");
+  });
+
+  it("facture le premier mois dès le premier jour de gestion", () => {
+    const months = dueManagementMonths({
+      contractStartDate: "2026-08-11",
+      contractEndDate: null,
+      monthlyCostCents: 10_000,
+      today: "2026-08-11",
+    });
+    expect(months).toHaveLength(1);
+    expect(months[0]!.index).toBe(1);
+    expect(months[0]!.amountCents).toBe(10_000);
+  });
+
+  it("court d'anniversaire en anniversaire, pas en mois calendaires", () => {
+    const months = dueManagementMonths({
       contractStartDate: "2026-05-15",
       contractEndDate: null,
       monthlyCostCents: 19_000,
       today: "2026-08-14",
     });
-    // Les 15 juin et 15 juillet sont passés ; le 15 août ne l'est pas encore.
-    expect(months.map((month) => month.closedOn)).toEqual(["2026-06-15", "2026-07-15"]);
-    expect(months[0]!.index).toBe(1);
-    expect(months[0]!.amountCents).toBe(19_000);
+    expect(months.map((month) => month.dueOn)).toEqual([
+      "2026-05-15", "2026-06-15", "2026-07-15",
+    ]);
   });
 
-  it("inscrit le mois le jour même de son échéance", () => {
-    const months = closedManagementMonths({
-      contractStartDate: "2026-05-15",
-      contractEndDate: null,
-      monthlyCostCents: 10_000,
-      today: "2026-06-15",
-    });
-    expect(months).toHaveLength(1);
-  });
-
-  it("s'arrête à la fin de gestion", () => {
-    const months = closedManagementMonths({
+  it("n'entame pas un mois commençant après la fin de gestion", () => {
+    const months = dueManagementMonths({
       contractStartDate: "2026-01-31",
       contractEndDate: "2026-04-30",
       monthlyCostCents: 10_000,
       today: "2026-12-31",
     });
-    expect(months).toHaveLength(3);
+    // 31 janvier, 28 février, 31 mars, 30 avril : le 31 mai dépasse la fin.
+    expect(months).toHaveLength(4);
   });
 
   it("ne produit rien sans début de gestion ni sans rythme", () => {
     const commun = { contractEndDate: null, today: "2026-12-31" };
-    expect(closedManagementMonths({ ...commun, contractStartDate: null, monthlyCostCents: 19_000 })).toEqual([]);
-    expect(closedManagementMonths({ ...commun, contractStartDate: "2026-01-01", monthlyCostCents: 0 })).toEqual([]);
+    expect(dueManagementMonths({ ...commun, contractStartDate: null, monthlyCostCents: 19_000 })).toEqual([]);
+    expect(dueManagementMonths({ ...commun, contractStartDate: "2026-01-01", monthlyCostCents: 0 })).toEqual([]);
   });
 
   it("ramène un 31 au dernier jour du mois visé", () => {
@@ -277,11 +295,12 @@ describe("prestation facturée hors enveloppe", () => {
     expect(billableLines(lines, "financement").map((l) => l.id)).toEqual(["b"]);
   });
 
-  it("chez un client comptant, tout se facture sauf les mois automatiques", () => {
+  it("chez un client comptant, la gestion mensuelle se facture aussi", () => {
+    // C'est même la prestation récurrente à facturer chaque mois.
     const lines = [
       line({ id: "a" }),
       line({ id: "m", serviceKey: MANAGEMENT_MONTH_KEY }),
     ];
-    expect(billableLines(lines, "comptant").map((l) => l.id)).toEqual(["a"]);
+    expect(billableLines(lines, "comptant").map((l) => l.id)).toEqual(["a", "m"]);
   });
 });

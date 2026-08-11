@@ -236,9 +236,16 @@ export function envelopeLines(lines: BudgetLine[]): BudgetLine[] {
   return lines.filter((line) => !line.billedDirectly);
 }
 
-/** Lignes à facturer : tout le comptant, et les refus de prise en charge. */
+/**
+ * Lignes à facturer.
+ *
+ * Au comptant, tout se facture — y compris la gestion mensuelle des réseaux,
+ * qui est précisément la prestation récurrente à facturer chaque mois. En
+ * financement, seules les prestations refusées par l'organisme le sont ; le
+ * reste est pris sur l'enveloppe.
+ */
 export function billableLines(lines: BudgetLine[], mode: BillingMode): BudgetLine[] {
-  if (mode !== "financement") return lines.filter((line) => !isManagementMonth(line));
+  if (mode !== "financement") return lines;
   return lines.filter((line) => line.billedDirectly);
 }
 
@@ -255,19 +262,24 @@ export function addMonths(date: string, months: number): string {
 export interface ManagementMonth {
   /** Rang du mois de gestion, à partir de 1. */
   index: number;
-  /** Jour où le mois s'est achevé : c'est la date portée par la ligne. */
-  closedOn: string;
+  /** Jour où le mois est dû : c'est la date portée par la ligne. */
+  dueOn: string;
   amountCents: number;
 }
 
 /**
- * Mois de gestion déjà écoulés, à inscrire à l'addition.
+ * Mois de gestion dus à ce jour.
  *
- * Les mois courent d'anniversaire à anniversaire depuis le début de gestion,
- * pas en mois calendaires : une gestion démarrée le 15 se facture le 15.
- * Le décompte s'arrête à la fin de gestion, après quoi plus rien n'est produit.
+ * La gestion se règle **d'avance**, comme un abonnement : le mois est dû le
+ * jour où il commence, pas le jour où il s'achève. Une gestion démarrée le
+ * 15 février est donc déjà facturée six fois au 11 août — février à juillet —
+ * la septième tombant le 15 août.
+ *
+ * Les mois courent d'anniversaire à anniversaire, pas en mois calendaires : le
+ * 15 reste le 15. Le décompte s'arrête à la fin de gestion, un mois qui
+ * commencerait après elle n'étant jamais produit.
  */
-export function closedManagementMonths(input: {
+export function dueManagementMonths(input: {
   contractStartDate: string | null;
   contractEndDate: string | null;
   monthlyCostCents: number;
@@ -282,23 +294,32 @@ export function closedManagementMonths(input: {
   const months: ManagementMonth[] = [];
   // Une gestion de plusieurs années reste bornée : 120 mois suffisent.
   for (let index = 1; index <= 120; index += 1) {
-    const closedOn = addMonths(input.contractStartDate, index);
-    if (closedOn > limit) break;
-    months.push({ index, closedOn, amountCents: input.monthlyCostCents });
+    const dueOn = addMonths(input.contractStartDate, index - 1);
+    if (dueOn > limit) break;
+    months.push({ index, dueOn, amountCents: input.monthlyCostCents });
   }
   return months;
 }
+
+/**
+ * Forfait de base de la gestion des réseaux sociaux.
+ *
+ * Il couvre ce qui ne dépend pas du volume produit : pilotage du compte,
+ * échanges, suivi. Toute gestion le porte, même sans publication vendue.
+ */
+export const BASE_MONTHLY_FEE_CENTS = 5_000;
 
 /**
  * Coût mensuel qu'implique le rythme vendu au client.
  *
  * La fiche client exprime des volumes **mensuels** ; le catalogue, des prix
  * par unité **hebdomadaire**. Quatre semaines par mois, comme la répartition
- * du planning, pour que les deux écrans racontent la même chose.
+ * du planning, pour que les deux écrans racontent la même chose. Le forfait
+ * de base s'ajoute par-dessus.
  */
 export function cadenceMonthlyCostCents(cadence: MonthlyCadence): number {
   const perWeek = (monthly: number | undefined) => Math.max(0, Number(monthly ?? 0)) / 4;
-  return Math.round(
+  return BASE_MONTHLY_FEE_CENTS + Math.round(
     perWeek(cadence.photo) * priceOf("post_photo")
     + perWeek(cadence.video) * priceOf("video")
     + perWeek(cadence.story) * priceOf("story")

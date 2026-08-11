@@ -61,24 +61,20 @@ async function handle(request: NextRequest) {
   }
 
   /*
-   * Mois de gestion écoulés. Chacun est inscrit à l'addition du client au
-   * tarif du rythme en vigueur, puis figé : c'est ce qui rend le budget
-   * consommé exact sans que personne ait à y penser.
+   * Mois de gestion écoulés, pour tous les clients gérés.
+   *
+   * Chacun est inscrit au tarif du rythme en vigueur, puis figé. En
+   * financement, la ligne consomme l'enveloppe ; au comptant, elle devient la
+   * facture mensuelle à établir. Dans les deux cas, personne n'a à y penser.
    */
   let managementMonths = 0;
-  const { data: financed } = await admin
-    .from("client_budgets")
-    .select("client_id, clients ( id, notes, contract_start_date, contract_end_date )")
-    .eq("billing_mode", "financement");
+  const { data: managed } = await admin
+    .from("clients")
+    .select("id, notes, contract_start_date, contract_end_date")
+    .eq("is_active", true)
+    .not("contract_start_date", "is", null);
 
-  for (const row of financed ?? []) {
-    const client = row.clients as unknown as {
-      id: string;
-      notes: string | null;
-      contract_start_date: string | null;
-      contract_end_date: string | null;
-    } | null;
-    if (!client) continue;
+  for (const client of managed ?? []) {
     try {
       managementMonths += await syncManagementMonths(admin, {
         id: client.id,

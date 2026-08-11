@@ -37,6 +37,8 @@ const sheetSchema = z.object({
   networks: z.array(z.enum(SOCIAL_NETWORKS as unknown as [string, ...string[]])).min(1,
     "Sélectionnez au moins un réseau."),
   items: z.array(itemSchema).min(1, "Ajoutez au moins une publication."),
+  // Consigne lue par la production avant de produire.
+  topic: z.string().trim().max(300, "Sujet trop long (300 caractères maximum).").optional(),
 });
 
 export async function createSheet(formData: FormData): Promise<SheetActionResult> {
@@ -58,6 +60,7 @@ export async function createSheet(formData: FormData): Promise<SheetActionResult
     isoWeek: formData.get("isoWeek"),
     networks: formData.getAll("networks").map(String),
     items: rawItems,
+    topic: formData.get("topic") ?? undefined,
   });
 
   if (!parsed.success) {
@@ -124,6 +127,7 @@ export async function createSheet(formData: FormData): Promise<SheetActionResult
       period_start: monday.toISOString().slice(0, 10),
       period_end: sunday.toISOString().slice(0, 10),
       networks: input.networks,
+      topic: input.topic ? sanitizeText(input.topic, 300) : null,
       status: "draft",
       community_manager_id: profile.id,
       created_by: profile.id,

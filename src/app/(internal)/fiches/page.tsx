@@ -15,6 +15,7 @@ import { clientLifecycle } from "@/lib/domain/client-lifecycle";
 import { isTicketOpen } from "@/lib/domain/workflow";
 import { Icon } from "@/components/Icon";
 import { PlanningTabs } from "./PlanningTabs";
+import { SheetTopic } from "./SheetTopic";
 
 interface PlanningItem {
   caption: string | null;
@@ -32,6 +33,7 @@ interface PlanningTicket {
 
 interface PlanningSheet {
   id: string;
+  topic: string | null;
   iso_year: number;
   iso_week: number;
   period_start: string;
@@ -74,7 +76,7 @@ function ProgressBar({ percentage, label }: { percentage: number; label: string 
   );
 }
 
-function SheetCard({ sheet, showProgress = false }: { sheet: PlanningSheet; showProgress?: boolean }) {
+function SheetCard({ sheet, showProgress = false, showTopic = false }: { sheet: PlanningSheet; showProgress?: boolean; showTopic?: boolean }) {
   const completion = completionForSheet(sheet);
   const urgent = hasHighPriorityChange(sheet);
   const validated = isClientValidated(sheet.status as SheetStatus);
@@ -110,6 +112,9 @@ function SheetCard({ sheet, showProgress = false }: { sheet: PlanningSheet; show
           </span>
         </div>
       </Link>
+
+      {/* Hors du lien : le sujet se saisit sur place, sans ouvrir la fiche. */}
+      {showTopic && <div className="px-4 pb-4 sm:px-5 sm:pb-5"><SheetTopic sheetId={sheet.id} initialTopic={sheet.topic}/></div>}
     </li>
   );
 }
@@ -121,7 +126,7 @@ export default async function SheetsPage() {
   const [{ data: rawSheets }, { data: clients }] = await Promise.all([
     supabase
       .from("weekly_sheets")
-      .select(`id, iso_year, iso_week, period_start, period_end, status,
+      .select(`id, iso_year, iso_week, period_start, period_end, status, topic,
         clients ( id, name ),
         weekly_sheet_items ( caption, hashtags, format, media_asset_id, media_external_url, is_cancelled ),
         client_tickets ( priority, status )`)
@@ -185,7 +190,7 @@ export default async function SheetsPage() {
         )}
         next={<>
           <ul className="grid gap-3 lg:grid-cols-2">
-          {next.map((sheet) => <SheetCard key={sheet.id} sheet={sheet} showProgress/>)}
+          {next.map((sheet) => <SheetCard key={sheet.id} sheet={sheet} showProgress showTopic/>)}
           {proposals.map((client) => {
             let settings: { monthlyCadence?: MonthlyCadence; recommendedHashtags?: string[] } = {};
             try { settings = typeof client.notes === "string" ? JSON.parse(client.notes) : {}; } catch { settings = {}; }

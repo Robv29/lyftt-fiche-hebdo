@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
-import { lineTotalCents, MANAGEMENT_MONTH_KEY, type BudgetLine } from "@/lib/domain/budget";
+import { lineTotalCents, type BudgetLine } from "@/lib/domain/budget";
 import { monthKey, monthLabel, type InvoiceStatus } from "@/lib/domain/invoicing";
 import { InvoiceRun, type MonthDossier } from "./InvoiceRun";
 
@@ -61,11 +61,10 @@ export default async function InvoicingPage() {
     if (!nameById.has(clientId)) continue;
     /*
      * Chez un client en financement, seules les prestations refusées par son
-     * organisme sont à facturer ; le reste est pris sur l'enveloppe.
+     * organisme sont à facturer ; le reste est pris sur l'enveloppe. Au
+     * comptant, tout se facture, gestion mensuelle comprise.
      */
-    const billable = financedIds.has(clientId)
-      ? Boolean(row.billed_directly)
-      : row.service_key !== MANAGEMENT_MONTH_KEY;
+    const billable = financedIds.has(clientId) ? Boolean(row.billed_directly) : true;
     if (!billable) continue;
 
     const month = monthKey(row.performed_on as string);

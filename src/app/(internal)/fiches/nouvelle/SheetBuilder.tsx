@@ -429,6 +429,21 @@ export function SheetBuilder({
       </div>
 
       <fieldset className="card p-5">
+        <legend className="eyebrow px-1">Sujet de la semaine</legend>
+        <p className="mt-1 text-xs text-ink-faint">
+          Une phrase pour la production : ce qu&apos;on veut raconter cette
+          semaine-là. Elle reste visible sur la carte du planning.
+        </p>
+        <textarea
+          name="topic"
+          rows={2}
+          maxLength={300}
+          className="field mt-3"
+          placeholder="Ex. Lancement de la carte d’automne, mise en avant de la terrasse."
+        />
+      </fieldset>
+
+      <fieldset className="card p-5">
         <legend className="eyebrow px-1">Réseaux de diffusion</legend>
         <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {SOCIAL_NETWORKS.map((network) => (

@@ -44,7 +44,7 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
    * ce qui s'est achevé depuis, pour que l'addition affichée soit toujours à
    * jour. L'opération est sans effet quand il n'y a rien à ajouter.
    */
-  if (budget?.billing_mode === "financement") {
+  {
     await syncManagementMonths(supabase, {
       id: client.id,
       contractStartDate: client.contract_start_date,

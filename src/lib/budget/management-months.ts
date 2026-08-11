@@ -4,15 +4,16 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   MANAGEMENT_MONTH_KEY,
   cadenceMonthlyCostCents,
-  closedManagementMonths,
+  dueManagementMonths,
 } from "@/lib/domain/budget";
 import { todayInParis } from "@/lib/domain/client-lifecycle";
 import type { MonthlyCadence } from "@/lib/domain/planning";
 
 /**
- * Inscription des mois de gestion écoulés à l'addition du client.
+ * Inscription des mois de gestion dus à l'addition du client.
  *
- * Dès qu'un mois s'achève, il est facturé au tarif du rythme vendu, puis figé.
+ * La gestion se règle d'avance : le mois est inscrit le jour où il commence,
+ * au tarif du rythme vendu ce jour-là, puis figé.
  * Écrire la ligne plutôt que recalculer un total a une conséquence voulue :
  * un changement de formule en cours de contrat ne réécrit pas les mois déjà
  * passés, qui ont bien été produits à l'ancien rythme.
@@ -32,7 +33,7 @@ export async function syncManagementMonths(
   today: string = todayInParis(),
 ): Promise<number> {
   const monthlyCostCents = cadenceMonthlyCostCents(client.cadence);
-  const expected = closedManagementMonths({
+  const expected = dueManagementMonths({
     contractStartDate: client.contractStartDate,
     contractEndDate: client.contractEndDate,
     monthlyCostCents,
@@ -47,20 +48,20 @@ export async function syncManagementMonths(
     .eq("service_key", MANAGEMENT_MONTH_KEY);
 
   const already = new Set((existing ?? []).map((row) => row.performed_on as string));
-  const missing = expected.filter((month) => !already.has(month.closedOn));
+  const missing = expected.filter((month) => !already.has(month.dueOn));
   if (missing.length === 0) return 0;
 
   const { error } = await supabase.from("client_budget_lines").insert(
     missing.map((month) => ({
       client_id: client.id,
       service_key: MANAGEMENT_MONTH_KEY,
-      label: `Production du mois ${month.index}`,
+      label: `Gestion des réseaux · mois ${month.index}`,
       billing: "ponctuel",
       unit_price_cents: month.amountCents,
       quantity: 1,
       months: null,
-      performed_on: month.closedOn,
-      note: "Inscrit automatiquement à la fin du mois de gestion.",
+      performed_on: month.dueOn,
+      note: "Inscrit automatiquement au début du mois de gestion.",
     })),
   );
 
