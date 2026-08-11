@@ -62,6 +62,8 @@ export function BudgetEditor({
 
   const service = SERVICE_CATALOGUE.find((item) => item.key === serviceKey)!;
   const financed = mode === "financement";
+  // Refus de prise en charge : la prestation part en facturation directe.
+  const [billedDirectly, setBilledDirectly] = useState(false);
 
   const run = (action: () => Promise<BudgetActionResult>) => {
     startTransition(async () => {
@@ -250,12 +252,36 @@ export function BudgetEditor({
               </div>
             </div>
 
+            {financed && (
+              <div className={`rounded-2xl border p-4 transition-colors ${billedDirectly ? "border-[#f0c36d] bg-[#fff8ec]" : "border-line bg-canvas"}`}>
+                <label className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    name="billedDirectly"
+                    className="mt-0.5"
+                    checked={billedDirectly}
+                    onChange={(event) => setBilledDirectly(event.target.checked)}
+                  />
+                  <span>
+                    <strong className="text-sm">Facturer directement au client</strong>
+                    <span className="mt-1 block text-xs leading-relaxed text-ink-soft">
+                      À cocher si le client ne souhaite pas faire passer cette prestation
+                      sur son financement. Elle ne consommera pas l&apos;enveloppe et
+                      rejoindra les factures du mois.
+                    </span>
+                  </span>
+                </label>
+              </div>
+            )}
+
             <button type="submit" className="btn-primary" disabled={pending}>
-              {pending ? "Ajout…" : "Ajouter à l’addition"}
+              {pending
+                ? "Ajout…"
+                : billedDirectly ? "Ajouter et facturer" : "Ajouter à l’addition"}
             </button>
           </form>
 
-          {!financed && (
+          {(!financed || months.length > 0) && (
             <InvoiceBoard
               months={months}
               pending={pending}
@@ -283,6 +309,7 @@ export function BudgetEditor({
                       <p className="text-sm font-medium">
                         {line.label}
                         {automatic && <span className="ml-2 badge bg-[#e8f2ff] text-[#0b5e9f]">Automatique</span>}
+                        {line.billedDirectly && <span className="ml-2 badge bg-[#fff4e5] text-[#8a5700]">Facturé à part</span>}
                       </p>
                       <p className="mt-0.5 text-xs text-ink-faint">
                         {line.quantity} × {formatEuros(line.unitPriceCents)}
@@ -341,7 +368,7 @@ function InvoiceBoard({
   return (
     <section className="space-y-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="font-semibold">Facturation</h2>
+        <h2 className="font-semibold">Facturation directe</h2>
         <p className="text-xs text-ink-faint">
           {remaining === 0
             ? "Tout est facturé et prélevé."
@@ -351,7 +378,7 @@ function InvoiceBoard({
 
       {months.length === 0 ? (
         <p className="card px-4 py-8 text-center text-sm text-ink-faint">
-          Aucune prestation notée. Ajoutez-en une : elle ouvrira la facture de son mois.
+          Aucune prestation à facturer. Ajoutez-en une : elle ouvrira la facture de son mois.
         </p>
       ) : (
         <ul className="space-y-3">

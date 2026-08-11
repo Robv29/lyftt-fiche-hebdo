@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { Icon } from "@/components/Icon";
-import { budgetSummary, formatEuros, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
+import { billableLines, budgetSummary, formatEuros, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
 import { todayInParis } from "@/lib/domain/client-lifecycle";
 import type { MonthlyCadence } from "@/lib/domain/planning";
 import { invoiceMonths, pendingInvoiceCount, type InvoiceStatus } from "@/lib/domain/invoicing";
@@ -41,7 +41,7 @@ export default async function BudgetPage() {
     supabase.from("client_budgets").select("client_id, billing_mode, budget_cents"),
     supabase
       .from("client_budget_lines")
-      .select("id, client_id, service_key, label, billing, unit_price_cents, quantity, months, performed_on"),
+      .select("id, client_id, service_key, label, billing, unit_price_cents, quantity, months, performed_on, billed_directly"),
   ]);
 
   const { data: invoices } = await supabase
@@ -71,6 +71,7 @@ export default async function BudgetPage() {
       quantity: Number(row.quantity),
       months: row.months as number | null,
       performedOn: row.performed_on as string,
+      billedDirectly: Boolean(row.billed_directly),
     });
     linesByClient.set(row.client_id as string, list);
   }
@@ -83,8 +84,9 @@ export default async function BudgetPage() {
       settings = {};
     }
     const budget = budgetByClient.get(client.id);
+    const mode = (budget?.billing_mode ?? "comptant") as BillingMode;
     const summary = budgetSummary({
-      billingMode: (budget?.billing_mode ?? "comptant") as BillingMode,
+      billingMode: mode,
       annualBudgetCents: budget?.budget_cents ?? 0,
       lines: linesByClient.get(client.id) ?? [],
       cadence: settings.monthlyCadence ?? {},
@@ -92,17 +94,15 @@ export default async function BudgetPage() {
       contractEndDate: client.contract_end_date,
       today,
     });
-    // Un client comptant se suit au nombre de factures encore à traiter.
+    // Factures en attente : tout le comptant, et les refus de prise en charge.
     const toInvoice = pendingInvoiceCount(invoiceMonths(
-      linesByClient.get(client.id) ?? [],
+      billableLines(linesByClient.get(client.id) ?? [], mode),
       invoiceStatusByClient.get(client.id) ?? {},
     ));
     return { client, summary, toInvoice };
   });
 
-  const totalToInvoice = rows
-    .filter((row) => !row.summary.applicable)
-    .reduce((total, row) => total + row.toInvoice, 0);
+  const totalToInvoice = rows.reduce((total, row) => total + row.toInvoice, 0);
   const financed = rows.filter((row) => row.summary.applicable);
   const cash = rows.filter((row) => !row.summary.applicable);
   const critical = financed.filter((row) =>

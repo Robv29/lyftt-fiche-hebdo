@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
-import { lineTotalCents, type BudgetLine } from "@/lib/domain/budget";
+import { lineTotalCents, MANAGEMENT_MONTH_KEY, type BudgetLine } from "@/lib/domain/budget";
 import { monthKey, monthLabel, type InvoiceStatus } from "@/lib/domain/invoicing";
 import { InvoiceRun, type MonthDossier } from "./InvoiceRun";
 
@@ -33,7 +33,7 @@ export default async function InvoicingPage() {
       supabase.from("client_budgets").select("client_id, billing_mode"),
       supabase
         .from("client_budget_lines")
-        .select("id, client_id, service_key, label, billing, unit_price_cents, quantity, months, performed_on"),
+        .select("id, client_id, service_key, label, billing, unit_price_cents, quantity, months, performed_on, billed_directly"),
       supabase.from("client_invoices").select("client_id, period_month, status"),
     ]);
 
@@ -58,7 +58,15 @@ export default async function InvoicingPage() {
   const byMonth = new Map<string, Map<string, BudgetLine[]>>();
   for (const row of lines ?? []) {
     const clientId = row.client_id as string;
-    if (financedIds.has(clientId) || !nameById.has(clientId)) continue;
+    if (!nameById.has(clientId)) continue;
+    /*
+     * Chez un client en financement, seules les prestations refusées par son
+     * organisme sont à facturer ; le reste est pris sur l'enveloppe.
+     */
+    const billable = financedIds.has(clientId)
+      ? Boolean(row.billed_directly)
+      : row.service_key !== MANAGEMENT_MONTH_KEY;
+    if (!billable) continue;
 
     const month = monthKey(row.performed_on as string);
     const clientsOfMonth = byMonth.get(month) ?? new Map<string, BudgetLine[]>();
@@ -72,6 +80,7 @@ export default async function InvoicingPage() {
       quantity: Number(row.quantity),
       months: row.months as number | null,
       performedOn: row.performed_on as string,
+      billedDirectly: Boolean(row.billed_directly),
     });
     clientsOfMonth.set(clientId, list);
     byMonth.set(month, clientsOfMonth);

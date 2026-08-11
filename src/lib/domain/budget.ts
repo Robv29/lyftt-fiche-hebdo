@@ -207,6 +207,14 @@ export interface BudgetLine {
   months: number | null;
   /** Date du shooting, ou date de mise à jour de la formule. */
   performedOn: string;
+  /**
+   * Prestation facturée au client plutôt que prise sur son enveloppe.
+   *
+   * Un organisme de financement peut refuser une prestation ; elle est alors
+   * facturée directement. Elle ne consomme donc pas le budget, et rejoint le
+   * circuit de facturation. Soit l'un, soit l'autre — jamais les deux.
+   */
+  billedDirectly?: boolean;
 }
 
 /** Montant d'une ligne. Une prestation mensuelle court sur son engagement. */
@@ -221,6 +229,17 @@ export function totalCents(lines: BudgetLine[]): number {
 
 export function isManagementMonth(line: BudgetLine): boolean {
   return line.serviceKey === MANAGEMENT_MONTH_KEY;
+}
+
+/** Lignes imputées sur l'enveloppe de financement. */
+export function envelopeLines(lines: BudgetLine[]): BudgetLine[] {
+  return lines.filter((line) => !line.billedDirectly);
+}
+
+/** Lignes à facturer : tout le comptant, et les refus de prise en charge. */
+export function billableLines(lines: BudgetLine[], mode: BillingMode): BudgetLine[] {
+  if (mode !== "financement") return lines.filter((line) => !isManagementMonth(line));
+  return lines.filter((line) => line.billedDirectly);
 }
 
 /** Même jour, n mois plus tard. Un 31 tombe sur le dernier jour du mois visé. */
@@ -345,7 +364,9 @@ export interface BudgetSummary {
 }
 
 export function budgetSummary(input: BudgetInput): BudgetSummary {
-  const lineCents = totalCents(input.lines);
+  // Une prestation facturée à part ne touche pas à l'enveloppe.
+  const charged = envelopeLines(input.lines);
+  const lineCents = totalCents(charged);
   const budgetCents = Math.max(0, input.annualBudgetCents);
   const monthlyCadenceCostCents = cadenceMonthlyCostCents(input.cadence);
 
@@ -354,7 +375,7 @@ export function budgetSummary(input: BudgetInput): BudgetSummary {
    * Le consommé se lit donc entièrement dans les lignes — rien n'est ajouté
    * par-dessus, sans quoi la production serait comptée deux fois.
    */
-  const recurringConsumedCents = input.lines
+  const recurringConsumedCents = charged
     .filter(isManagementMonth)
     .reduce((total, line) => total + lineTotalCents(line), 0);
   const consumedCents = lineCents;

@@ -69,6 +69,7 @@ const lineSchema = z.object({
   months: z.coerce.number().int().positive().max(120).optional(),
   performedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date invalide."),
   note: z.string().trim().max(300, "Note trop longue (300 caractères maximum).").optional(),
+  billedDirectly: z.boolean(),
 });
 
 export async function addBudgetLine(formData: FormData): Promise<BudgetActionResult> {
@@ -83,6 +84,7 @@ export async function addBudgetLine(formData: FormData): Promise<BudgetActionRes
     months: rawMonths ? rawMonths : undefined,
     performedOn: formData.get("performedOn"),
     note: formData.get("note") ?? undefined,
+    billedDirectly: formData.get("billedDirectly") === "on",
   });
   if (!parsed.success) {
     return { ok: false, message: parsed.error.issues[0]?.message ?? "Formulaire invalide." };
@@ -106,6 +108,7 @@ export async function addBudgetLine(formData: FormData): Promise<BudgetActionRes
     months: service.billing === "mensuel" ? parsed.data.months ?? 1 : null,
     performed_on: parsed.data.performedOn,
     note: parsed.data.note ? sanitizeText(parsed.data.note, 300) : null,
+    billed_directly: parsed.data.billedDirectly,
     created_by: profile.id,
   });
 
@@ -113,7 +116,12 @@ export async function addBudgetLine(formData: FormData): Promise<BudgetActionRes
 
   revalidatePath("/budget");
   revalidatePath(`/budget/${parsed.data.clientId}`);
-  return { ok: true, message: `${service.label} ajouté.` };
+  return {
+    ok: true,
+    message: parsed.data.billedDirectly
+      ? `${service.label} ajouté et à facturer au client.`
+      : `${service.label} ajouté à l’enveloppe.`,
+  };
 }
 
 export async function removeBudgetLine(lineId: string, clientId: string): Promise<BudgetActionResult> {

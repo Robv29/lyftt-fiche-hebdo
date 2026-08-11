@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   addMonths,
+  billableLines,
   budgetSummary,
   closedManagementMonths,
   cadenceMonthlyCostCents,
   findService,
+  envelopeLines,
   lineTotalCents,
   isManagementMonth,
   MANAGEMENT_MONTH_KEY,
@@ -235,5 +237,51 @@ describe("mois de gestion écoulés", () => {
   it("reconnaît une ligne de mois de gestion", () => {
     expect(isManagementMonth(line({ serviceKey: MANAGEMENT_MONTH_KEY }))).toBe(true);
     expect(isManagementMonth(line())).toBe(false);
+  });
+});
+
+describe("prestation facturée hors enveloppe", () => {
+  const base = {
+    billingMode: "financement" as const,
+    annualBudgetCents: 600_000,
+    lines: [],
+    cadence: {},
+    contractStartDate: today,
+    contractEndDate: "2027-08-10",
+    today,
+  };
+
+  it("ne consomme pas le budget", () => {
+    const summary = budgetSummary({
+      ...base,
+      lines: [
+        line({ id: "a", unitPriceCents: 45_000 }),
+        line({ id: "b", unitPriceCents: 85_000, billedDirectly: true }),
+      ],
+    });
+    expect(summary.consumedCents).toBe(45_000);
+    expect(summary.remainingCents).toBe(555_000);
+  });
+
+  it("est écartée de l'enveloppe", () => {
+    const lines = [line({ id: "a" }), line({ id: "b", billedDirectly: true })];
+    expect(envelopeLines(lines).map((l) => l.id)).toEqual(["a"]);
+  });
+
+  it("est la seule à facturer chez un client en financement", () => {
+    const lines = [
+      line({ id: "a" }),
+      line({ id: "b", billedDirectly: true }),
+      line({ id: "m", serviceKey: MANAGEMENT_MONTH_KEY }),
+    ];
+    expect(billableLines(lines, "financement").map((l) => l.id)).toEqual(["b"]);
+  });
+
+  it("chez un client comptant, tout se facture sauf les mois automatiques", () => {
+    const lines = [
+      line({ id: "a" }),
+      line({ id: "m", serviceKey: MANAGEMENT_MONTH_KEY }),
+    ];
+    expect(billableLines(lines, "comptant").map((l) => l.id)).toEqual(["a"]);
   });
 });

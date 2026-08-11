@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
-import { budgetSummary, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
+import { billableLines, budgetSummary, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
 import { todayInParis } from "@/lib/domain/client-lifecycle";
 import type { MonthlyCadence } from "@/lib/domain/planning";
 import { BudgetEditor } from "./BudgetEditor";
@@ -60,7 +60,7 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
 
   const { data: rawLines } = await supabase
     .from("client_budget_lines")
-    .select("id, service_key, label, billing, unit_price_cents, quantity, months, performed_on, note")
+    .select("id, service_key, label, billing, unit_price_cents, quantity, months, performed_on, note, billed_directly")
     .eq("client_id", clientId)
     .order("performed_on", { ascending: false });
 
@@ -80,17 +80,20 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
     quantity: Number(row.quantity),
     months: row.months as number | null,
     performedOn: row.performed_on as string,
+    billedDirectly: Boolean(row.billed_directly),
     note: (row.note as string | null) ?? null,
   }));
 
   const invoiceStatuses = Object.fromEntries(
     (invoices ?? []).map((row) => [row.period_month as string, row.status as InvoiceStatus]),
   );
-  const months = invoiceMonths(lines, invoiceStatuses);
+  const mode = (budget?.billing_mode ?? "comptant") as BillingMode;
+  // En financement, seules les prestations refusées par l'organisme se facturent.
+  const months = invoiceMonths(billableLines(lines, mode), invoiceStatuses);
 
   const cadence = settings.monthlyCadence ?? {};
   const summary = budgetSummary({
-    billingMode: (budget?.billing_mode ?? "comptant") as BillingMode,
+    billingMode: mode,
     annualBudgetCents: budget?.budget_cents ?? 0,
     lines,
     cadence,
@@ -113,7 +116,7 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
         contractStartDate={client.contract_start_date}
         contractEndDate={client.contract_end_date}
         cadence={cadence}
-        initialMode={(budget?.billing_mode ?? "comptant") as BillingMode}
+        initialMode={mode}
         initialBudgetCents={budget?.budget_cents ?? 0}
         initialNote={budget?.note ?? ""}
         lines={lines}
