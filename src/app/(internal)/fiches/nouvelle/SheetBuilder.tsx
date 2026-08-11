@@ -7,6 +7,7 @@ import { isoWeekStart } from "@/lib/domain/deadline";
 import {
   isoWeekIdentity,
   selectHashtags,
+  publicationDatesForWeek,
   weeklyFormatsForCadence,
   type MonthlyCadence,
 } from "@/lib/domain/planning";
@@ -28,6 +29,7 @@ interface ClientPreset {
   name: string;
   defaultNetworks: string[];
   defaultHashtags: string[];
+  publicationWeekdays: number[];
   monthlyCadence: MonthlyCadence;
   /** Phrase répétée en fin de chaque publication, préremplie dans le texte. */
   postSignature: string;
@@ -118,9 +120,21 @@ const MEDIA_STATUS_LABEL: Record<DraftItem["mediaStatus"], string> = {
 };
 
 function createDraftItems(client: ClientPreset, isoYear: number, isoWeek: number): DraftItem[] {
-  return weeklyFormatsForCadence(client.monthlyCadence, isoWeek).map((format, index) => ({
+  const formats = weeklyFormatsForCadence(client.monthlyCadence, isoWeek);
+  /*
+   * Dates préremplies sur les jours de publication de la fiche client. Elles
+   * restent modifiables : le préremplissage évite la saisie répétitive, il ne
+   * la remplace pas.
+   */
+  const dates = publicationDatesForWeek(
+    formats.length,
+    client.publicationWeekdays,
+    isoWeekStart(isoYear, isoWeek),
+  );
+
+  return formats.map((format, index) => ({
     key: `${client.id}-${isoYear}-${isoWeek}-${format}-${index}`,
-    scheduledDate: "",
+    scheduledDate: dates[index] ?? "",
     scheduledTime: "18:00",
     format,
     // La signature est posée en bas du texte : le community manager rédige

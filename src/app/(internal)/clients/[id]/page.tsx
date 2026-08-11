@@ -6,6 +6,7 @@ import { LYFTT_CLIENT_TYPE_IDS, type LyfttClientType } from "@/lib/domain/hashta
 import { Icon } from "@/components/Icon";
 import { ClientEditor } from "./ClientEditor";
 import { resolveClientLogoUrl } from "@/lib/media/client-logo";
+import { normalizeWeekdays } from "@/lib/domain/planning";
 
 const weekDays = ["lundi","mardi","mercredi","jeudi","vendredi","samedi","dimanche"];
 const brandTones = ["chaleureux","premium","expert","dynamique","institutionnel"] as const;
@@ -30,6 +31,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
     brandProfile?: { clientType?: string; activity?: string; website?: string; city?: string; postalCode?: string; audience?: string; tone?: string; keywords?: string };
     customHashtags?: string[];
     recommendedHashtags?: string[];
+    publicationWeekdays?: number[];
     monthlyCadence?: { photo?: number; video?: number; story?: number; visual?: number };
   } = {};
   try { settings = typeof client.notes === "string" ? JSON.parse(client.notes) : {}; } catch { settings = {}; }
@@ -49,6 +51,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
     story:Number(settings.monthlyCadence?.story ?? 0),
     visual:Number(settings.monthlyCadence?.visual ?? 0),
   };
+  const publicationWeekdays=normalizeWeekdays(settings.publicationWeekdays ?? []);
   const rawTone = settings.brandProfile?.tone;
   const brandTone = brandTones.includes(rawTone as typeof brandTones[number])
     ? rawTone as typeof brandTones[number]
@@ -75,7 +78,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
         keywords:settings.brandProfile?.keywords ?? "",
       },
       networks:networks.length ? networks : ["instagram","facebook"],
-      cadence,
+      cadence, publicationWeekdays,
       validation:{ deadlineWeekday:client.validation_deadline_weekday, deadlineTime:String(client.validation_deadline_time), approvalPolicy:client.approval_policy as "explicit_required"|"tacit_allowed", tacitNotice:client.tacit_approval_notice ?? "Sans retour avant cette échéance, les contenus seront considérés comme validés, selon les modalités prévues ensemble.", whatsappGroup:client.whatsapp_group_name ?? "", postSignature:client.post_signature ?? "" },
       customHashtags,
     }} managers={(managers ?? []).map((manager)=>({id:manager.id,name:manager.full_name}))}/></div></header>

@@ -13,6 +13,7 @@ import {
   normalizeHashtag,
 } from "@/lib/domain/hashtags";
 import { removeClientLogo, uploadClientLogo } from "@/lib/media/client-logo";
+import { normalizeWeekdays } from "@/lib/domain/planning";
 
 export interface ClientActionResult {
   ok: boolean;
@@ -72,6 +73,8 @@ const clientSchema = z.object({
   tacitNotice: z.string().trim().max(500, "Mention contractuelle trop longue (500 caractères maximum).").optional(),
   whatsappGroup: z.string().trim().min(2, "Le nom du groupe WhatsApp est requis.").max(120, "Nom de groupe trop long (120 caractères maximum)."),
   communityManagerId: z.string().uuid("Sélectionnez un community manager."),
+  publicationWeekdays: z.array(z.coerce.number().int().min(1).max(7))
+    .min(1, "Choisissez au moins un jour de publication."),
   photoPerMonth: z.coerce.number().int().min(0).max(31),
   videoPerMonth: z.coerce.number().int().min(0).max(31),
   storyPerMonth: z.coerce.number().int().min(0).max(31),
@@ -104,6 +107,7 @@ function clientFormValues(formData: FormData) {
     tacitNotice: formData.get("tacitNotice") ?? undefined,
     whatsappGroup: formData.get("whatsappGroup") ?? undefined,
     communityManagerId: formData.get("communityManagerId") ?? undefined,
+    publicationWeekdays: formData.getAll("publicationWeekdays").map(Number),
     photoPerMonth: formData.get("photoPerMonth"),
     videoPerMonth: formData.get("videoPerMonth"),
     storyPerMonth: formData.get("storyPerMonth"),
@@ -188,6 +192,7 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
     baseHashtags,
     customHashtags,
     recommendedHashtags,
+    publicationWeekdays: normalizeWeekdays(input.publicationWeekdays),
     monthlyCadence: {
       photo: input.photoPerMonth,
       video: input.videoPerMonth,
@@ -349,6 +354,7 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
     baseHashtags: hashtags.baseHashtags,
     customHashtags: hashtags.customHashtags,
     recommendedHashtags: hashtags.recommendedHashtags,
+    publicationWeekdays: normalizeWeekdays(input.publicationWeekdays),
     monthlyCadence: {
       photo: input.photoPerMonth,
       video: input.videoPerMonth,

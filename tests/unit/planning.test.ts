@@ -5,6 +5,8 @@ import {
   selectHashtags,
   sheetCompletion,
   weeklyFormatsForCadence,
+  publicationDatesForWeek,
+  normalizeWeekdays,
 } from "../../src/lib/domain/planning";
 
 describe("planning hebdomadaire", () => {
@@ -65,5 +67,32 @@ describe("planning hebdomadaire", () => {
     expect(first).toEqual(second);
     expect(first).toHaveLength(8);
     expect(selectHashtags(tags, "client-33-1")).not.toEqual(first);
+  });
+});
+
+describe("jours de publication", () => {
+  const monday = new Date("2026-08-10T00:00:00Z"); // lundi
+
+  it("pose les contenus sur les jours choisis, dans l'ordre", () => {
+    expect(publicationDatesForWeek(3, [4, 2], monday)).toEqual([
+      "2026-08-11", // mardi
+      "2026-08-13", // jeudi
+      "2026-08-11", // on repasse sur le mardi
+    ]);
+  });
+
+  it("dédoublonne et écarte les jours hors semaine", () => {
+    expect(normalizeWeekdays([3, 3, 0, 8, 1])).toEqual([1, 3]);
+  });
+
+  it("ne propose aucune date sans jour renseigné", () => {
+    expect(publicationDatesForWeek(2, [], monday)).toEqual(["", ""]);
+  });
+
+  it("couvre la semaine entière du lundi au dimanche", () => {
+    expect(publicationDatesForWeek(7, [1, 2, 3, 4, 5, 6, 7], monday)).toEqual([
+      "2026-08-10", "2026-08-11", "2026-08-12", "2026-08-13",
+      "2026-08-14", "2026-08-15", "2026-08-16",
+    ]);
   });
 });

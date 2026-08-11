@@ -48,13 +48,14 @@ export default async function NewSheetPage({
 
       <SheetBuilder
         clients={clients.map((c) => {
-          let settings: { defaultNetworks?: string[]; monthlyCadence?: { photo?: number; video?: number; story?: number; visual?: number }; recommendedHashtags?: string[] } = {};
+          let settings: { defaultNetworks?: string[]; publicationWeekdays?: number[]; monthlyCadence?: { photo?: number; video?: number; story?: number; visual?: number }; recommendedHashtags?: string[] } = {};
           try { settings = typeof c.notes === "string" ? JSON.parse(c.notes) : {}; } catch { settings = {}; }
           return {
             id: c.id,
             name: c.name,
             defaultNetworks: settings.defaultNetworks ?? ["instagram", "facebook"],
             defaultHashtags: settings.recommendedHashtags ?? [],
+            publicationWeekdays: settings.publicationWeekdays ?? [],
             monthlyCadence: settings.monthlyCadence ?? {},
             postSignature: c.post_signature ?? "",
           };

@@ -157,3 +157,48 @@ export function selectHashtags(tags: string[], seed: string, limit = 8): string[
 
   return shuffled.slice(0, Math.max(0, limit));
 }
+
+/**
+ * Jours de publication choisis sur la fiche client, en numérotation ISO :
+ * 1 pour lundi, 7 pour dimanche.
+ */
+export const WEEKDAY_LABELS: Record<number, string> = {
+  1: "Lundi",
+  2: "Mardi",
+  3: "Mercredi",
+  4: "Jeudi",
+  5: "Vendredi",
+  6: "Samedi",
+  7: "Dimanche",
+};
+
+/** Jours retenus, dédoublonnés et remis dans l'ordre de la semaine. */
+export function normalizeWeekdays(weekdays: readonly number[]): number[] {
+  return [...new Set(weekdays.filter((day) => Number.isInteger(day) && day >= 1 && day <= 7))]
+    .sort((a, b) => a - b);
+}
+
+/**
+ * Date de publication de chaque contenu de la semaine.
+ *
+ * Les publications sont posées sur les jours choisis par le client, dans
+ * l'ordre de la semaine. Quand il y a plus de contenus que de jours, on
+ * repasse sur les mêmes jours : mieux vaut deux posts le mardi qu'une date
+ * vide que personne ne remplira.
+ *
+ * Sans jour renseigné, aucune date n'est proposée — le community manager
+ * garde la main, comme avant.
+ */
+export function publicationDatesForWeek(
+  count: number,
+  weekdays: readonly number[],
+  weekStart: Date,
+): string[] {
+  const days = normalizeWeekdays(weekdays);
+  if (days.length === 0) return Array.from({ length: count }, () => "");
+
+  return Array.from({ length: count }, (_, index) => {
+    const weekday = days[index % days.length]!;
+    return civilDate(addDays(weekStart, weekday - 1));
+  });
+}

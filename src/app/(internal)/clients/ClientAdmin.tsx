@@ -22,6 +22,7 @@ import {
   normalizeHashtag,
   type LyfttClientType,
 } from "@/lib/domain/hashtags";
+import { WEEKDAY_LABELS } from "@/lib/domain/planning";
 
 type FieldErrors = Record<string, string> | undefined;
 
@@ -42,6 +43,8 @@ function FieldError({ errors, name, tone = "text-state-changes" }: { errors: Fie
   if (!message) return null;
   return <p className={`mt-1 text-xs ${tone}`} role="alert">{message}</p>;
 }
+
+const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 7];
 
 const WEEKDAYS = [
   { value: 1, label: "Lundi" },
@@ -259,6 +262,24 @@ export function ClientAdmin({
               ))}
             </div>
             <FieldError errors={fieldErrors} name="networks"/>
+          </fieldset>
+
+          <fieldset>
+            <legend className="label">Jours de publication</legend>
+            <p className="mb-3 text-xs text-ink-faint">
+              Les publications de chaque semaine seront préprogrammées sur ces jours.
+              S&apos;il y a plus de contenus que de jours, ils se répartissent en repassant
+              sur les mêmes.
+            </p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+              {WEEKDAY_ORDER.map((day) => (
+                <label key={day} className="choice-chip">
+                  <input type="checkbox" name="publicationWeekdays" value={day} defaultChecked={day === 2 || day === 5}/>
+                  {WEEKDAY_LABELS[day]}
+                </label>
+              ))}
+            </div>
+            <FieldError errors={fieldErrors} name="publicationWeekdays"/>
           </fieldset>
 
           <fieldset>

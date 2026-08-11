@@ -6,6 +6,7 @@ import { updateClient, type ClientActionResult } from "../actions";
 import { Icon } from "@/components/Icon";
 import { ClientLogoField } from "@/components/ClientLogoField";
 import { SOCIAL_NETWORKS, SOCIAL_NETWORK_LABELS, type SocialNetwork } from "@/lib/domain/types";
+import { WEEKDAY_LABELS } from "@/lib/domain/planning";
 import {
   hashtagsForClientType,
   LYFTT_CLIENT_TYPES,
@@ -33,6 +34,7 @@ export interface EditableClient {
   };
   networks: SocialNetwork[];
   cadence: { photo: number; video: number; story: number; visual: number };
+  publicationWeekdays: number[];
   validation: {
     deadlineWeekday: number;
     deadlineTime: string;
@@ -202,6 +204,19 @@ export function ClientEditor({ initial, managers }: { initial: EditableClient; m
               <fieldset>
                 <legend className="eyebrow">Réseaux diffusés</legend>
                 <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">{SOCIAL_NETWORKS.map((network) => <label key={network} className="choice-chip"><input type="checkbox" name="networks" value={network} defaultChecked={initial.networks.includes(network)}/>{SOCIAL_NETWORK_LABELS[network]}</label>)}</div>
+              </fieldset>
+
+              <fieldset>
+                <legend className="eyebrow">Jours de publication</legend>
+                <p className="mt-1 text-xs text-ink-faint">Les prochaines fiches seront préprogrammées sur ces jours.</p>
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+                  {[1, 2, 3, 4, 5, 6, 7].map((day) => (
+                    <label key={day} className="choice-chip">
+                      <input type="checkbox" name="publicationWeekdays" value={day} defaultChecked={initial.publicationWeekdays.includes(day)}/>
+                      {WEEKDAY_LABELS[day]}
+                    </label>
+                  ))}
+                </div>
               </fieldset>
 
               <fieldset>
