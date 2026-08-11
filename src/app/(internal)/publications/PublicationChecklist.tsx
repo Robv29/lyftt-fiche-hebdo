@@ -2,12 +2,13 @@
 
 import { useState, useTransition } from "react";
 import Image from "next/image";
-import { completePublicationStep } from "./actions";
+import { completePublicationStep, setPublicationPublished, togglePublishedNetwork } from "./actions";
 import { Icon } from "@/components/Icon";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { mediaFrameBackground, mediaFrameClass } from "@/lib/domain/media-frame";
-import type { MediaFormat } from "@/lib/domain/types";
+import { SOCIAL_NETWORK_LABELS, type MediaFormat, type SocialNetwork } from "@/lib/domain/types";
+import { canConfirmPublication, missingNetworks } from "@/lib/domain/publication-checklist";
 
 function todayInParis():string { return new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Paris",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date()); }
 function isToday(day:string):boolean { return day===todayInParis(); }
@@ -21,6 +22,10 @@ export interface DailyPublication {
   caption:string; hashtags:string[]; approvalLabel:string; approved:boolean; publishedAt:string|null;
   mediaDownloadedAt:string|null; contentCopiedAt:string|null; mediaUrl:string|null; mediaFileName:string|null;
   mediaKind:"image"|"video"|"document"|null; mediaRequired:boolean;
+  /** Réseaux enregistrés sur la fiche du client. */
+  plannedNetworks:SocialNetwork[];
+  /** Réseaux réellement publiés, cochés un à un. */
+  publishedNetworks:SocialNetwork[];
 }
 
 export function PublicationChecklist({ initialItems, nextWithContent }: { initialItems:DailyPublication[]; nextWithContent?:string|null }) {
@@ -31,7 +36,19 @@ export function PublicationChecklist({ initialItems, nextWithContent }: { initia
   const mark = (id:string,step:"media"|"content") => startTransition(async()=>{
     const result = await completePublicationStep(id,step);
     setFeedback(result.message ?? null);
-    if (result.ok) setItems((current)=>current.map((item)=>item.id===id ? { ...item, mediaDownloadedAt:step==="media"?new Date().toISOString():item.mediaDownloadedAt, contentCopiedAt:step==="content"?new Date().toISOString():item.contentCopiedAt, publishedAt:result.published?(item.publishedAt??new Date().toISOString()):item.publishedAt } : item));
+    if (result.ok) setItems((current)=>current.map((item)=>item.id===id ? { ...item, mediaDownloadedAt:step==="media"?new Date().toISOString():item.mediaDownloadedAt, contentCopiedAt:step==="content"?new Date().toISOString():item.contentCopiedAt } : item));
+  });
+
+  const confirmPublished = (id:string,published:boolean) => startTransition(async()=>{
+    const result = await setPublicationPublished(id,published);
+    setFeedback(result.message ?? null);
+    if (result.ok) setItems((current)=>current.map((item)=>item.id===id ? { ...item, publishedAt:published?new Date().toISOString():null } : item));
+  });
+
+  const toggleNetwork = (id:string,network:SocialNetwork,on:boolean) => startTransition(async()=>{
+    const result = await togglePublishedNetwork(id,network,on);
+    if (result.message) setFeedback(result.message);
+    if (result.ok) setItems((current)=>current.map((item)=>item.id===id ? { ...item, publishedNetworks:on ? [...item.publishedNetworks,network] : item.publishedNetworks.filter((value)=>value!==network) } : item));
   });
 
   const download = async(item:DailyPublication) => {
@@ -74,7 +91,7 @@ export function PublicationChecklist({ initialItems, nextWithContent }: { initia
         </div>
         <span className="badge bg-white text-ink-soft shadow-sm">{dayItems.filter((item)=>item.publishedAt).length}/{dayItems.length}</span>
       </div>
-      <div className="grid gap-4 xl:grid-cols-2">{dayItems.map((item)=><PublicationCard key={item.id} item={item} pending={pending} onDownload={()=>download(item)} onCopy={()=>copy(item)}/>)}</div>
+      <div className="grid gap-4 xl:grid-cols-2">{dayItems.map((item)=><PublicationCard key={item.id} item={item} pending={pending} onDownload={()=>download(item)} onCopy={()=>copy(item)} onPublished={(published)=>confirmPublished(item.id,published)} onNetwork={(network,on)=>toggleNetwork(item.id,network,on)}/>)}</div>
     </section>)}
   </div>;
 }
@@ -96,7 +113,44 @@ function MediaPreview({ item }:{ item:DailyPublication }) {
   return <div className={`overflow-hidden rounded-2xl border ${mediaFrameBackground(item.format)} ${frame}`}>{media}</div>;
 }
 
-function PublicationCard({item,pending,onDownload,onCopy}:{item:DailyPublication;pending:boolean;onDownload:()=>void;onCopy:()=>void}) {
+/**
+ * Mise en ligne effective.
+ *
+ * Télécharger le média et copier le texte ne prouvent rien : le post peut
+ * n'avoir jamais été publié, ou ne l'avoir été que sur un réseau. Deux gestes
+ * distincts le disent — la confirmation, et le réseau par réseau repris de la
+ * fiche du client.
+ */
+function PublishPanel({item,pending,locked,onPublished,onNetwork}:{item:DailyPublication;pending:boolean;locked:boolean;onPublished:(published:boolean)=>void;onNetwork:(network:SocialNetwork,on:boolean)=>void}) {
+  const ready=canConfirmPublication({ mediaRequired:item.mediaRequired, mediaDownloaded:Boolean(item.mediaDownloadedAt), contentCopied:Boolean(item.contentCopiedAt) });
+  const published=Boolean(item.publishedAt);
+  const remaining=missingNetworks(item.plannedNetworks,item.publishedNetworks);
+
+  return <div className={`mt-3 rounded-2xl border p-3 transition-colors ${published?"border-state-approved/40 bg-[#f6fdf9]":"border-line bg-white"}`}>
+    <label className={`flex items-center gap-3 ${!ready||locked?"opacity-50":"cursor-pointer"}`}>
+      <input type="checkbox" checked={published} disabled={pending||locked||!ready} onChange={(event)=>onPublished(event.target.checked)}/>
+      <span className="text-sm font-semibold">{published?"Publié":"Confirmer la publication"}</span>
+    </label>
+
+    {!ready&&!locked&&<p className="mt-1.5 pl-7 text-[11px] text-ink-faint">Téléchargez le média et copiez le texte pour pouvoir confirmer.</p>}
+
+    {item.plannedNetworks.length>0&&<div className="mt-3 border-t pt-3">
+      <p className="text-[11px] font-medium text-ink-faint">Réseaux publiés{remaining.length>0&&published&&` · reste ${remaining.map((network)=>SOCIAL_NETWORK_LABELS[network]).join(", ")}`}</p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {item.plannedNetworks.map((network)=>{
+          const done=item.publishedNetworks.includes(network);
+          return <label key={network} className={`flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors ${done?"border-state-approved/40 bg-[#e8f8f1] text-state-approved":"border-line bg-canvas text-ink-soft hover:border-[#8bb5ff]"} ${locked?"pointer-events-none opacity-50":""}`}>
+            <input type="checkbox" className="sr-only" checked={done} disabled={pending||locked} onChange={(event)=>onNetwork(network,event.target.checked)}/>
+            {done&&<Icon name="check" className="h-3 w-3"/>}
+            {SOCIAL_NETWORK_LABELS[network]}
+          </label>;
+        })}
+      </div>
+    </div>}
+  </div>;
+}
+
+function PublicationCard({item,pending,onDownload,onCopy,onPublished,onNetwork}:{item:DailyPublication;pending:boolean;onDownload:()=>void;onCopy:()=>void;onPublished:(published:boolean)=>void;onNetwork:(network:SocialNetwork,on:boolean)=>void}) {
   const mediaDone=!item.mediaRequired||Boolean(item.mediaDownloadedAt); const contentDone=Boolean(item.contentCopiedAt); const done=Boolean(item.publishedAt);
   // Publier un contenu que le client n'a pas validé est le risque que tout le
   // module cherche à éliminer : les actions restent bloquées jusque-là.
@@ -107,6 +161,9 @@ function PublicationCard({item,pending,onDownload,onCopy}:{item:DailyPublication
       <MediaPreview item={item}/>
       <div className="min-w-0"><p className="line-clamp-6 whitespace-pre-wrap text-sm leading-relaxed">{item.caption||"Texte vide"}</p>{item.hashtags.length>0&&<p className="mt-3 break-words text-xs leading-relaxed text-[#0b63ad]">{item.hashtags.join(" ")}</p>}</div>
     </div>
-    <div className="border-t bg-[#fbfcfe] p-4">{locked&&<p className="mb-3 rounded-xl bg-[#fff4e5] px-3 py-2 text-xs leading-relaxed text-[#8a5700]">En attente de validation client. Le média et le texte se débloqueront dès que le client aura validé cette publication.</p>}<div className="grid gap-2 sm:grid-cols-2"><button type="button" className={mediaDone?"btn-secondary border-state-approved/30 text-state-approved":"btn-secondary"} disabled={pending||locked||(!item.mediaUrl&&item.mediaRequired)} onClick={onDownload}>{mediaDone?<Icon name="check" className="h-4 w-4"/>:<Icon name="download" className="h-4 w-4"/>}{mediaDone?"Média téléchargé":item.mediaRequired?"Télécharger le média":"Aucun média requis"}</button><button type="button" className={contentDone?"btn-secondary border-state-approved/30 text-state-approved":"btn-primary"} disabled={pending||locked} onClick={onCopy}>{contentDone?<Icon name="check" className="h-4 w-4"/>:<Icon name="copy" className="h-4 w-4"/>}{contentDone?"Texte copié":"Copier texte + hashtags"}</button></div></div>
+    <div className="border-t bg-[#fbfcfe] p-4">{locked&&<p className="mb-3 rounded-xl bg-[#fff4e5] px-3 py-2 text-xs leading-relaxed text-[#8a5700]">En attente de validation client. Le média et le texte se débloqueront dès que le client aura validé cette publication.</p>}<div className="grid gap-2 sm:grid-cols-2"><button type="button" className={mediaDone?"btn-secondary border-state-approved/30 text-state-approved":"btn-secondary"} disabled={pending||locked||(!item.mediaUrl&&item.mediaRequired)} onClick={onDownload}>{mediaDone?<Icon name="check" className="h-4 w-4"/>:<Icon name="download" className="h-4 w-4"/>}{mediaDone?"Média téléchargé":item.mediaRequired?"Télécharger le média":"Aucun média requis"}</button><button type="button" className={contentDone?"btn-secondary border-state-approved/30 text-state-approved":"btn-primary"} disabled={pending||locked} onClick={onCopy}>{contentDone?<Icon name="check" className="h-4 w-4"/>:<Icon name="copy" className="h-4 w-4"/>}{contentDone?"Texte copié":"Copier texte + hashtags"}</button></div>
+
+      <PublishPanel item={item} pending={pending} locked={locked} onPublished={onPublished} onNetwork={onNetwork}/>
+    </div>
   </article>;
 }

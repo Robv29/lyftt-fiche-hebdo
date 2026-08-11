@@ -15,6 +15,7 @@ export const LYFTT_CLIENT_TYPE_IDS = [
   "beaute",
   "paysagiste",
   "artisan",
+  "lyftt",
 ] as const;
 
 export type LyfttClientType = (typeof LYFTT_CLIENT_TYPE_IDS)[number];
@@ -35,9 +36,21 @@ export const LYFTT_CLIENT_TYPES: ReadonlyArray<{
   { id: "beaute", label: "Beauté & bien-être", examples: "institut, spa, soins" },
   { id: "paysagiste", label: "Paysage & extérieur", examples: "paysagiste, jardin, terrasse" },
   { id: "artisan", label: "Artisan & entreprise locale", examples: "bâtiment, atelier, savoir-faire" },
+  // La communication de l'agence elle-même, traitée comme un dossier client.
+  { id: "lyftt", label: "LYFTT — communication de l’agence", examples: "agence, social media, coulisses" },
 ];
 
 const LYFTT_HASHTAG_PRESETS: Record<LyfttClientType, readonly string[]> = {
+  /*
+   * Communication de l'agence. Le registre est différent de celui d'un client :
+   * on y parle métier, coulisses et preuve de savoir-faire, à destination des
+   * commerçants et artisans qu'on cherche à accompagner.
+   */
+  lyftt: [
+    "#LYFTT", "#AgenceCommunication", "#CommunityManager", "#SocialMedia", "#ReseauxSociaux",
+    "#CommunicationDigitale", "#StrategieDeContenu", "#CreationDeContenu", "#PhotographiePro", "#VideoMarketing",
+    "#AgenceToulouse", "#AgenceMontauban", "#CommerceLocal", "#Occitanie", "#SavoirFaire",
+  ],
   restaurant: [
     "#Restaurant", "#RestaurantToulouse", "#RestaurantMontauban", "#CuisineMaison", "#FaitMaison",
     "#ProduitsLocaux", "#BonnesAdresses", "#GastronomieLocale", "#TableGourmande", "#ArtisanDuGout",
