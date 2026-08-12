@@ -259,12 +259,30 @@ export function addMonths(date: string, months: number): string {
   return shifted.toISOString().slice(0, 10);
 }
 
+/**
+ * Part du mois restant à courir quand la gestion démarre.
+ *
+ * Le mois se découpe en quatre semaines de prestation. Une gestion qui
+ * commence dans la deuxième semaine n'en couvre plus que trois : on ne
+ * facture pas une semaine qui a déjà passé. Seul le premier mois est
+ * concerné, les suivants étant entiers.
+ */
+export function monthStartFraction(date: string): number {
+  const day = Number(date.slice(8, 10));
+  if (!Number.isFinite(day) || day <= 7) return 1;
+  if (day <= 14) return 0.75;
+  if (day <= 21) return 0.5;
+  return 0.25;
+}
+
 export interface ManagementMonth {
   /** Rang du mois de gestion, à partir de 1. */
   index: number;
   /** Jour où le mois est dû : c'est la date portée par la ligne. */
   dueOn: string;
   amountCents: number;
+  /** Part du mois facturée : inférieure à 1 pour un démarrage en cours de mois. */
+  fraction: number;
 }
 
 /**
@@ -296,7 +314,14 @@ export function dueManagementMonths(input: {
   for (let index = 1; index <= 120; index += 1) {
     const dueOn = addMonths(input.contractStartDate, index - 1);
     if (dueOn > limit) break;
-    months.push({ index, dueOn, amountCents: input.monthlyCostCents });
+    // Seul le premier mois peut être entamé ; les suivants tombent entiers.
+    const fraction = index === 1 ? monthStartFraction(dueOn) : 1;
+    months.push({
+      index,
+      dueOn,
+      fraction,
+      amountCents: Math.round(input.monthlyCostCents * fraction),
+    });
   }
   return months;
 }

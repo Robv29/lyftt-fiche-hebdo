@@ -5,6 +5,7 @@ import {
   budgetSummary,
   BASE_MONTHLY_FEE_CENTS,
   dueManagementMonths,
+  monthStartFraction,
   monthsRemainingToBill,
   reconcileManagementMonths,
   cadenceMonthlyCostCents,
@@ -218,7 +219,8 @@ describe("mois de gestion dus", () => {
     });
     expect(months).toHaveLength(1);
     expect(months[0]!.index).toBe(1);
-    expect(months[0]!.amountCents).toBe(10_000);
+    // Démarrage un 11 : deuxième semaine, trois quarts du mois restent à courir.
+    expect(months[0]!.amountCents).toBe(7_500);
   });
 
   it("court d'anniversaire en anniversaire, pas en mois calendaires", () => {
@@ -353,7 +355,7 @@ describe("échéances restantes", () => {
 });
 
 describe("réconciliation des mois inscrits", () => {
-  const mois = (dueOn: string, index = 1) => ({ index, dueOn, amountCents: 10_000 });
+  const mois = (dueOn: string, index = 1) => ({ index, dueOn, amountCents: 10_000, fraction: 1 });
 
   it("ajoute ce qui manque", () => {
     const result = reconcileManagementMonths(
@@ -380,5 +382,51 @@ describe("réconciliation des mois inscrits", () => {
     );
     expect(result.toInsert).toEqual([]);
     expect(result.staleIds).toEqual([]);
+  });
+});
+
+describe("prorata du premier mois", () => {
+  it("découpe le mois en quatre semaines de prestation", () => {
+    expect(monthStartFraction("2026-09-01")).toBe(1);
+    expect(monthStartFraction("2026-09-07")).toBe(1);
+    expect(monthStartFraction("2026-09-08")).toBe(0.75);
+    expect(monthStartFraction("2026-09-14")).toBe(0.75);
+    expect(monthStartFraction("2026-09-15")).toBe(0.5);
+    expect(monthStartFraction("2026-09-21")).toBe(0.5);
+    expect(monthStartFraction("2026-09-22")).toBe(0.25);
+    expect(monthStartFraction("2026-09-30")).toBe(0.25);
+  });
+
+  it("ne facture que les semaines restantes du premier mois", () => {
+    const months = dueManagementMonths({
+      contractStartDate: "2026-05-17",
+      contractEndDate: null,
+      monthlyCostCents: 40_000,
+      today: "2026-08-11",
+    });
+    // Démarrage en troisième semaine : la moitié du mois est déjà passée.
+    expect(months[0]!.fraction).toBe(0.5);
+    expect(months[0]!.amountCents).toBe(20_000);
+  });
+
+  it("facture les mois suivants en entier", () => {
+    const months = dueManagementMonths({
+      contractStartDate: "2026-05-17",
+      contractEndDate: null,
+      monthlyCostCents: 40_000,
+      today: "2026-08-11",
+    });
+    expect(months.slice(1).every((month) => month.fraction === 1)).toBe(true);
+    expect(months[1]!.amountCents).toBe(40_000);
+  });
+
+  it("ne rogne rien quand la gestion démarre en début de mois", () => {
+    const months = dueManagementMonths({
+      contractStartDate: "2026-05-04",
+      contractEndDate: null,
+      monthlyCostCents: 40_000,
+      today: "2026-06-01",
+    });
+    expect(months[0]!.amountCents).toBe(40_000);
   });
 });

@@ -70,13 +70,17 @@ export async function syncManagementMonths(
     missing.map((month) => ({
       client_id: client.id,
       service_key: MANAGEMENT_MONTH_KEY,
-      label: `Gestion des réseaux · mois ${month.index}`,
+      label: month.fraction < 1
+        ? `Gestion des réseaux · mois ${month.index} (prorata ${Math.round(month.fraction * 4)}/4)`
+        : `Gestion des réseaux · mois ${month.index}`,
       billing: "ponctuel",
       unit_price_cents: month.amountCents,
       quantity: 1,
       months: null,
       performed_on: month.dueOn,
-      note: "Inscrit automatiquement au début du mois de gestion.",
+      note: month.fraction < 1
+        ? "Premier mois entamé : facturé au prorata des semaines restantes."
+        : "Inscrit automatiquement au début du mois de gestion.",
     })),
   );
 

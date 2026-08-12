@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { Icon } from "@/components/Icon";
 import { billableLines, budgetSummary, formatEuros, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
-import { todayInParis } from "@/lib/domain/client-lifecycle";
+import { clientLifecycle, todayInParis } from "@/lib/domain/client-lifecycle";
 import type { MonthlyCadence } from "@/lib/domain/planning";
 import { invoiceMonths, pendingInvoiceCount, type InvoiceStatus } from "@/lib/domain/invoicing";
 import { syncAllManagementMonths } from "@/lib/budget/management-months";
@@ -16,6 +16,8 @@ interface ClientRow {
   notes: string | null;
   contract_start_date: string | null;
   contract_end_date: string | null;
+  pause_start_date: string | null;
+  pause_end_date: string | null;
   is_active: boolean;
 }
 
@@ -35,7 +37,7 @@ export default async function BudgetPage() {
 
   const { data: clients } = await supabase
     .from("clients")
-    .select("id, name, notes, contract_start_date, contract_end_date, is_active")
+    .select("id, name, notes, contract_start_date, contract_end_date, pause_start_date, pause_end_date, is_active")
     .eq("is_active", true)
     .order("name");
 
@@ -85,7 +87,19 @@ export default async function BudgetPage() {
     linesByClient.set(row.client_id as string, list);
   }
 
-  const rows = ((clients ?? []) as ClientRow[]).map((client) => {
+  /*
+   * Le budget ne suit que les clients en gestion. Un client archivé, en pause
+   * ou dont le contrat est arrivé à terme n'a plus de rythme à financer : le
+   * laisser dans le portefeuille encombre l'écran de dossiers clos.
+   */
+  const managed = ((clients ?? []) as ClientRow[]).filter((client) => clientLifecycle({
+    isActive: client.is_active,
+    contractEndDate: client.contract_end_date,
+    pauseStartDate: client.pause_start_date,
+    pauseEndDate: client.pause_end_date,
+  }, today).canProduce);
+
+  const rows = managed.map((client) => {
     let settings: { monthlyCadence?: MonthlyCadence } = {};
     try {
       settings = typeof client.notes === "string" ? JSON.parse(client.notes) : {};

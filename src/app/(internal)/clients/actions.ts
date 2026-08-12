@@ -420,6 +420,9 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
   revalidatePath("/clients");
   revalidatePath(`/clients/${clientId.data}`);
   revalidatePath("/fiches");
+  // Le budget affiche le nom du client : il doit suivre un renommage.
+  revalidatePath("/budget");
+  revalidatePath(`/budget/${clientId.data}`);
   return { ok: true, message: "Modifications enregistrées.", clientId: clientId.data };
 }
 
