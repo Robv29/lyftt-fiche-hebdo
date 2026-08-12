@@ -18,7 +18,7 @@ export function GET() {
   return NextResponse.json({
     // Marqueur de build : permet de savoir si le déploiement contient bien
     // le dernier commit poussé.
-    marqueur: "diagnostic-v2",
+    marqueur: "diagnostic-v3",
     // Sans l'une de ces variables, l'application ne démarre pas.
     indispensable: {
       NEXT_PUBLIC_SUPABASE_URL: Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL),

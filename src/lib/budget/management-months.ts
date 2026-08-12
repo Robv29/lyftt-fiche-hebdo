@@ -43,13 +43,34 @@ export async function syncManagementMonths(
 
   const { data: existing } = await supabase
     .from("client_budget_lines")
-    .select("performed_on")
+    .select("id, performed_on")
     .eq("client_id", client.id)
     .eq("service_key", MANAGEMENT_MONTH_KEY);
 
-  const already = new Set((existing ?? []).map((row) => row.performed_on as string));
+  /*
+   * Réconciliation, et pas seulement ajout.
+   *
+   * Une ligne posée à une date qui n'est plus attendue — règle de facturation
+   * corrigée, date de début rectifiée, fin de gestion avancée — resterait
+   * sinon en place indéfiniment, et s'ajouterait aux nouvelles. On la retire :
+   * l'ensemble des mois dus est entièrement déterminé par la fiche client.
+   */
+  const expectedDates = new Set(expected.map((month) => month.dueOn));
+  const stale = (existing ?? []).filter((row) => !expectedDates.has(row.performed_on as string));
+  if (stale.length > 0) {
+    await supabase
+      .from("client_budget_lines")
+      .delete()
+      .in("id", stale.map((row) => row.id as string));
+  }
+
+  const already = new Set(
+    (existing ?? [])
+      .filter((row) => expectedDates.has(row.performed_on as string))
+      .map((row) => row.performed_on as string),
+  );
   const missing = expected.filter((month) => !already.has(month.dueOn));
-  if (missing.length === 0) return 0;
+  if (missing.length === 0) return stale.length;
 
   const { error } = await supabase.from("client_budget_lines").insert(
     missing.map((month) => ({
@@ -68,7 +89,7 @@ export async function syncManagementMonths(
   // Un conflit signifie qu'une autre exécution a déjà inscrit le mois : c'est
   // exactement ce que l'index unique doit produire, il n'y a rien à signaler.
   if (error && error.code !== "23505") throw new Error(error.message);
-  return missing.length;
+  return missing.length + stale.length;
 }
 
 /** Parse le rythme mensuel stocké dans les réglages du client. */

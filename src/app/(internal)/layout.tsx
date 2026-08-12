@@ -32,7 +32,7 @@ export default async function InternalLayout({
         { href: "/indicateurs", label: "Indicateurs", icon: "chart", badge: null },
         ...(profile.role === "super_admin"
           ? [
-              { href: "/budget", label: "Budget", icon: "chart", badge: null },
+              { href: "/budget", label: "Budget", icon: "euro", badge: null },
               { href: "/utilisateurs", label: "Équipe", icon: "settings", badge: null },
             ]
           : []),

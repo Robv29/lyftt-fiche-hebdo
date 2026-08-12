@@ -5,6 +5,7 @@ import { sheetStatusLabel, ticketStatusLabel, ticketPriorityLabel } from "@/lib/
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
 import { requiresProduction } from "@/lib/domain/routing";
 import { Icon } from "@/components/Icon";
+import { planningWeekRange } from "@/lib/domain/planning";
 
 function todayInParis(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -21,7 +22,15 @@ export default async function DashboardPage() {
     supabase.from("weekly_sheets").select("id, iso_week, status, validation_deadline_at, clients ( name )").in("status", ["sent_to_client", "partially_approved", "changes_requested", "corrections_in_progress", "new_version_to_send", "awaiting_revalidation"]).order("validation_deadline_at", { ascending: true }).limit(120),
     supabase.from("weekly_sheet_items").select("id, published_at").eq("scheduled_date", today).eq("is_cancelled", false),
     supabase.from("clients").select("id", { count: "exact", head: true }).eq("is_active", true),
-    supabase.from("weekly_sheets").select("id", { count: "exact", head: true }).in("status", ["draft", "internal_review"]),
+    /*
+     * Fiches à préparer : celles de la semaine prochaine, seule échéance qui
+     * appelle une action. Compter tous les brouillons y mêlait des fiches
+     * anciennes restées en préparation, et le chiffre ne voulait plus rien dire.
+     */
+    supabase.from("weekly_sheets").select("id", { count: "exact", head: true })
+      .in("status", ["draft", "internal_review"])
+      .gte("period_start", planningWeekRange().nextStart)
+      .lte("period_start", planningWeekRange().nextEnd),
   ]);
 
   const tickets = ticketsResult.data ?? [];

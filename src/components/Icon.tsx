@@ -23,6 +23,7 @@ const paths: Record<string, React.ReactNode> = {
   photo: <><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m21 15-4-4L6 20"/></>,
   video: <><rect x="3" y="5" width="14" height="14" rx="3"/><path d="m17 10 4-2v8l-4-2z"/></>,
   warning: <><path d="M10.3 3.7 2.7 17a2 2 0 0 0 1.7 3h15.2a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></>,
+  euro: <><path d="M17 5.5A6.5 6.5 0 0 0 7.2 9m0 6A6.5 6.5 0 0 0 17 18.5"/><path d="M4 10.5h9M4 14h9"/></>,
 };
 
 export function Icon({ name, ...props }: { name: string } & SVGProps<SVGSVGElement>) {
