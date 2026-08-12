@@ -108,10 +108,17 @@ export default async function BudgetPage() {
       billableLines(linesByClient.get(client.id) ?? [], mode),
       invoiceStatusByClient.get(client.id) ?? {},
     ));
-    return { client, summary, toInvoice };
+    /*
+     * Sans date de début, aucun mois n'est dû : le consommé reste à zéro et,
+     * au comptant, aucune facture mensuelle n'est jamais créée. Un zéro muet
+     * se lit comme un bug ; il faut dire pourquoi.
+     */
+    const missingStart = !client.contract_start_date;
+    return { client, summary, toInvoice, missingStart };
   });
 
   const totalToInvoice = rows.reduce((total, row) => total + row.toInvoice, 0);
+  const missingStart = rows.filter((row) => row.missingStart);
   const financed = rows.filter((row) => row.summary.applicable);
   const cash = rows.filter((row) => !row.summary.applicable);
   const critical = financed.filter((row) =>
@@ -137,6 +144,29 @@ export default async function BudgetPage() {
           )}
         </Link>
       </header>
+
+      {missingStart.length > 0 && (
+        <section className="card border-state-changes/40 bg-state-changes/5 p-5">
+          <div className="flex items-start gap-3">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-state-changes/10 text-state-changes">
+              <Icon name="warning" className="h-5 w-5"/>
+            </span>
+            <div>
+              <strong className="text-sm text-state-changes">
+                {missingStart.length} client{missingStart.length > 1 ? "s" : ""} sans date de début de gestion
+              </strong>
+              <p className="mt-1 text-xs leading-relaxed text-ink-soft">
+                Aucun mois n&apos;est décompté pour eux : leur budget consommé reste à
+                0 €, et aucune facture mensuelle n&apos;est établie. Renseignez la date
+                sur leur fiche client.
+              </p>
+              <p className="mt-2 text-xs font-semibold text-state-changes">
+                {missingStart.map((row) => row.client.name).join(" · ")}
+              </p>
+            </div>
+          </div>
+        </section>
+      )}
 
       {critical.length > 0 && (
         <section className="card border-state-changes/40 bg-state-changes/5 p-5">
@@ -236,13 +266,15 @@ export default async function BudgetPage() {
           <p className="card px-4 py-6 text-center text-sm text-ink-faint">Aucun client au comptant.</p>
         ) : (
           <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {cash.map(({ client, toInvoice }) => (
+            {cash.map(({ client, toInvoice, missingStart: sansDebut }) => (
               <li key={client.id}>
-                <Link href={`/budget/${client.id}`} className="card flex items-center justify-between gap-3 px-4 py-3 text-sm hover:bg-canvas">
+                <Link href={`/budget/${client.id}`} className={`card flex items-center justify-between gap-3 px-4 py-3 text-sm hover:bg-canvas ${sansDebut ? "border-state-changes/40" : ""}`}>
                   <span className="truncate text-ink-soft">{client.name}</span>
-                  {toInvoice > 0
-                    ? <span className="badge shrink-0 bg-[#fff4e5] text-[#8a5700]">{toInvoice} à facturer</span>
-                    : <span className="badge shrink-0 bg-canvas text-ink-faint">À jour</span>}
+                  {sansDebut
+                    ? <span className="badge shrink-0 bg-state-changes/10 text-state-changes">Début manquant</span>
+                    : toInvoice > 0
+                      ? <span className="badge shrink-0 bg-[#fff4e5] text-[#8a5700]">{toInvoice} à facturer</span>
+                      : <span className="badge shrink-0 bg-canvas text-ink-faint">À jour</span>}
                 </Link>
               </li>
             ))}

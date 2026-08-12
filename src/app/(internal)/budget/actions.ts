@@ -312,3 +312,54 @@ export async function deleteMonthInvoice(
     message: `Facture supprimée : ${count ?? 0} prestation${(count ?? 0) > 1 ? "s" : ""} retirée${(count ?? 0) > 1 ? "s" : ""}.`,
   };
 }
+
+const datesSchema = z.object({
+  clientId: z.string().uuid(),
+  contractStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+  contractEndDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+});
+
+/**
+ * Dates de gestion, modifiables depuis l'écran budget.
+ *
+ * C'est là qu'on s'aperçoit qu'elles manquent — un consommé à zéro, aucune
+ * facture mensuelle. Obliger à rouvrir la fiche client pour les saisir garantit
+ * qu'on remet à plus tard.
+ */
+export async function saveContractDates(formData: FormData): Promise<BudgetActionResult> {
+  const profile = await requireAdmin();
+  if (!profile) return { ok: false, message: ACCESS_DENIED };
+
+  const read = (name: string) => {
+    const value = formData.get(name);
+    return typeof value === "string" && value.trim() !== "" ? value : null;
+  };
+
+  const parsed = datesSchema.safeParse({
+    clientId: formData.get("clientId"),
+    contractStartDate: read("contractStartDate"),
+    contractEndDate: read("contractEndDate"),
+  });
+  if (!parsed.success) return { ok: false, message: "Dates invalides." };
+
+  if (parsed.data.contractStartDate && parsed.data.contractEndDate
+    && parsed.data.contractEndDate < parsed.data.contractStartDate) {
+    return { ok: false, message: "La fin de gestion précède son début." };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase
+    .from("clients")
+    .update({
+      contract_start_date: parsed.data.contractStartDate,
+      contract_end_date: parsed.data.contractEndDate,
+    })
+    .eq("id", parsed.data.clientId);
+
+  if (error) return { ok: false, message: `Enregistrement impossible : ${error.message}` };
+
+  revalidatePath("/budget");
+  revalidatePath(`/budget/${parsed.data.clientId}`);
+  revalidatePath("/clients");
+  return { ok: true, message: "Dates de gestion enregistrées." };
+}

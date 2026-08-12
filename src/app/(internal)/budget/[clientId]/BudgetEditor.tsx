@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import {
@@ -23,7 +22,7 @@ import {
   pendingInvoiceCount,
   type InvoiceMonth,
 } from "@/lib/domain/invoicing";
-import { addBudgetLine, deleteMonthInvoice, removeBudgetLine, saveBudgetSettings, setInvoiceStatus, type BudgetActionResult } from "../actions";
+import { addBudgetLine, deleteMonthInvoice, removeBudgetLine, saveBudgetSettings, saveContractDates, setInvoiceStatus, type BudgetActionResult } from "../actions";
 
 type EditorLine = BudgetLine & { note: string | null };
 
@@ -90,26 +89,58 @@ export function BudgetEditor({
         ni le reliquat ne peuvent être calculés. L'alerte doit être impossible
         à manquer, et mener directement à l'endroit où corriger.
       */}
-      {financed && !contractEndDate && (
+      {(!contractStartDate || !contractEndDate) && (
         <section className="card border-2 border-state-changes bg-state-changes/5 p-5">
           <div className="flex items-start gap-3">
             <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-state-changes text-white">
-              <Icon name="message" className="h-5 w-5"/>
+              <Icon name="warning" className="h-5 w-5"/>
             </span>
-            <div>
-              <strong className="text-base text-state-changes">Date de fin de gestion manquante</strong>
+            <div className="min-w-0 flex-1">
+              <strong className="text-base text-state-changes">
+                {!contractStartDate && !contractEndDate
+                  ? "Dates de gestion manquantes"
+                  : !contractStartDate ? "Date de début de gestion manquante" : "Date de fin de gestion manquante"}
+              </strong>
               <p className="mt-1 text-sm leading-relaxed text-ink-soft">
-                Impossible de calculer quoi que ce soit sans elle : ni le budget restant
-                par mois, ni le reliquat à la fin, ni l&apos;alerte de rythme. Le suivi de
-                {" "}{clientName} est à l&apos;aveugle tant qu&apos;elle n&apos;est pas renseignée.
+                {!contractStartDate
+                  ? `Sans date de début, aucun mois n'est décompté : le consommé de ${clientName} reste à zéro et aucune facture mensuelle n'est établie.`
+                  : `Sans date de fin, ni le budget restant par mois, ni le reliquat, ni l'alerte de rythme ne peuvent être calculés. Le suivi de ${clientName} est à l'aveugle.`}
               </p>
-              <Link href={`/clients/${clientId}`} className="btn-primary mt-3 inline-flex">
-                Renseigner la date de fin
-              </Link>
             </div>
           </div>
         </section>
       )}
+
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          const formData = new FormData(event.currentTarget);
+          run(() => saveContractDates(formData));
+        }}
+        className="card space-y-4 p-5"
+      >
+        <div>
+          <h2 className="font-semibold">Période de gestion</h2>
+          <p className="mt-1 text-xs text-ink-faint">
+            Le début déclenche le décompte des mois ; la fin l&apos;arrête. Modifiables
+            ici comme sur la fiche client.
+          </p>
+        </div>
+        <input type="hidden" name="clientId" value={clientId}/>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label className="label" htmlFor="contractStartDate">Début de gestion</label>
+            <input id="contractStartDate" name="contractStartDate" type="date" className={`field ${contractStartDate ? "" : "border-state-changes"}`} defaultValue={contractStartDate ?? ""}/>
+          </div>
+          <div>
+            <label className="label" htmlFor="contractEndDate">Fin de gestion</label>
+            <input id="contractEndDate" name="contractEndDate" type="date" className={`field ${contractEndDate ? "" : "border-state-changes"}`} defaultValue={contractEndDate ?? ""}/>
+          </div>
+        </div>
+        <button type="submit" className="btn-primary" disabled={pending}>
+          {pending ? "Enregistrement…" : "Enregistrer les dates"}
+        </button>
+      </form>
 
       <form
         onSubmit={(event) => {
