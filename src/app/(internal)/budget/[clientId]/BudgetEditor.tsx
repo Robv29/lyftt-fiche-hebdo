@@ -553,14 +553,12 @@ function SummaryPanel({
         <div
           key={alert.title}
           className={`card p-4 ${
-            alert.level === "critique"
-              ? "border-state-changes/40 bg-state-changes/5"
-              : alert.level === "attention"
-                ? "border-[#f0c36d] bg-[#fff8ec]"
-                : "border-state-approved/30 bg-state-approved/5"
+            alert.level === "info"
+              ? "border-state-approved/30 bg-state-approved/5"
+              : "border-state-changes/40 bg-state-changes/5"
           }`}
         >
-          <strong className={`text-sm ${alert.level === "critique" ? "text-state-changes" : alert.level === "attention" ? "text-[#8a5700]" : "text-state-approved"}`}>
+          <strong className={`text-sm ${alert.level === "info" ? "text-state-approved" : "text-state-changes"}`}>
             {alert.title}
           </strong>
           <p className="mt-1 text-xs leading-relaxed text-ink-soft">{alert.detail}</p>

@@ -78,12 +78,34 @@ const approveItemSchema = z.object({
   clientName: z.string().trim().max(120).optional(),
 });
 
+/**
+ * Constate que la fiche est bien entre les mains du client.
+ *
+ * Le recalcul de statut refuse de faire évoluer une fiche encore marquée
+ * « brouillon » — protection contre les remous de la préparation interne.
+ * Mais une action passée par un lien de validation valide **prouve** que le
+ * client l'a reçue : sans cette promotion, une fiche entièrement validée
+ * restait affichée en brouillon, et n'alimentait ni le planning ni les
+ * publications.
+ */
+async function ensureSheetIsWithClient(sheetId: string): Promise<void> {
+  const supabase = createSupabaseAdminClient();
+  await supabase
+    .from("weekly_sheets")
+    .update({ status: "sent_to_client" })
+    .eq("id", sheetId)
+    .in("status", ["draft", "internal_review", "ready_to_send"]);
+}
+
 export async function approveItem(
   token: string,
   formData: FormData,
 ): Promise<ActionResult> {
   const link = await requireLink(token);
   if (!link.ok) return link.result;
+
+  // Le client agit : la fiche est chez lui, quel que soit son marquage interne.
+  await ensureSheetIsWithClient(link.context.sheetId);
 
   const parsed = approveItemSchema.safeParse({
     itemId: formData.get("itemId"),
@@ -150,6 +172,9 @@ export async function approveAll(
 ): Promise<ActionResult> {
   const link = await requireLink(token);
   if (!link.ok) return link.result;
+
+  // Le client agit : la fiche est chez lui, quel que soit son marquage interne.
+  await ensureSheetIsWithClient(link.context.sheetId);
 
   if (!rateLimit("approval", link.context.linkId).allowed) {
     return { ok: false, message: "Trop d'actions successives. Réessayez dans un instant." };
@@ -264,6 +289,9 @@ export async function createTicket(
 ): Promise<ActionResult> {
   const link = await requireLink(token);
   if (!link.ok) return link.result;
+
+  // Le client agit : la fiche est chez lui, quel que soit son marquage interne.
+  await ensureSheetIsWithClient(link.context.sheetId);
 
   if (!rateLimit("ticketCreation", link.context.linkId).allowed) {
     return {

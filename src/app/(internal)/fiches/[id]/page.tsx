@@ -211,7 +211,7 @@ export default async function SheetDetailPage({
         </p>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="space-y-6">
           {sheetIsEditable ? (
             <SheetContentEditor

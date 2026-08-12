@@ -195,10 +195,10 @@ export function SheetContentEditor({ sheetId, clientId, clientName, initialItems
               <input type="time" className="field" aria-label={`Heure de la publication ${index + 1}`} value={item.scheduledTime.slice(0, 5)} onChange={(event) => update(item.id, { scheduledTime: event.target.value })}/>
               <select className="field" aria-label={`Format de la publication ${index + 1}`} value={item.format} onChange={(event) => update(item.id, { format: event.target.value as MediaFormat, ...EMPTY_UPLOAD })}>{Object.entries(MEDIA_FORMAT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
             </div>
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(16rem,.8fr)]">
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
               <div className="space-y-3">
-                <div><label className="label" htmlFor={`caption-${item.id}`}>Texte libre</label><textarea id={`caption-${item.id}`} rows={5} className="field" value={item.caption} placeholder="Écrivez le texte de la publication…" onChange={(event) => update(item.id, { caption: event.target.value })}/></div>
-                <div><label className="label" htmlFor={`hashtags-${item.id}`}>Hashtags</label><textarea id={`hashtags-${item.id}`} rows={2} className="field" value={item.hashtags} onChange={(event) => update(item.id, { hashtags: event.target.value })}/></div>
+                <div><label className="label" htmlFor={`caption-${item.id}`}>Texte libre</label><textarea id={`caption-${item.id}`} rows={7} className="field" value={item.caption} placeholder="Écrivez le texte de la publication…" onChange={(event) => update(item.id, { caption: event.target.value })}/></div>
+                <div><label className="label" htmlFor={`hashtags-${item.id}`}>Hashtags</label><textarea id={`hashtags-${item.id}`} rows={3} className="field" value={item.hashtags} onChange={(event) => update(item.id, { hashtags: event.target.value })}/></div>
               </div>
               <div>
                 <span className="label">Média · {MEDIA_FORMAT_LABELS[item.format]}</span>
@@ -206,7 +206,7 @@ export function SheetContentEditor({ sheetId, clientId, clientName, initialItems
                   <div className="space-y-2">
                     {/* Le média est visible, pas seulement nommé : c'est ce que verra le client. */}
                     {item.mediaUrl && !item.mediaCleared && (
-                      <figure className={`mx-auto w-full max-w-[220px] overflow-hidden rounded-2xl border border-line ${mediaFrameBackground(item.format)}`}>
+                      <figure className={`mx-auto w-full max-w-[180px] overflow-hidden rounded-2xl border border-line ${mediaFrameBackground(item.format)}`}>
                         <div className={mediaFrameClass(item.format)}>
                           {item.mediaKind === "video"
                             ? <video controls playsInline preload="metadata" className="block h-full w-full object-contain"><source src={item.mediaUrl}/></video>

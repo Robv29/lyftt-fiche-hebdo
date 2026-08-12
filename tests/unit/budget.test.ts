@@ -5,6 +5,8 @@ import {
   budgetSummary,
   BASE_MONTHLY_FEE_CENTS,
   dueManagementMonths,
+  monthsRemainingToBill,
+  reconcileManagementMonths,
   cadenceMonthlyCostCents,
   findService,
   envelopeLines,
@@ -302,5 +304,79 @@ describe("prestation facturée hors enveloppe", () => {
       line({ id: "m", serviceKey: MANAGEMENT_MONTH_KEY }),
     ];
     expect(billableLines(lines, "comptant").map((l) => l.id)).toEqual(["a", "m"]);
+  });
+});
+
+describe("échéances restantes", () => {
+  it("compte des échéances, pas une fraction de mois", () => {
+    // Du 11 août au 30 novembre : 4 septembre, 4 octobre, 4 novembre.
+    expect(monthsRemainingToBill({
+      contractStartDate: "2026-05-04",
+      contractEndDate: "2026-11-30",
+      today: "2026-08-11",
+    })).toBe(3);
+  });
+
+  it("exclut l'échéance du jour, déjà facturée", () => {
+    expect(monthsRemainingToBill({
+      contractStartDate: "2026-05-04",
+      contractEndDate: "2026-09-30",
+      today: "2026-09-04",
+    })).toBe(0);
+  });
+
+  it("ne compte rien sans date de fin", () => {
+    expect(monthsRemainingToBill({
+      contractStartDate: "2026-05-04",
+      contractEndDate: null,
+      today: "2026-08-11",
+    })).toBe(0);
+  });
+
+  it("projette le budget sur ces échéances", () => {
+    const summary = budgetSummary({
+      billingMode: "financement",
+      annualBudgetCents: 504_000,
+      lines: [],
+      cadence: { photo: 12, video: 4 },
+      contractStartDate: "2026-05-04",
+      contractEndDate: "2026-11-30",
+      today: "2026-08-11",
+    });
+    expect(summary.monthsRemaining).toBe(3);
+    // 510 € par mois : forfait de base compris.
+    expect(summary.monthlyCadenceCostCents).toBe(51_000);
+    expect(summary.projectedCents).toBe(153_000);
+  });
+});
+
+describe("réconciliation des mois inscrits", () => {
+  const mois = (dueOn: string, index = 1) => ({ index, dueOn, amountCents: 10_000 });
+
+  it("ajoute ce qui manque", () => {
+    const result = reconcileManagementMonths(
+      [mois("2026-05-04", 1), mois("2026-06-04", 2)],
+      [{ id: "a", performedOn: "2026-05-04" }],
+    );
+    expect(result.toInsert.map((m) => m.dueOn)).toEqual(["2026-06-04"]);
+    expect(result.staleIds).toEqual([]);
+  });
+
+  it("retire ce qui n'est plus attendu", () => {
+    const result = reconcileManagementMonths(
+      [mois("2026-05-04")],
+      [{ id: "a", performedOn: "2026-05-04" }, { id: "vieux", performedOn: "2026-06-04" }],
+    );
+    expect(result.staleIds).toEqual(["vieux"]);
+    expect(result.toInsert).toEqual([]);
+  });
+
+  it("ne bouge rien quand tout concorde", () => {
+    const result = reconcileManagementMonths(
+      [mois("2026-05-04")],
+      [{ id: "a", performedOn: "2026-05-04" }],
+    );
+    expect(result.toInsert).toEqual([]);
+    expect(result.staleIds).toEqual([]);
   });
 });

@@ -6,6 +6,7 @@ import { billableLines, budgetSummary, formatEuros, type BillingMode, type Budge
 import { todayInParis } from "@/lib/domain/client-lifecycle";
 import type { MonthlyCadence } from "@/lib/domain/planning";
 import { invoiceMonths, pendingInvoiceCount, type InvoiceStatus } from "@/lib/domain/invoicing";
+import { syncAllManagementMonths } from "@/lib/budget/management-months";
 
 export const dynamic = "force-dynamic";
 
@@ -32,12 +33,20 @@ export default async function BudgetPage() {
   const supabase = await createSupabaseServerClient();
   const today = todayInParis();
 
-  const [{ data: clients }, { data: budgets }, { data: lines }] = await Promise.all([
-    supabase
-      .from("clients")
-      .select("id, name, notes, contract_start_date, contract_end_date, is_active")
-      .eq("is_active", true)
-      .order("name"),
+  const { data: clients } = await supabase
+    .from("clients")
+    .select("id, name, notes, contract_start_date, contract_end_date, is_active")
+    .eq("is_active", true)
+    .order("name");
+
+  /*
+   * Les échéances tombées depuis le dernier passage de la tâche planifiée sont
+   * inscrites avant l'affichage : sans cela, le consommé restait sous-évalué
+   * jusqu'à ce qu'on ouvre la fiche de chaque client.
+   */
+  await syncAllManagementMonths(supabase, clients ?? []);
+
+  const [{ data: budgets }, { data: lines }] = await Promise.all([
     supabase.from("client_budgets").select("client_id, billing_mode, budget_cents"),
     supabase
       .from("client_budget_lines")
@@ -165,7 +174,7 @@ export default async function BudgetPage() {
                 ?? summary.alerts.find((alert) => alert.level === "attention");
               const overspent = summary.remainingCents < 0;
               return (
-                <li key={client.id} className={`card lift-card p-5 ${worst?.level === "critique" ? "border-state-changes/40" : ""}`}>
+                <li key={client.id} className={`card lift-card p-5 ${worst ? "border-state-changes/40" : ""}`}>
                   <Link href={`/budget/${client.id}`} className="block">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -204,7 +213,7 @@ export default async function BudgetPage() {
                     </div>
 
                     {worst && (
-                      <p className={`mt-3 rounded-xl px-3 py-2 text-[11px] leading-relaxed ${worst.level === "critique" ? "bg-state-changes/10 text-state-changes" : "bg-[#fff4e5] text-[#8a5700]"}`}>
+                      <p className="mt-3 rounded-xl bg-state-changes/10 px-3 py-2 text-[11px] leading-relaxed text-state-changes">
                         {worst.title}
                       </p>
                     )}

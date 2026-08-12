@@ -162,7 +162,7 @@ function MediaDropzone({ item, onFile }: { item: DraftItem; onFile: (file: File 
   const failed = item.mediaStatus === "erreur";
 
   const preview = item.mediaPreviewUrl && (
-    <span className={`mb-3 block w-full max-w-[132px] overflow-hidden rounded-xl border border-line ${mediaFrameBackground(item.format)}`}>
+    <span className={`mb-3 block w-full max-w-[110px] overflow-hidden rounded-xl border border-line ${mediaFrameBackground(item.format)}`}>
       <span className={`block ${mediaFrameClass(item.format)}`}>
         {item.mediaPreviewKind === "video"
           ? <video src={item.mediaPreviewUrl} muted playsInline preload="metadata" className="block h-full w-full object-contain"/>

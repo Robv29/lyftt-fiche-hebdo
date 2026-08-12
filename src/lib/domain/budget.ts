@@ -340,6 +340,54 @@ export function monthsBetween(from: string, to: string): number {
   return Math.max(0, days / 30.44);
 }
 
+/**
+ * Mois de gestion restant à facturer d'ici la fin.
+ *
+ * La facturation tombe à date fixe, pas au prorata : entre le 11 août et le
+ * 30 novembre il reste trois échéances — 4 septembre, 4 octobre, 4 novembre —
+ * et non 3,6 mois. Projeter sur une fraction de mois donnait un reliquat et un
+ * rythme à tenir faux de près de 20 %.
+ */
+export function monthsRemainingToBill(input: {
+  contractStartDate: string | null;
+  contractEndDate: string | null;
+  today: string;
+}): number {
+  if (!input.contractEndDate) return 0;
+  if (!input.contractStartDate) {
+    // Sans date de début, aucune échéance connue : on retombe sur la durée.
+    return monthsBetween(input.today, input.contractEndDate);
+  }
+
+  let count = 0;
+  for (let index = 1; index <= 120; index += 1) {
+    const dueOn = addMonths(input.contractStartDate, index - 1);
+    if (dueOn > input.contractEndDate) break;
+    if (dueOn > input.today) count += 1;
+  }
+  return count;
+}
+
+/**
+ * Écart entre les mois attendus et ceux déjà inscrits.
+ *
+ * Rend la synchronisation idempotente et auto-corrective : ce qui manque est
+ * ajouté, ce qui ne devrait plus exister est retiré.
+ */
+export function reconcileManagementMonths(
+  expected: ManagementMonth[],
+  existing: { id: string; performedOn: string }[],
+): { toInsert: ManagementMonth[]; staleIds: string[] } {
+  const expectedDates = new Set(expected.map((month) => month.dueOn));
+  const presentDates = new Set(
+    existing.filter((row) => expectedDates.has(row.performedOn)).map((row) => row.performedOn),
+  );
+  return {
+    toInsert: expected.filter((month) => !presentDates.has(month.dueOn)),
+    staleIds: existing.filter((row) => !expectedDates.has(row.performedOn)).map((row) => row.id),
+  };
+}
+
 export type BudgetAlertLevel = "critique" | "attention" | "info";
 
 export interface BudgetAlert {
@@ -429,9 +477,11 @@ export function budgetSummary(input: BudgetInput): BudgetSummary {
   }
 
   const remainingCents = budgetCents - consumedCents;
-  const monthsRemaining = input.contractEndDate
-    ? monthsBetween(input.today, input.contractEndDate)
-    : 0;
+  const monthsRemaining = monthsRemainingToBill({
+    contractStartDate: input.contractStartDate,
+    contractEndDate: input.contractEndDate,
+    today: input.today,
+  });
   const projectedCents = consumedCents + monthlyCadenceCostCents * monthsRemaining;
   const targetMonthlyCents = monthsRemaining > 0
     ? Math.round(remainingCents / monthsRemaining)
