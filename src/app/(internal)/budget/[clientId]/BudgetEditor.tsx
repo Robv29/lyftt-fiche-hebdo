@@ -555,10 +555,12 @@ function SummaryPanel({
           className={`card p-4 ${
             alert.level === "info"
               ? "border-state-approved/30 bg-state-approved/5"
-              : "border-state-changes/40 bg-state-changes/5"
+              : alert.level === "reliquat"
+                ? "border-[#f0c36d] bg-[#fff8ec]"
+                : "border-state-changes/40 bg-state-changes/5"
           }`}
         >
-          <strong className={`text-sm ${alert.level === "info" ? "text-state-approved" : "text-state-changes"}`}>
+          <strong className={`text-sm ${alert.level === "info" ? "text-state-approved" : alert.level === "reliquat" ? "text-[#8a5700]" : "text-state-changes"}`}>
             {alert.title}
           </strong>
           <p className="mt-1 text-xs leading-relaxed text-ink-soft">{alert.detail}</p>

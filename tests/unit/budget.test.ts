@@ -146,7 +146,9 @@ describe("synthèse budgétaire", () => {
   it("alerte quand le budget ne sera pas consommé", () => {
     const summary = budgetSummary({ ...base, annualBudgetCents: 2_000_000 });
     expect(summary.projectedGapCents).toBeLessThan(0);
-    expect(summary.alerts.some((a) => a.title === "Budget non consommé à la fin")).toBe(true);
+    const alert = summary.alerts.find((a) => a.title === "Budget non consommé à la fin");
+    // Un manque à gagner rattrapable, pas une erreur : signalé sans alarmer.
+    expect(alert?.level).toBe("reliquat");
   });
 
   it("ne compte que ce qui est inscrit à l'addition", () => {

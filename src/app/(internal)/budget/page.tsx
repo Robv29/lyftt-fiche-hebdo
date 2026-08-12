@@ -171,10 +171,11 @@ export default async function BudgetPage() {
           <ul className="grid gap-4 lg:grid-cols-2">
             {financed.map(({ client, summary }) => {
               const worst = summary.alerts.find((alert) => alert.level === "critique")
-                ?? summary.alerts.find((alert) => alert.level === "attention");
+                ?? summary.alerts.find((alert) => alert.level === "attention")
+                ?? summary.alerts.find((alert) => alert.level === "reliquat");
               const overspent = summary.remainingCents < 0;
               return (
-                <li key={client.id} className={`card lift-card p-5 ${worst ? "border-state-changes/40" : ""}`}>
+                <li key={client.id} className={`card lift-card p-5 ${worst && worst.level !== "reliquat" ? "border-state-changes/40" : ""}`}>
                   <Link href={`/budget/${client.id}`} className="block">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -213,7 +214,7 @@ export default async function BudgetPage() {
                     </div>
 
                     {worst && (
-                      <p className="mt-3 rounded-xl bg-state-changes/10 px-3 py-2 text-[11px] leading-relaxed text-state-changes">
+                      <p className={`mt-3 rounded-xl px-3 py-2 text-[11px] leading-relaxed ${worst.level === "reliquat" ? "bg-[#fff4e5] text-[#8a5700]" : "bg-state-changes/10 text-state-changes"}`}>
                         {worst.title}
                       </p>
                     )}

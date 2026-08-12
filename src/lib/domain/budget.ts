@@ -388,7 +388,12 @@ export function reconcileManagementMonths(
   };
 }
 
-export type BudgetAlertLevel = "critique" | "attention" | "info";
+/*
+ * Un dépassement est une erreur à corriger : rouge. Un reliquat est un manque
+ * à gagner, ennuyeux mais sans rien de cassé, et il reste du temps pour le
+ * rattraper : orange.
+ */
+export type BudgetAlertLevel = "critique" | "attention" | "reliquat" | "info";
 
 export interface BudgetAlert {
   level: BudgetAlertLevel;
@@ -541,7 +546,7 @@ export function budgetSummary(input: BudgetInput): BudgetSummary {
       });
     } else if (gap < -tolerance) {
       alerts.push({
-        level: "attention",
+        level: "reliquat",
         title: "Budget non consommé à la fin",
         detail:
           `Au rythme actuel, il restera ${formatEuros(-gap)} au `
