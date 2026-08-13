@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { Icon } from "@/components/Icon";
-import { billableLines, budgetSummary, formatEuros, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
+import { BILLING_MODE_LABELS, billableLines, budgetSummary, formatEuros, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
 import { clientLifecycle, todayInParis } from "@/lib/domain/client-lifecycle";
 import type { MonthlyCadence } from "@/lib/domain/planning";
 import { invoiceMonths, pendingInvoiceCount, type InvoiceStatus } from "@/lib/domain/invoicing";
@@ -128,7 +128,7 @@ export default async function BudgetPage() {
      * se lit comme un bug ; il faut dire pourquoi.
      */
     const missingStart = !client.contract_start_date;
-    return { client, summary, toInvoice, missingStart };
+    return { client, summary, toInvoice, missingStart, mode };
   });
 
   const totalToInvoice = rows.reduce((total, row) => total + row.toInvoice, 0);
@@ -205,15 +205,15 @@ export default async function BudgetPage() {
       )}
 
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold">Clients en financement</h2>
+        <h2 className="text-sm font-semibold">Clients avec enveloppe</h2>
         {financed.length === 0 ? (
           <p className="card px-4 py-8 text-center text-sm text-ink-faint">
-            Aucun client en financement. Ouvrez une fiche pour basculer un client
-            du comptant vers le financement.
+            Aucun client avec enveloppe. Ouvrez une fiche pour basculer un client
+            du comptant vers le financement ou l&apos;hybride.
           </p>
         ) : (
           <ul className="grid gap-4 lg:grid-cols-2">
-            {financed.map(({ client, summary }) => {
+            {financed.map(({ client, summary, mode, toInvoice }) => {
               const worst = summary.alerts.find((alert) => alert.level === "critique")
                 ?? summary.alerts.find((alert) => alert.level === "attention")
                 ?? summary.alerts.find((alert) => alert.level === "reliquat");
@@ -224,6 +224,10 @@ export default async function BudgetPage() {
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <h3 className="truncate font-semibold">{client.name}</h3>
+                        <p className="mt-1 flex flex-wrap items-center gap-2">
+                          <span className="badge bg-[#e8f2ff] text-[#0b5e9f]">{BILLING_MODE_LABELS[mode]}</span>
+                          {toInvoice > 0 && <span className="badge bg-[#fff4e5] text-[#8a5700]">{toInvoice} à facturer</span>}
+                        </p>
                         <p className="mt-1 text-xs text-ink-faint">
                           {client.contract_end_date
                             ? `Fin de gestion : ${client.contract_end_date}`

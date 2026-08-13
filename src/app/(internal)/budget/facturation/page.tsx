@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
-import { lineTotalCents, type BudgetLine } from "@/lib/domain/budget";
+import { billableLines, lineTotalCents, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
 import { monthKey, monthLabel, type InvoiceStatus } from "@/lib/domain/invoicing";
 import { InvoiceRun, type MonthDossier } from "./InvoiceRun";
 
@@ -39,13 +39,11 @@ export default async function InvoicingPage() {
 
   /*
    * Un client sans réglage de budget est au comptant : c'est la valeur par
-   * défaut de la colonne, et le cas le plus courant. Le financement est une
-   * exception qu'on déclare.
+   * défaut de la colonne, et le cas le plus courant. Le financement et
+   * l'hybride sont des exceptions qu'on déclare.
    */
-  const financedIds = new Set(
-    (budgets ?? [])
-      .filter((row) => row.billing_mode === "financement")
-      .map((row) => row.client_id as string),
+  const modeByClient = new Map<string, BillingMode>(
+    (budgets ?? []).map((row) => [row.client_id as string, (row.billing_mode ?? "comptant") as BillingMode]),
   );
   const nameById = new Map((clients ?? []).map((row) => [row.id as string, row.name as string]));
 
@@ -61,16 +59,10 @@ export default async function InvoicingPage() {
     if (!nameById.has(clientId)) continue;
     /*
      * Chez un client en financement, seules les prestations refusées par son
-     * organisme sont à facturer ; le reste est pris sur l'enveloppe. Au
-     * comptant, tout se facture, gestion mensuelle comprise.
+     * organisme sont à facturer. Au comptant tout se facture ; en hybride, la
+     * gestion mensuelle uniquement.
      */
-    const billable = financedIds.has(clientId) ? Boolean(row.billed_directly) : true;
-    if (!billable) continue;
-
-    const month = monthKey(row.performed_on as string);
-    const clientsOfMonth = byMonth.get(month) ?? new Map<string, BudgetLine[]>();
-    const list = clientsOfMonth.get(clientId) ?? [];
-    list.push({
+    const line: BudgetLine = {
       id: row.id as string,
       serviceKey: row.service_key as string,
       label: row.label as string,
@@ -80,7 +72,14 @@ export default async function InvoicingPage() {
       months: row.months as number | null,
       performedOn: row.performed_on as string,
       billedDirectly: Boolean(row.billed_directly),
-    });
+    };
+    // La règle de facturation vit dans le domaine : un seul endroit à corriger.
+    if (billableLines([line], modeByClient.get(clientId) ?? "comptant").length === 0) continue;
+
+    const month = monthKey(row.performed_on as string);
+    const clientsOfMonth = byMonth.get(month) ?? new Map<string, BudgetLine[]>();
+    const list = clientsOfMonth.get(clientId) ?? [];
+    list.push(line);
     clientsOfMonth.set(clientId, list);
     byMonth.set(month, clientsOfMonth);
   }
@@ -113,10 +112,10 @@ export default async function InvoicingPage() {
     <div className="space-y-6">
       <header>
         <Link href="/budget" className="text-xs text-ink-faint hover:underline">← Budget</Link>
-        <p className="eyebrow mt-3">Direction · Comptant</p>
+        <p className="eyebrow mt-3">Direction · Facturation</p>
         <h1 className="page-title mt-1">Factures du mois</h1>
         <p className="mt-2 max-w-2xl text-sm text-ink-soft">
-          Toutes les prestations des clients au comptant, regroupées par mois.
+          Toutes les prestations à facturer, regroupées par mois.
           Marquez un mois entier d&apos;un geste, ou client par client.
         </p>
       </header>

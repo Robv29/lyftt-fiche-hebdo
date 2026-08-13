@@ -289,7 +289,7 @@ describe("prestation facturée hors enveloppe", () => {
 
   it("est écartée de l'enveloppe", () => {
     const lines = [line({ id: "a" }), line({ id: "b", billedDirectly: true })];
-    expect(envelopeLines(lines).map((l) => l.id)).toEqual(["a"]);
+    expect(envelopeLines(lines, "financement").map((l) => l.id)).toEqual(["a"]);
   });
 
   it("est la seule à facturer chez un client en financement", () => {
@@ -428,5 +428,55 @@ describe("prorata du premier mois", () => {
       today: "2026-06-01",
     });
     expect(months[0]!.amountCents).toBe(40_000);
+  });
+});
+
+describe("mode hybride", () => {
+  const gestion = line({ id: "m", serviceKey: MANAGEMENT_MONTH_KEY, unitPriceCents: 30_000 });
+  const shooting = line({ id: "s", unitPriceCents: 45_000 });
+  const refuse = line({ id: "r", unitPriceCents: 85_000, billedDirectly: true });
+
+  it("facture la gestion mensuelle et met le ponctuel sur l'enveloppe", () => {
+    expect(billableLines([gestion, shooting], "hybride").map((l) => l.id)).toEqual(["m"]);
+    expect(envelopeLines([gestion, shooting], "hybride").map((l) => l.id)).toEqual(["s"]);
+  });
+
+  it("laisse le refus de prise en charge partir en facturation", () => {
+    expect(billableLines([gestion, shooting, refuse], "hybride").map((l) => l.id)).toEqual(["m", "r"]);
+    expect(envelopeLines([gestion, shooting, refuse], "hybride").map((l) => l.id)).toEqual(["s"]);
+  });
+
+  it("ne consomme l'enveloppe qu'avec les prestations ponctuelles", () => {
+    const summary = budgetSummary({
+      billingMode: "hybride",
+      annualBudgetCents: 200_000,
+      lines: [gestion, shooting],
+      cadence: { photo: 4, video: 2 },
+      contractStartDate: "2026-05-04",
+      contractEndDate: "2026-11-30",
+      today: "2026-08-11",
+    });
+    expect(summary.applicable).toBe(true);
+    expect(summary.consumedCents).toBe(45_000);
+    expect(summary.remainingCents).toBe(155_000);
+  });
+
+  it("ne projette pas la production récurrente sur l'enveloppe", () => {
+    const summary = budgetSummary({
+      billingMode: "hybride",
+      annualBudgetCents: 200_000,
+      lines: [shooting],
+      cadence: { photo: 12, video: 4 },
+      contractStartDate: "2026-05-04",
+      contractEndDate: "2026-11-30",
+      today: "2026-08-11",
+    });
+    // La gestion est facturée au client : elle ne grignote pas le budget.
+    expect(summary.projectedCents).toBe(45_000);
+    expect(summary.alerts.some((a) => a.title.includes("Rythme trop élevé"))).toBe(false);
+  });
+
+  it("ne garde aucune enveloppe au comptant", () => {
+    expect(envelopeLines([gestion, shooting], "comptant")).toEqual([]);
   });
 });

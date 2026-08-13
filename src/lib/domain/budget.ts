@@ -13,7 +13,24 @@
 
 import type { MonthlyCadence } from "./planning";
 
-export type BillingMode = "comptant" | "financement";
+/**
+ * Qui paie quoi.
+ *
+ * - `comptant` : tout est facturé au client, il n'y a pas d'enveloppe.
+ * - `financement` : tout est pris sur l'enveloppe accordée.
+ * - `hybride` : la gestion mensuelle est facturée, les prestations ponctuelles
+ *   — shootings, site, stratégie — passent sur l'enveloppe.
+ *
+ * Une seule règle sépare les trois : ce qui est récurrent et ce qui ne l'est
+ * pas. Le drapeau `billedDirectly` reste l'exception ligne à ligne.
+ */
+export type BillingMode = "comptant" | "financement" | "hybride";
+
+export const BILLING_MODE_LABELS: Record<BillingMode, string> = {
+  comptant: "Comptant",
+  financement: "Financement",
+  hybride: "Hybride",
+};
 export type ServiceBilling = "ponctuel" | "mensuel";
 
 export interface ServiceDefinition {
@@ -232,8 +249,11 @@ export function isManagementMonth(line: BudgetLine): boolean {
 }
 
 /** Lignes imputées sur l'enveloppe de financement. */
-export function envelopeLines(lines: BudgetLine[]): BudgetLine[] {
-  return lines.filter((line) => !line.billedDirectly);
+export function envelopeLines(lines: BudgetLine[], mode: BillingMode): BudgetLine[] {
+  if (mode === "comptant") return [];
+  const charged = lines.filter((line) => !line.billedDirectly);
+  // En hybride, la gestion mensuelle est facturée : elle ne touche pas l'enveloppe.
+  return mode === "hybride" ? charged.filter((line) => !isManagementMonth(line)) : charged;
 }
 
 /**
@@ -245,7 +265,11 @@ export function envelopeLines(lines: BudgetLine[]): BudgetLine[] {
  * reste est pris sur l'enveloppe.
  */
 export function billableLines(lines: BudgetLine[], mode: BillingMode): BudgetLine[] {
-  if (mode !== "financement") return lines;
+  if (mode === "comptant") return lines;
+  // En hybride, le récurrent se facture et le ponctuel part sur l'enveloppe.
+  if (mode === "hybride") {
+    return lines.filter((line) => isManagementMonth(line) || line.billedDirectly);
+  }
   return lines.filter((line) => line.billedDirectly);
 }
 
@@ -464,7 +488,7 @@ export interface BudgetSummary {
 
 export function budgetSummary(input: BudgetInput): BudgetSummary {
   // Une prestation facturée à part ne touche pas à l'enveloppe.
-  const charged = envelopeLines(input.lines);
+  const charged = envelopeLines(input.lines, input.billingMode);
   const lineCents = totalCents(charged);
   const budgetCents = Math.max(0, input.annualBudgetCents);
   const monthlyCadenceCostCents = cadenceMonthlyCostCents(input.cadence);
@@ -487,7 +511,7 @@ export function budgetSummary(input: BudgetInput): BudgetSummary {
     : 0;
 
   // Un client comptant est facturé à la prestation : aucun plafond à suivre.
-  if (input.billingMode !== "financement") {
+  if (input.billingMode === "comptant") {
     return {
       applicable: false,
       budgetCents: 0,
@@ -512,7 +536,14 @@ export function budgetSummary(input: BudgetInput): BudgetSummary {
     contractEndDate: input.contractEndDate,
     today: input.today,
   });
-  const projectedCents = consumedCents + monthlyCadenceCostCents * monthsRemaining;
+  /*
+   * Seul un financement complet voit son enveloppe grignotée par la production
+   * récurrente. En hybride, celle-ci est facturée au client : l'enveloppe ne
+   * bouge que si l'on y place des prestations ponctuelles.
+   */
+  const recurringDrainsEnvelope = input.billingMode === "financement";
+  const projectedCents = consumedCents
+    + (recurringDrainsEnvelope ? monthlyCadenceCostCents * monthsRemaining : 0);
   const targetMonthlyCents = monthsRemaining > 0
     ? Math.round(remainingCents / monthsRemaining)
     : 0;
@@ -560,7 +591,7 @@ export function budgetSummary(input: BudgetInput): BudgetSummary {
     const gap = projectedCents - budgetCents;
     const tolerance = Math.max(budgetCents * 0.05, 5_000);
 
-    if (gap > tolerance) {
+    if (gap > tolerance && recurringDrainsEnvelope) {
       alerts.push({
         level: "attention",
         title: "Rythme trop élevé pour la durée restante",

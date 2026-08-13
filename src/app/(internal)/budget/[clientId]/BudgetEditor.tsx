@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import {
+  BILLING_MODE_LABELS,
   CATEGORY_LABELS,
   SERVICE_CATALOGUE,
   formatEuros,
@@ -60,7 +61,9 @@ export function BudgetEditor({
   const [serviceKey, setServiceKey] = useState<string>(SERVICE_CATALOGUE[0]!.key);
 
   const service = SERVICE_CATALOGUE.find((item) => item.key === serviceKey)!;
-  const financed = mode === "financement";
+  // Une enveloppe existe dès qu'une part est financée.
+  const financed = mode !== "comptant";
+  const hybrid = mode === "hybride";
   // Refus de prise en charge : la prestation part en facturation directe.
   const [billedDirectly, setBilledDirectly] = useState(false);
 
@@ -154,8 +157,8 @@ export function BudgetEditor({
 
         <fieldset>
           <legend className="label">Mode de facturation</legend>
-          <div className="mt-2 grid gap-2 sm:grid-cols-2">
-            {(["comptant", "financement"] as const).map((value) => (
+          <div className="mt-2 grid gap-2 sm:grid-cols-3">
+            {(["comptant", "financement", "hybride"] as const).map((value) => (
               <label key={value} className={`choice-chip ${mode === value ? "border-[#1468ff] bg-[#f0f6ff]" : ""}`}>
                 <input
                   type="radio"
@@ -164,13 +167,16 @@ export function BudgetEditor({
                   checked={mode === value}
                   onChange={() => setMode(value)}
                 />
-                {value === "comptant" ? "Client comptant" : "Client financement"}
+                {BILLING_MODE_LABELS[value]}
               </label>
             ))}
           </div>
-          <p className="mt-2 text-xs text-ink-faint">
-            Au comptant, le client règle chaque prestation : il n&apos;y a pas d&apos;enveloppe
-            à suivre, et le reste de cet écran est désactivé.
+          <p className="mt-2 text-xs leading-relaxed text-ink-faint">
+            {mode === "comptant"
+              ? "Tout est facturé au client : il n’y a pas d’enveloppe à suivre, et le reste de cet écran est désactivé."
+              : mode === "financement"
+                ? "Tout est pris sur l’enveloppe accordée, gestion mensuelle comprise."
+                : "La gestion mensuelle est facturée au client ; les prestations ponctuelles — shootings, site, stratégie — passent sur l’enveloppe."}
           </p>
         </fieldset>
 
@@ -299,6 +305,7 @@ export function BudgetEditor({
                       À cocher si le client ne souhaite pas faire passer cette prestation
                       sur son financement. Elle ne consommera pas l&apos;enveloppe et
                       rejoindra les factures du mois.
+                      {hybrid && " En hybride, la gestion mensuelle est déjà facturée : ceci ne concerne que le ponctuel."}
                     </span>
                   </span>
                 </label>

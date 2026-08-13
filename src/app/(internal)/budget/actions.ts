@@ -25,7 +25,7 @@ const ACCESS_DENIED = "Écran réservé aux administrateurs.";
 
 const settingsSchema = z.object({
   clientId: z.string().uuid(),
-  billingMode: z.enum(["comptant", "financement"]),
+  billingMode: z.enum(["comptant", "financement", "hybride"]),
   // Saisi en euros, stocké en centimes.
   budgetEuros: z.coerce.number().min(0, "Le budget ne peut pas être négatif.").max(1_000_000),
   note: z.string().trim().max(500, "Note trop longue (500 caractères maximum).").optional(),
