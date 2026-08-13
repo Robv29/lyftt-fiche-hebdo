@@ -224,7 +224,7 @@ function OverviewView({ data }: { data:MetricsData }) {
         <article className="insights-hero-panel">
           <span aria-hidden="true" className="insights-orb insights-orb-one"/>
           <span aria-hidden="true" className="insights-orb insights-orb-two"/>
-          <div className="relative z-10">
+          <div className="relative z-10 min-w-0 flex-1">
             <p className="text-[11px] font-bold uppercase tracking-[.14em] text-white/65">Santé éditoriale</p>
             <h2 className="mt-2 max-w-md text-2xl font-semibold tracking-[-.04em] sm:text-3xl">La production en un regard</h2>
             <p className="mt-2 max-w-lg text-xs leading-relaxed text-white/70">Synthèse des consultations, validations au premier envoi et respect des échéances.</p>
@@ -239,13 +239,12 @@ function OverviewView({ data }: { data:MetricsData }) {
               dit d'où viennent les points perdus, et combien.
             */}
             {data.penalty > 0 && (
-              <p className="mt-4 inline-flex flex-wrap items-center gap-2 rounded-xl bg-white/10 px-3 py-2 text-xs leading-relaxed text-white/85">
-                <Icon name="euro" className="h-4 w-4 shrink-0"/>
-                <span>
-                  <strong>−{data.penalty} points</strong> de malus budgétaire :{" "}
-                  {data.budgetIssues} client{data.budgetIssues > 1 ? "s" : ""} sur {data.budgetTotal}{" "}
-                  {data.budgetIssues > 1 ? "ont" : "a"} une enveloppe dépassée ou incomplète.
-                  {" "}Relation client seule : {Math.round(data.relationScore)} %.
+              <p className="mt-4 flex max-w-lg items-start gap-2 rounded-xl bg-white/10 px-3 py-2 text-[11px] leading-snug text-white/85">
+                <Icon name="euro" className="mt-px h-3.5 w-3.5 shrink-0"/>
+                <span className="min-w-0">
+                  <strong>−{data.penalty} pts</strong> de malus budgétaire ·{" "}
+                  {data.budgetIssues}/{data.budgetTotal} client{data.budgetIssues > 1 ? "s" : ""} à régulariser ·
+                  {" "}relation client {Math.round(data.relationScore)} %
                 </span>
               </p>
             )}
