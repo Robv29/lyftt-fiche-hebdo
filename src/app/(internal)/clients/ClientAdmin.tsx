@@ -100,6 +100,17 @@ export function ClientAdmin({
   const hashtagSelectionIsValid = filledCustomHashtags === 5 && !hasDuplicateCustomHashtag;
   const filteredClients = clients.filter((client) => `${client.name} ${client.contactName ?? ""} ${client.managerName}`.toLocaleLowerCase("fr").includes(query.trim().toLocaleLowerCase("fr")));
 
+  /*
+   * Un client archivé, en pause ou dont le contrat est arrivé à terme ne se
+   * travaille plus. Le laisser mêlé aux autres oblige à lire chaque badge pour
+   * savoir sur qui on peut produire ; il part donc dans sa propre section, en
+   * bas, sans disparaître pour autant.
+   */
+  const sections = [
+    { key: "gestion", title: "En gestion", hint: "Clients pour lesquels on produit.", list: filteredClients.filter((client) => lifecycleOf(client).canProduce) },
+    { key: "hors", title: "Hors gestion", hint: "Archivés, en pause, ou gestion terminée.", list: filteredClients.filter((client) => !lifecycleOf(client).canProduce) },
+  ].filter((section) => section.list.length > 0);
+
   const updateCustomHashtag = (index: number, value: string) => {
     setCustomHashtags((current) => current.map((hashtag, currentIndex) =>
       currentIndex === index ? value : hashtag,
@@ -477,8 +488,15 @@ export function ClientAdmin({
           Aucun client. Commencez par en ajouter un.
         </p>
       ) : (
-        <ul className="grid gap-4 lg:grid-cols-2">
-          {filteredClients.map((client) => (
+        <div className="space-y-7">
+          {sections.map((section) => (
+          <section key={section.key} className="space-y-3">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 className="text-sm font-semibold">{section.title}<span className="ml-2 font-normal text-ink-faint">{section.list.length}</span></h2>
+              <p className="text-xs text-ink-faint">{section.hint}</p>
+            </div>
+            <ul className="grid gap-4 lg:grid-cols-2">
+          {section.list.map((client) => (
             <li key={client.id} className={`card lift-card p-5 ${lifecycleOf(client).canProduce ? "" : "border-line/60 bg-canvas/60"}`}>
               {(() => { const lifecycle = lifecycleOf(client); return (
               <div className="flex h-full flex-col gap-5">
@@ -579,8 +597,11 @@ export function ClientAdmin({
               ); })()}
             </li>
           ))}
-          {filteredClients.length === 0 && <li className="card col-span-full px-5 py-10 text-center text-sm text-ink-faint">Aucun client ne correspond à « {query} ».</li>}
-        </ul>
+            </ul>
+          </section>
+          ))}
+          {filteredClients.length === 0 && <p className="card px-5 py-10 text-center text-sm text-ink-faint">Aucun client ne correspond à « {query} ».</p>}
+        </div>
       )}
     </div>
   );
