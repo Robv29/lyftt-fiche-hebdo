@@ -5,7 +5,10 @@ import { sheetStatusLabel, ticketStatusLabel, ticketPriorityLabel } from "@/lib/
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
 import { requiresProduction } from "@/lib/domain/routing";
 import { Icon } from "@/components/Icon";
-import { planningWeekRange } from "@/lib/domain/planning";
+import { planningWeekRange, sheetCompletion } from "@/lib/domain/planning";
+import { budgetSummary, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
+import { clientLifecycle, todayInParis as civilToday } from "@/lib/domain/client-lifecycle";
+import type { MonthlyCadence } from "@/lib/domain/planning";
 
 function todayInParis(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -17,21 +20,111 @@ export default async function DashboardPage() {
   const supabase = await createSupabaseServerClient();
   const today = todayInParis();
 
+  const isAdmin = profile?.role === "super_admin";
+
   const [ticketsResult, sheetsResult, publicationsResult, clientsResult, preparationResult] = await Promise.all([
     supabase.from("client_tickets").select("id, ticket_number, title, ticket_type, status, priority, due_at, created_at, clients ( name )").not("status", "in", "(closed,cancelled,rejected,approved_by_client)").order("created_at", { ascending: false }).limit(50),
     supabase.from("weekly_sheets").select("id, iso_week, status, validation_deadline_at, clients ( name )").in("status", ["sent_to_client", "partially_approved", "changes_requested", "corrections_in_progress", "new_version_to_send", "awaiting_revalidation"]).order("validation_deadline_at", { ascending: true }).limit(120),
     supabase.from("weekly_sheet_items").select("id, published_at").eq("scheduled_date", today).eq("is_cancelled", false),
-    supabase.from("clients").select("id", { count: "exact", head: true }).eq("is_active", true),
+    supabase.from("clients").select("id, is_active, notes, contract_start_date, contract_end_date, pause_start_date, pause_end_date").eq("is_active", true),
     /*
-     * Fiches à préparer : celles de la semaine prochaine, seule échéance qui
-     * appelle une action. Compter tous les brouillons y mêlait des fiches
-     * anciennes restées en préparation, et le chiffre ne voulait plus rien dire.
+     * Fiches de la semaine prochaine, avec de quoi juger si elles sont prêtes.
+     * Un simple comptage de brouillons ne disait pas si le travail était fait :
+     * une fiche peut rester en préparation alors que tout y est, et une autre
+     * paraître avancée sans un seul média.
      */
-    supabase.from("weekly_sheets").select("id", { count: "exact", head: true })
-      .in("status", ["draft", "internal_review"])
+    supabase.from("weekly_sheets")
+      .select("id, client_id, weekly_sheet_items ( caption, hashtags, format, media_asset_id, media_external_url, is_cancelled )")
       .gte("period_start", planningWeekRange().nextStart)
       .lte("period_start", planningWeekRange().nextEnd),
   ]);
+
+  /*
+   * Fiches à préparer : celles de la semaine prochaine qui ne sont pas
+   * complètes, plus les clients actifs pour lesquels aucune fiche n'existe
+   * encore — une fiche absente est le cas le moins prêt de tous.
+   */
+  const activeClients = (clientsResult.data ?? []) as Array<{
+    id: string;
+    is_active: boolean;
+    notes: string | null;
+    contract_start_date: string | null;
+    contract_end_date: string | null;
+    pause_start_date: string | null;
+    pause_end_date: string | null;
+  }>;
+
+  const nextWeekSheets = (preparationResult.data ?? []) as unknown as Array<{
+    id: string;
+    client_id: string;
+    weekly_sheet_items: Array<{ caption: string | null; hashtags: string[] | null; format: string; media_asset_id: string | null; media_external_url: string | null; is_cancelled: boolean }>;
+  }>;
+  const incompleteSheets = nextWeekSheets.filter((sheet) => sheetCompletion(
+    (sheet.weekly_sheet_items ?? []).map((item) => ({
+      caption: item.caption,
+      hashtags: item.hashtags,
+      format: item.format as never,
+      mediaAssetId: item.media_asset_id,
+      mediaExternalUrl: item.media_external_url,
+      isCancelled: item.is_cancelled,
+    })),
+  ).percentage < 100).length;
+  const coveredClients = new Set(nextWeekSheets.map((sheet) => sheet.client_id));
+  const producible = (activeClients ?? []).filter((client) => clientLifecycle({
+    isActive: client.is_active,
+    contractEndDate: client.contract_end_date,
+    pauseStartDate: client.pause_start_date,
+    pauseEndDate: client.pause_end_date,
+  }, civilToday()).canProduce);
+  const toPrepare = incompleteSheets + producible.filter((client) => !coveredClients.has(client.id)).length;
+
+  /*
+   * Budgets à régulariser, pour la direction seule : dates de gestion
+   * manquantes, enveloppe non renseignée ou déjà dépassée. Ce sont les
+   * dossiers où l'on facture à l'aveugle, ce qui pèse plus lourd qu'un ticket
+   * prioritaire — celui-ci reste visible juste en dessous.
+   */
+  let budgetIssues = 0;
+  if (isAdmin) {
+    const [{ data: budgets }, { data: budgetLines }] = await Promise.all([
+      supabase.from("client_budgets").select("client_id, billing_mode, budget_cents"),
+      supabase.from("client_budget_lines").select("client_id, service_key, label, billing, unit_price_cents, quantity, months, performed_on, billed_directly"),
+    ]);
+
+    const budgetByClient = new Map((budgets ?? []).map((row) => [row.client_id as string, row]));
+    const linesByClient = new Map<string, BudgetLine[]>();
+    for (const row of budgetLines ?? []) {
+      const list = linesByClient.get(row.client_id as string) ?? [];
+      list.push({
+        id: "", serviceKey: row.service_key as string, label: row.label as string,
+        billing: row.billing as BudgetLine["billing"],
+        unitPriceCents: row.unit_price_cents as number,
+        quantity: Number(row.quantity),
+        months: row.months as number | null,
+        performedOn: row.performed_on as string,
+        billedDirectly: Boolean(row.billed_directly),
+      });
+      linesByClient.set(row.client_id as string, list);
+    }
+
+    budgetIssues = producible.filter((client) => {
+      let settings: { monthlyCadence?: MonthlyCadence } = {};
+      try { settings = client.notes ? JSON.parse(client.notes) : {}; } catch { settings = {}; }
+      const budget = budgetByClient.get(client.id);
+      const summary = budgetSummary({
+        billingMode: (budget?.billing_mode ?? "comptant") as BillingMode,
+        annualBudgetCents: budget?.budget_cents ?? 0,
+        lines: linesByClient.get(client.id) ?? [],
+        cadence: settings.monthlyCadence ?? {},
+        contractStartDate: client.contract_start_date,
+        contractEndDate: client.contract_end_date,
+        today: civilToday(),
+      });
+      // Sans date de début, rien n'est décompté : le dossier est à l'aveugle.
+      if (!client.contract_start_date) return true;
+      return summary.alerts.some((alert) => alert.level === "critique" || alert.level === "attention");
+    }).length;
+  }
 
   const tickets = ticketsResult.data ?? [];
   const sheets = sheetsResult.data ?? [];
@@ -41,6 +134,12 @@ export default async function DashboardPage() {
   const urgent = tickets.filter((ticket) => ticket.priority === "urgent" || ticket.priority === "high");
   const production = tickets.filter((ticket) => requiresProduction(ticket.ticket_type));
   const toResend = sheets.filter((sheet) => sheet.status === "new_version_to_send");
+  /*
+   * En attente de validation : la balle est dans le camp du client. Une fiche
+   * en cours de correction chez nous n'attend pas le client, elle nous attend.
+   */
+  const awaitingClient = sheets.filter((sheet) =>
+    ["sent_to_client", "partially_approved", "awaiting_revalidation"].includes(sheet.status));
   const greetingDate = new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Paris" }).format(new Date());
   const publicationProgress = publications.length ? Math.round((published / publications.length) * 100) : 100;
 
@@ -59,9 +158,11 @@ export default async function DashboardPage() {
         </div>
 
         <div className="dashboard-hero-metrics relative mt-7 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <HeroMetric icon="layers" label="Fiches à préparer" value={preparationResult.count ?? 0} />
-          <HeroMetric icon="check" label="Validations en attente" value={sheets.length} />
-          <HeroMetric icon="warning" label="Tickets prioritaires" value={urgent.length} />
+          <HeroMetric icon="layers" label="Fiches à préparer" value={toPrepare} />
+          <HeroMetric icon="check" label="Validations en attente" value={awaitingClient.length} />
+          {isAdmin
+            ? <HeroMetric icon="euro" label="Budgets à régulariser" value={budgetIssues} />
+            : <HeroMetric icon="warning" label="Tickets prioritaires" value={urgent.length} />}
           <HeroMetric icon="send" label="Publications aujourd’hui" value={publications.length} />
         </div>
       </section>
@@ -69,7 +170,7 @@ export default async function DashboardPage() {
       <section className="dashboard-kpis" aria-labelledby="dashboard-metrics">
         <div className="dashboard-kpis-heading mb-4 flex items-end justify-between gap-3">
           <div><p className="eyebrow">Pilotage</p><h2 id="dashboard-metrics" className="mt-1 text-lg font-semibold">L’essentiel en un regard</h2></div>
-          <span className="text-xs text-ink-faint">{clientsResult.count ?? 0} clients actifs</span>
+          <span className="text-xs text-ink-faint">{producible.length} clients en gestion</span>
         </div>
         <div className="dashboard-kpi-grid grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <Stat icon="message" label="Nouveaux retours" value={newTickets.length} tone={newTickets.length ? "danger" : "blue"} detail="à qualifier" />

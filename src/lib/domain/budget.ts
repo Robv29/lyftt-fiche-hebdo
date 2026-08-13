@@ -656,3 +656,20 @@ function formatDay(date: string): string {
     timeZone: "UTC",
   }).format(new Date(`${date}T00:00:00Z`));
 }
+
+/**
+ * Malus appliqué au score de pilotage pour les budgets mal tenus.
+ *
+ * Un score qui ne regarde que la relation client raconte une moitié de
+ * l'histoire : une agence peut valider vite et bien tout en pilotant ses
+ * enveloppes à l'aveugle. Chaque dossier en défaut retire des points, dans la
+ * limite d'un tiers du score — le reste du travail continue de compter.
+ */
+export function budgetPenalty(input: {
+  clientsWithIssue: number;
+  clientsTotal: number;
+}): number {
+  if (input.clientsTotal <= 0 || input.clientsWithIssue <= 0) return 0;
+  const share = Math.min(1, input.clientsWithIssue / input.clientsTotal);
+  return Math.round(share * 33);
+}

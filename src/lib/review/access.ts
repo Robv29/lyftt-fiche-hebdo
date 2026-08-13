@@ -188,9 +188,26 @@ export async function touchReviewLink(linkId: string): Promise<void> {
   const supabase = createSupabaseAdminClient();
   const { data } = await supabase
     .from("client_review_links")
-    .select("access_count")
+    .select("access_count, weekly_sheet_id")
     .eq("id", linkId)
     .single();
+
+  /*
+   * Première consultation de la fiche.
+   *
+   * Le compteur du lien disait déjà combien de fois il avait été ouvert, mais
+   * la fiche, elle, ne portait aucune trace : le taux de consultation et le
+   * délai de réaction des indicateurs restaient donc figés à zéro. On ne pose
+   * la date que si elle est absente — c'est la *première* ouverture qui
+   * mesure la réactivité, pas la dernière.
+   */
+  if (data?.weekly_sheet_id) {
+    await supabase
+      .from("weekly_sheets")
+      .update({ first_viewed_at: new Date().toISOString() })
+      .eq("id", data.weekly_sheet_id)
+      .is("first_viewed_at", null);
+  }
 
   await supabase
     .from("client_review_links")

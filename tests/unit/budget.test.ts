@@ -4,6 +4,7 @@ import {
   billableLines,
   budgetSummary,
   BASE_MONTHLY_FEE_CENTS,
+  budgetPenalty,
   dueManagementMonths,
   monthStartFraction,
   monthsRemainingToBill,
@@ -478,5 +479,25 @@ describe("mode hybride", () => {
 
   it("ne garde aucune enveloppe au comptant", () => {
     expect(envelopeLines([gestion, shooting], "comptant")).toEqual([]);
+  });
+});
+
+describe("malus budgétaire", () => {
+  it("ne retire rien quand tout est en ordre", () => {
+    expect(budgetPenalty({ clientsWithIssue: 0, clientsTotal: 20 })).toBe(0);
+  });
+
+  it("retire d'autant plus que la part de dossiers en défaut est grande", () => {
+    expect(budgetPenalty({ clientsWithIssue: 5, clientsTotal: 20 })).toBe(8);
+    expect(budgetPenalty({ clientsWithIssue: 10, clientsTotal: 20 })).toBe(17);
+  });
+
+  it("plafonne à un tiers du score : le reste du travail compte encore", () => {
+    expect(budgetPenalty({ clientsWithIssue: 20, clientsTotal: 20 })).toBe(33);
+    expect(budgetPenalty({ clientsWithIssue: 40, clientsTotal: 20 })).toBe(33);
+  });
+
+  it("ne s'applique pas sans portefeuille connu", () => {
+    expect(budgetPenalty({ clientsWithIssue: 3, clientsTotal: 0 })).toBe(0);
   });
 });

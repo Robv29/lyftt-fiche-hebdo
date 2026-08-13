@@ -1,5 +1,8 @@
 import Link from "next/link";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
+import { budgetPenalty, budgetSummary, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
+import { clientLifecycle, todayInParis } from "@/lib/domain/client-lifecycle";
+import type { MonthlyCadence } from "@/lib/domain/planning";
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
 import type { TicketType } from "@/lib/domain/ticket-types";
 import { Icon } from "@/components/Icon";
@@ -8,6 +11,69 @@ const CHART_COLORS = ["#1b87dd", "#34c5bb", "#78d6a3", "#ef9c50", "#e65b67", "#7
 const METRICS_VIEWS = ["overview", "validation", "returns", "clients"] as const;
 type MetricsView = typeof METRICS_VIEWS[number];
 type Tone = "info" | "success" | "warning" | "danger" | "violet";
+
+/**
+ * Santé des budgets, réservée à la direction.
+ *
+ * Les tables budgétaires sont fermées aux autres rôles : la requête ne
+ * renverrait rien, et un malus silencieux fondé sur zéro donnée serait pire
+ * qu'aucun malus.
+ */
+async function budgetHealth(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  isAdmin: boolean,
+): Promise<{ withIssue: number; total: number }> {
+  if (!isAdmin) return { withIssue: 0, total: 0 };
+
+  const today = todayInParis();
+  const [{ data: clients }, { data: budgets }, { data: lines }] = await Promise.all([
+    supabase.from("clients").select("id, notes, is_active, contract_start_date, contract_end_date, pause_start_date, pause_end_date").eq("is_active", true),
+    supabase.from("client_budgets").select("client_id, billing_mode, budget_cents"),
+    supabase.from("client_budget_lines").select("client_id, service_key, label, billing, unit_price_cents, quantity, months, performed_on, billed_directly"),
+  ]);
+
+  const managed = (clients ?? []).filter((client) => clientLifecycle({
+    isActive: client.is_active as boolean,
+    contractEndDate: client.contract_end_date as string | null,
+    pauseStartDate: client.pause_start_date as string | null,
+    pauseEndDate: client.pause_end_date as string | null,
+  }, today).canProduce);
+
+  const budgetByClient = new Map((budgets ?? []).map((row) => [row.client_id as string, row]));
+  const linesByClient = new Map<string, BudgetLine[]>();
+  for (const row of lines ?? []) {
+    const list = linesByClient.get(row.client_id as string) ?? [];
+    list.push({
+      id: "", serviceKey: row.service_key as string, label: row.label as string,
+      billing: row.billing as BudgetLine["billing"],
+      unitPriceCents: row.unit_price_cents as number,
+      quantity: Number(row.quantity),
+      months: row.months as number | null,
+      performedOn: row.performed_on as string,
+      billedDirectly: Boolean(row.billed_directly),
+    });
+    linesByClient.set(row.client_id as string, list);
+  }
+
+  const withIssue = managed.filter((client) => {
+    if (!client.contract_start_date) return true;
+    let settings: { monthlyCadence?: MonthlyCadence } = {};
+    try { settings = client.notes ? JSON.parse(client.notes as string) : {}; } catch { settings = {}; }
+    const budget = budgetByClient.get(client.id as string);
+    const summary = budgetSummary({
+      billingMode: (budget?.billing_mode ?? "comptant") as BillingMode,
+      annualBudgetCents: budget?.budget_cents ?? 0,
+      lines: linesByClient.get(client.id as string) ?? [],
+      cadence: settings.monthlyCadence ?? {},
+      contractStartDate: client.contract_start_date as string | null,
+      contractEndDate: client.contract_end_date as string | null,
+      today,
+    });
+    return summary.alerts.some((alert) => alert.level === "critique" || alert.level === "attention");
+  }).length;
+
+  return { withIssue, total: managed.length };
+}
 
 export default async function MetricsPage({
   searchParams,
@@ -19,6 +85,7 @@ export default async function MetricsPage({
   const view: MetricsView = METRICS_VIEWS.includes(filters.vue as MetricsView)
     ? filters.vue as MetricsView
     : "overview";
+  const profile = await getCurrentProfile();
   const supabase = await createSupabaseServerClient();
 
   const [{ data: sheets }, { data: tickets }, { data: versions }] = await Promise.all([
@@ -63,7 +130,18 @@ export default async function MetricsPage({
   const viewRate = ratio(viewed.length, sent.length);
   const noCorrectionRate = ratio(approvedWithoutCorrection.length, sent.length);
   const deadlineRate = ratio(beforeDeadline.length, approved.length);
-  const overallScore = average([viewRate, noCorrectionRate, deadlineRate].filter((value) => Number.isFinite(value)));
+  /*
+   * Malus budgétaire.
+   *
+   * Le score ne regardait que la relation client : on pouvait valider vite et
+   * bien tout en pilotant ses enveloppes à l'aveugle. Les budgets en défaut
+   * — dates manquantes, enveloppe non renseignée, dépassement — retirent donc
+   * des points, dans la limite d'un tiers.
+   */
+  const budget = await budgetHealth(supabase, profile?.role === "super_admin");
+  const relationScore = average([viewRate, noCorrectionRate, deadlineRate].filter((value) => Number.isFinite(value)));
+  const penalty = budgetPenalty({ clientsWithIssue: budget.withIssue, clientsTotal: budget.total });
+  const overallScore = Math.max(0, relationScore - penalty);
   const typeEntries = [...byType.entries()].sort((a, b) => b[1] - a[1]);
   const clientEntries = [...byClient.entries()].sort((a, b) => b[1] - a[1]).slice(0, 7);
   const ticketTotal = typeEntries.reduce((total, entry) => total + entry[1], 0);
@@ -98,6 +176,10 @@ export default async function MetricsPage({
     noCorrectionRate,
     deadlineRate,
     overallScore,
+    relationScore,
+    penalty,
+    budgetIssues: budget.withIssue,
+    budgetTotal: budget.total,
     ticketTotal,
     typeEntries,
     clientEntries,
@@ -130,6 +212,7 @@ type MetricsData = {
   sent:number; viewed:number; approved:number; approvedWithoutCorrection:number; beforeDeadline:number;
   overdue:number; averageResponse:number; averageCorrection:number; averageVersions:number; outOfScope:number;
   ticketsPerSheet:number; viewRate:number; noCorrectionRate:number; deadlineRate:number; overallScore:number;
+  relationScore:number; penalty:number; budgetIssues:number; budgetTotal:number;
   ticketTotal:number; typeEntries:[TicketType,number][]; clientEntries:[string,number][]; donutGradient:string;
   signals:{tone:Tone;icon:string;title:string;body:string}[];
 };
@@ -150,6 +233,22 @@ function OverviewView({ data }: { data:MetricsData }) {
               <HeroPill label="Tickets reçus" value={String(data.ticketTotal)}/>
               <HeroPill label="En retard" value={String(data.overdue)}/>
             </div>
+
+            {/*
+              Un score amputé sans explication passe pour une erreur : le malus
+              dit d'où viennent les points perdus, et combien.
+            */}
+            {data.penalty > 0 && (
+              <p className="mt-4 inline-flex flex-wrap items-center gap-2 rounded-xl bg-white/10 px-3 py-2 text-xs leading-relaxed text-white/85">
+                <Icon name="euro" className="h-4 w-4 shrink-0"/>
+                <span>
+                  <strong>−{data.penalty} points</strong> de malus budgétaire :{" "}
+                  {data.budgetIssues} client{data.budgetIssues > 1 ? "s" : ""} sur {data.budgetTotal}{" "}
+                  {data.budgetIssues > 1 ? "ont" : "a"} une enveloppe dépassée ou incomplète.
+                  {" "}Relation client seule : {Math.round(data.relationScore)} %.
+                </span>
+              </p>
+            )}
           </div>
           <Ring value={data.overallScore} label="score global" light/>
         </article>
