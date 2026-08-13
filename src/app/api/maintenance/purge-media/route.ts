@@ -94,7 +94,8 @@ async function handle(request: NextRequest) {
     .select(
       `id, storage_path, preview_path, byte_size, preview_byte_size, purged_at, preview_purged_at, created_at,
        clients ( media_preview_retention_days ),
-       weekly_sheet_items ( id, published_at, is_cancelled )`,
+       weekly_sheet_items ( id, published_at, is_cancelled ),
+       weekly_sheet_item_media ( weekly_sheet_items ( id, published_at, is_cancelled ) )`,
     )
     .is("preview_purged_at", null)
     .limit(500);
@@ -119,11 +120,25 @@ async function handle(request: NextRequest) {
   let freed = 0;
 
   for (const asset of assets ?? []) {
-    const items = (asset.weekly_sheet_items ?? []) as unknown as {
-      id: string;
-      published_at: string | null;
-      is_cancelled: boolean;
-    }[];
+    type AttachedItem = { id: string; published_at: string | null; is_cancelled: boolean };
+
+    /*
+     * Un média peut être rattaché de deux façons : comme couverture de la
+     * publication, ou comme image d'un carrousel. Ignorer la seconde revenait
+     * à prendre toutes les images suivantes pour des orphelines, donc à les
+     * supprimer 48 heures après leur dépôt.
+     */
+    const cover = (asset.weekly_sheet_items ?? []) as unknown as AttachedItem[];
+    const gallery = ((asset.weekly_sheet_item_media ?? []) as unknown as {
+      weekly_sheet_items: AttachedItem | null;
+    }[]).map((row) => row.weekly_sheet_items).filter((item): item is AttachedItem => Boolean(item));
+
+    const seen = new Set<string>();
+    const items = [...cover, ...gallery].filter((item) => {
+      if (seen.has(item.id)) return false;
+      seen.add(item.id);
+      return true;
+    });
 
     /*
      * Média orphelin : téléversé puis jamais rattaché à une publication, parce

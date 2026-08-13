@@ -37,7 +37,8 @@ export default async function SheetDetailPage({
        profiles:community_manager_id ( full_name ),
        weekly_sheet_items ( id, position, scheduled_date, scheduled_time, format, caption, hashtags,
          media_asset_id, media_external_url, approval_status, is_cancelled,
-         media_assets:media_asset_id ( id, file_name, kind, storage_path, preview_path, purged_at, preview_purged_at ) ),
+         media_assets:media_asset_id ( id, file_name, kind, storage_path, preview_path, purged_at, preview_purged_at ),
+         weekly_sheet_item_media ( position, media_assets ( id, file_name, kind, storage_path, preview_path, purged_at, preview_purged_at ) ) ),
        weekly_sheet_versions!weekly_sheet_versions_weekly_sheet_id_fkey (
          id, version_number, status, change_summary, created_at, sent_to_client_at
        ),
@@ -77,6 +78,7 @@ export default async function SheetDetailPage({
     media_asset_id: string | null;
     media_external_url: string | null;
     media_assets: { id: string; file_name: string; kind: string; storage_path: string; preview_path: string | null; purged_at: string | null; preview_purged_at: string | null } | null;
+    weekly_sheet_item_media: { position: number; media_assets: { id: string; file_name: string; kind: string; storage_path: string; preview_path: string | null; purged_at: string | null; preview_purged_at: string | null } | null }[] | null;
     approval_status: string;
     is_cancelled: boolean;
   }[];
@@ -144,6 +146,34 @@ export default async function SheetDetailPage({
         })
       : null,
   ] as const)));
+
+  /*
+   * Galerie complète, signée dans l'ordre d'affichage. Si elle est vide —
+   * publication d'avant le carrousel — la couverture en tient lieu, pour que
+   * l'écran n'ait qu'une seule notion à manipuler.
+   */
+  const galleryByItem = new Map(await Promise.all(items.map(async (item) => {
+    const rows = [...(item.weekly_sheet_item_media ?? [])]
+      .filter((row) => row.media_assets)
+      .sort((a, b) => a.position - b.position);
+    const source = rows.length > 0
+      ? rows.map((row) => row.media_assets!)
+      : item.media_assets ? [item.media_assets] : [];
+
+    const resolved = await Promise.all(source.map(async (asset) => ({
+      mediaAssetId: asset.id,
+      fileName: asset.file_name,
+      kind: asset.kind,
+      url: (await resolveMediaUrl({
+        storagePath: asset.storage_path,
+        previewPath: asset.preview_path,
+        purgedAt: asset.purged_at,
+        previewPurgedAt: asset.preview_purged_at,
+      }))?.url ?? null,
+    })));
+    return [item.id, resolved] as const;
+  })));
+
   const preparation = sheetCompletion(items.map((item) => ({
     caption: item.caption,
     hashtags: item.hashtags,
@@ -233,6 +263,7 @@ export default async function SheetDetailPage({
                   mediaKind: item.media_assets?.kind ?? null,
                   mediaUrl: mediaByItem.get(item.id)?.url ?? null,
                   mediaIsPreviewOnly: mediaByItem.get(item.id)?.isPreviewOnly ?? false,
+                  gallery: galleryByItem.get(item.id) ?? [],
                   mediaExternalUrl: item.media_external_url,
                 }))}
             />

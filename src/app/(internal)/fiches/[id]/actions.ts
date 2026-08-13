@@ -24,6 +24,8 @@ const editableItemSchema = z.object({
   caption: z.string().max(5000),
   hashtags: z.string().max(1000),
   mediaAssetId: z.string().uuid().nullable().optional(),
+  /** Galerie complète, dans l'ordre. La première image sert de couverture. */
+  mediaAssetIds: z.array(z.string().uuid()).max(20).optional(),
   mediaCleared: z.boolean().optional(),
   /** Publication retirée de la fiche, sans être effacée. */
   isCancelled: z.boolean().optional(),
@@ -99,11 +101,35 @@ export async function saveSheetContent(formData: FormData): Promise<SheetContent
     // Le média a déjà été téléversé depuis le navigateur ; on ne reçoit que
     // son identifiant. Une suppression explicite détache le média du contenu :
     // la ligne media_assets reste en base pour l'historique.
-    if (item.mediaCleared) patch.media_asset_id = null;
+    /*
+     * La galerie fait autorité quand elle est fournie : sa première image
+     * devient la couverture. Le champ `media_asset_id` reste ainsi le seul
+     * que lisent les écrans qui n'affichent qu'une vignette.
+     */
+    const gallery = item.mediaCleared ? [] : item.mediaAssetIds;
+    if (gallery) patch.media_asset_id = gallery[0] ?? null;
+    else if (item.mediaCleared) patch.media_asset_id = null;
     else if (item.mediaAssetId) patch.media_asset_id = item.mediaAssetId;
 
     const { error } = await admin.from("weekly_sheet_items").update(patch).eq("id", item.id);
     if (error) return { ok: false, message: `Publication non enregistrée : ${error.message}` };
+
+    if (gallery) {
+      // Remplacement intégral : l'ordre affiché est l'ordre enregistré.
+      await admin.from("weekly_sheet_item_media").delete().eq("weekly_sheet_item_id", item.id);
+      if (gallery.length > 0) {
+        const { error: galleryError } = await admin.from("weekly_sheet_item_media").insert(
+          gallery.map((mediaAssetId, position) => ({
+            weekly_sheet_item_id: item.id,
+            media_asset_id: mediaAssetId,
+            position,
+          })),
+        );
+        if (galleryError) {
+          return { ok: false, message: `Galerie non enregistrée : ${galleryError.message}` };
+        }
+      }
+    }
   }
 
   revalidatePath("/fiches");

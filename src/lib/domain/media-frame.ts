@@ -30,3 +30,14 @@ export function mediaFrameClass(format: MediaFormat): string {
 export function mediaFrameBackground(format: MediaFormat): string {
   return mediaFrame(format) === "vertical" ? "bg-black" : "bg-canvas";
 }
+
+/**
+ * Formats qui acceptent plusieurs images.
+ *
+ * Un carrousel est une suite d'images ; une photo peut le devenir dès qu'on
+ * en ajoute une seconde. Une vidéo, une story ou un reel n'ont qu'un fichier :
+ * proposer d'en déposer plusieurs y serait trompeur.
+ */
+export function supportsGallery(format: MediaFormat): boolean {
+  return format === "photo" || format === "visuel" || format === "carrousel";
+}
