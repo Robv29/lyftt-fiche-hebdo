@@ -59,6 +59,14 @@ export interface ReviewItem {
     thumbnailUrl: string | null;
     fileName: string;
   } | null;
+  /**
+   * Toutes les images de la publication, dans l'ordre.
+   *
+   * Un carrousel se juge sur l'ensemble ; ne montrer que la couverture
+   * revenait à faire valider un contenu que le client n'avait pas vu en
+   * entier. Vide quand la publication n'a aucun média.
+   */
+  gallery: { kind: "image" | "video" | "document"; url: string | null; fileName: string }[];
   /** « Vidéo transmise séparément » quand aucun fichier n'est déposé (§5). */
   mediaPendingNote: string | null;
   mediaExternalUrl: string | null;
@@ -251,7 +259,8 @@ export async function loadReviewSheet(
       `id, position, scheduled_date, scheduled_time, publication_type, format,
        networks, caption, hashtags, approval_status, is_cancelled, published_at,
        media_external_url, media_pending_note,
-       media_assets:media_asset_id ( kind, storage_path, thumbnail_path, file_name, preview_path, purged_at, preview_purged_at )`,
+       media_assets:media_asset_id ( kind, storage_path, thumbnail_path, file_name, preview_path, purged_at, preview_purged_at ),
+       weekly_sheet_item_media ( position, media_assets ( kind, storage_path, thumbnail_path, file_name, preview_path, purged_at, preview_purged_at ) )`,
     )
     .eq("weekly_sheet_id", context.sheetId)
     .order("position", { ascending: true });
@@ -307,8 +316,43 @@ export async function loadReviewSheet(
         })
       : null;
 
+    /*
+     * Galerie complète : un carrousel se juge sur toutes ses images, pas sur
+     * sa couverture. Les publications antérieures à la galerie n'ont que leur
+     * média unique — il en tient alors lieu, l'écran n'ayant qu'un cas à gérer.
+     */
+    type GalleryRow = {
+      position: number;
+      media_assets: {
+        kind: "image" | "video" | "document";
+        storage_path: string;
+        thumbnail_path: string | null;
+        file_name: string;
+        preview_path: string | null;
+        purged_at: string | null;
+        preview_purged_at: string | null;
+      } | null;
+    };
+    const galleryRows = ((item.weekly_sheet_item_media ?? []) as unknown as GalleryRow[])
+      .filter((row) => row.media_assets)
+      .sort((a, b) => a.position - b.position)
+      .map((row) => row.media_assets!);
+
+    const gallerySource = galleryRows.length > 0 ? galleryRows : media ? [media] : [];
+    const gallery = await Promise.all(gallerySource.map(async (asset) => ({
+      kind: asset.kind,
+      fileName: asset.file_name,
+      url: (await resolveMediaUrl({
+        storagePath: asset.storage_path,
+        previewPath: asset.preview_path ?? asset.thumbnail_path,
+        purgedAt: asset.purged_at,
+        previewPurgedAt: asset.preview_purged_at,
+      }))?.url ?? null,
+    })));
+
     reviewItems.push({
       id: item.id,
+      gallery,
       position: item.position,
       scheduledDate: item.scheduled_date,
       scheduledTime: item.scheduled_time,

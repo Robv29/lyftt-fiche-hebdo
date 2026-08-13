@@ -248,6 +248,32 @@ function StatusBadge({ item }: { item: ReviewItem }) {
  * miniature, un lien, ou la mention « Vidéo transmise séparément ».
  */
 function MediaPreview({ item }: { item: ReviewItem }) {
+  /*
+   * Carrousel : le client doit voir toutes les images avant de valider.
+   * Elles défilent horizontalement, au format réel, plutôt que d'être
+   * empilées — c'est ainsi qu'elles seront vues sur le réseau.
+   */
+  if (item.gallery.length > 1) {
+    return (
+      <div>
+        <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto pb-2" aria-label={`Carrousel de ${item.gallery.length} images`}>
+          {item.gallery.map((image, index) => (
+            <figure key={`${image.fileName}-${index}`} className="relative w-[78%] shrink-0 snap-center sm:w-[62%]">
+              {image.kind === "video" && image.url
+                ? <video controls preload="metadata" className="max-h-[70vh] w-full rounded-2xl border border-line bg-black object-contain"><source src={image.url}/></video>
+                // eslint-disable-next-line @next/next/no-img-element
+                : <img src={image.url ?? undefined} alt={`Image ${index + 1} sur ${item.gallery.length} du ${formatDay(item.scheduledDate)}`} className="max-h-[70vh] w-full rounded-2xl border border-line bg-canvas object-contain"/>}
+              <figcaption className="absolute bottom-2 right-2 rounded-full bg-black/60 px-2 py-0.5 text-[11px] text-white">
+                {index + 1}/{item.gallery.length}
+              </figcaption>
+            </figure>
+          ))}
+        </div>
+        <p className="mt-1 text-center text-[11px] text-ink-faint">Faites défiler pour voir les {item.gallery.length} images.</p>
+      </div>
+    );
+  }
+
   if (item.media?.kind === "video" && item.media.url) {
     return (
       /*

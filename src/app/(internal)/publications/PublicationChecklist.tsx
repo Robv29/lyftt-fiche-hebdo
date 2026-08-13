@@ -22,6 +22,8 @@ export interface DailyPublication {
   caption:string; hashtags:string[]; approvalLabel:string; approved:boolean; publishedAt:string|null;
   mediaDownloadedAt:string|null; contentCopiedAt:string|null; mediaUrl:string|null; mediaFileName:string|null;
   mediaKind:"image"|"video"|"document"|null; mediaRequired:boolean;
+  /** Toutes les images de la publication, dans l'ordre du carrousel. */
+  gallery:{fileName:string;kind:"image"|"video"|"document";url:string|null}[];
   /** Réseaux enregistrés sur la fiche du client. */
   plannedNetworks:SocialNetwork[];
   /** Réseaux réellement publiés, cochés un à un. */
@@ -52,11 +54,21 @@ export function PublicationChecklist({ initialItems, nextWithContent }: { initia
   });
 
   const download = async(item:DailyPublication) => {
-    if (!item.mediaUrl) return;
+    /*
+     * Un carrousel se télécharge en entier : ne servir que la couverture
+     * obligerait à revenir chercher les autres images une par une.
+     */
+    const images=item.gallery.length>0?item.gallery:item.mediaUrl?[{url:item.mediaUrl,fileName:item.mediaFileName??"media",kind:item.mediaKind??"image"}]:[];
+    if (images.length===0) return;
     try {
-      const response=await fetch(item.mediaUrl); const blob=await response.blob(); const url=URL.createObjectURL(blob);
-      const anchor=document.createElement("a"); anchor.href=url; anchor.download=item.mediaFileName??"media"; anchor.click(); URL.revokeObjectURL(url);
-    } catch { window.open(item.mediaUrl,"_blank","noopener,noreferrer"); }
+      for (const [index,image] of images.entries()) {
+        if (!image.url) continue;
+        const response=await fetch(image.url); const blob=await response.blob(); const url=URL.createObjectURL(blob);
+        const anchor=document.createElement("a"); anchor.href=url;
+        anchor.download=images.length>1?`${index+1}-${image.fileName}`:image.fileName;
+        anchor.click(); URL.revokeObjectURL(url);
+      }
+    } catch { if (images[0]?.url) window.open(images[0].url,"_blank","noopener,noreferrer"); }
     mark(item.id,"media");
   };
 
@@ -110,7 +122,10 @@ function MediaPreview({ item }:{ item:DailyPublication }) {
   const media=item.mediaKind==="video"
     ? <video src={item.mediaUrl} controls playsInline preload="metadata" className="h-full w-full object-contain"/>
     : <Image src={item.mediaUrl} alt="Aperçu du média à publier" width={720} height={1280} unoptimized className="h-full w-full object-contain"/>;
-  return <div className={`overflow-hidden rounded-2xl border ${mediaFrameBackground(item.format)} ${frame}`}>{media}</div>;
+  return <div className={`relative overflow-hidden rounded-2xl border ${mediaFrameBackground(item.format)} ${frame}`}>
+    {media}
+    {item.gallery.length>1&&<span className="absolute right-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-[11px] text-white">1/{item.gallery.length}</span>}
+  </div>;
 }
 
 /**
@@ -161,7 +176,7 @@ function PublicationCard({item,pending,onDownload,onCopy,onPublished,onNetwork}:
       <MediaPreview item={item}/>
       <div className="min-w-0"><p className="line-clamp-6 whitespace-pre-wrap text-sm leading-relaxed">{item.caption||"Texte vide"}</p>{item.hashtags.length>0&&<p className="mt-3 break-words text-xs leading-relaxed text-[#0b63ad]">{item.hashtags.join(" ")}</p>}</div>
     </div>
-    <div className="border-t bg-[#fbfcfe] p-4">{locked&&<p className="mb-3 rounded-xl bg-[#fff4e5] px-3 py-2 text-xs leading-relaxed text-[#8a5700]">En attente de validation client. Le média et le texte se débloqueront dès que le client aura validé cette publication.</p>}<div className="grid gap-2 sm:grid-cols-2"><button type="button" className={mediaDone?"btn-secondary border-state-approved/30 text-state-approved":"btn-secondary"} disabled={pending||locked||(!item.mediaUrl&&item.mediaRequired)} onClick={onDownload}>{mediaDone?<Icon name="check" className="h-4 w-4"/>:<Icon name="download" className="h-4 w-4"/>}{mediaDone?"Média téléchargé":item.mediaRequired?"Télécharger le média":"Aucun média requis"}</button><button type="button" className={contentDone?"btn-secondary border-state-approved/30 text-state-approved":"btn-primary"} disabled={pending||locked} onClick={onCopy}>{contentDone?<Icon name="check" className="h-4 w-4"/>:<Icon name="copy" className="h-4 w-4"/>}{contentDone?"Texte copié":"Copier texte + hashtags"}</button></div>
+    <div className="border-t bg-[#fbfcfe] p-4">{locked&&<p className="mb-3 rounded-xl bg-[#fff4e5] px-3 py-2 text-xs leading-relaxed text-[#8a5700]">En attente de validation client. Le média et le texte se débloqueront dès que le client aura validé cette publication.</p>}<div className="grid gap-2 sm:grid-cols-2"><button type="button" className={mediaDone?"btn-secondary border-state-approved/30 text-state-approved":"btn-secondary"} disabled={pending||locked||(!item.mediaUrl&&item.mediaRequired)} onClick={onDownload}>{mediaDone?<Icon name="check" className="h-4 w-4"/>:<Icon name="download" className="h-4 w-4"/>}{mediaDone?"Média téléchargé":item.mediaRequired?(item.gallery.length>1?`Télécharger les ${item.gallery.length} images`:"Télécharger le média"):"Aucun média requis"}</button><button type="button" className={contentDone?"btn-secondary border-state-approved/30 text-state-approved":"btn-primary"} disabled={pending||locked} onClick={onCopy}>{contentDone?<Icon name="check" className="h-4 w-4"/>:<Icon name="copy" className="h-4 w-4"/>}{contentDone?"Texte copié":"Copier texte + hashtags"}</button></div>
 
       <PublishPanel item={item} pending={pending} locked={locked} onPublished={onPublished} onNetwork={onNetwork}/>
     </div>
