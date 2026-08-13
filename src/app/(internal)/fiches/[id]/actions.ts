@@ -25,6 +25,8 @@ const editableItemSchema = z.object({
   hashtags: z.string().max(1000),
   mediaAssetId: z.string().uuid().nullable().optional(),
   mediaCleared: z.boolean().optional(),
+  /** Publication retirée de la fiche, sans être effacée. */
+  isCancelled: z.boolean().optional(),
 });
 
 function publicationTypeForFormat(format: MediaFormat): PublicationType {
@@ -69,6 +71,15 @@ export async function saveSheetContent(formData: FormData): Promise<SheetContent
     return { ok: false, message: "Une publication n’appartient pas à cette fiche." };
   }
 
+  /*
+   * Une fiche vide n'a pas de sens : elle ne pourrait ni être envoyée ni
+   * validée. Retirer la dernière publication est donc refusé, plutôt que de
+   * laisser tomber la fiche dans un état qu'aucun écran ne sait afficher.
+   */
+  if (items.data.every((item) => item.isCancelled)) {
+    return { ok: false, message: "Une fiche doit garder au moins une publication." };
+  }
+
   for (const [index, item] of items.data.entries()) {
     const existing = existingItems.get(item.id)!;
     const patch: Record<string, unknown> = {
@@ -78,6 +89,12 @@ export async function saveSheetContent(formData: FormData): Promise<SheetContent
       publication_type: publicationTypeForFormat(item.format),
       caption: sanitizeText(item.caption, 5000),
       hashtags: normalizeHashtags(item.hashtags),
+      /*
+       * Retirer marque plutôt que supprimer : la publication disparaît des
+       * écrans, mais son historique et les validations déjà données par le
+       * client restent attachés à la fiche.
+       */
+      is_cancelled: Boolean(item.isCancelled),
     };
     // Le média a déjà été téléversé depuis le navigateur ; on ne reçoit que
     // son identifiant. Une suppression explicite détache le média du contenu :

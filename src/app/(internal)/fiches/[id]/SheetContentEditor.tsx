@@ -38,6 +38,8 @@ interface EditorItem extends EditableSheetItem {
   mediaError: string | null;
   /** Marque une suppression demandée, appliquée à l'enregistrement. */
   mediaCleared: boolean;
+  /** Publication retirée de la fiche, appliquée à l'enregistrement. */
+  removed: boolean;
 }
 
 const IMAGE_ACCEPT = "image/jpeg,image/png,image/webp,image/heic";
@@ -71,7 +73,8 @@ export function SheetContentEditor({ sheetId, clientId, clientName, initialItems
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<SheetContentActionResult | null>(null);
-  const [items, setItems] = useState<EditorItem[]>(initialItems.map((item) => ({ ...item, ...EMPTY_UPLOAD })));
+  const [items, setItems] = useState<EditorItem[]>(initialItems.map((item) => ({ ...item, ...EMPTY_UPLOAD, removed: false })));
+  const active = items.filter((item) => !item.removed);
   const update = (id: string, patch: Partial<EditorItem>) => setItems((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
 
   /*
@@ -124,8 +127,8 @@ export function SheetContentEditor({ sheetId, clientId, clientName, initialItems
       : { ...EMPTY_UPLOAD, mediaStatus: "erreur", mediaError: result.message ?? "Envoi impossible." });
   };
 
-  const requirements = items.reduce((total, item) => total + (item.format === "texte_seul" ? 2 : 3), 0);
-  const completed = items.reduce((total, item) => total
+  const requirements = active.reduce((total, item) => total + (item.format === "texte_seul" ? 2 : 3), 0);
+  const completed = active.reduce((total, item) => total
     + Number(Boolean(item.caption.trim()))
     + Number(Boolean(item.hashtags.trim()))
     + Number(item.format !== "texte_seul" && hasMedia(item)), 0);
@@ -145,6 +148,7 @@ export function SheetContentEditor({ sheetId, clientId, clientName, initialItems
         // `null` explicite vaut suppression du média rattaché.
         mediaAssetId: item.mediaAssetId,
         mediaCleared: item.mediaCleared,
+        isCancelled: item.removed,
       }))));
       startTransition(async () => {
         const result = await saveSheetContent(formData);
@@ -161,6 +165,18 @@ export function SheetContentEditor({ sheetId, clientId, clientName, initialItems
       {feedback && <p className={`rounded-xl border px-4 py-3 text-sm ${feedback.ok ? "border-state-approved/30 bg-state-approved/5 text-state-approved" : "border-state-changes/30 bg-state-changes/5 text-state-changes"}`}>{feedback.message}</p>}
 
       {items.map((item, index) => {
+        if (item.removed) {
+          return (
+            <article key={item.id} className="card flex flex-wrap items-center justify-between gap-3 border-dashed p-4 text-sm">
+              <span className="text-ink-faint">
+                Publication {index + 1} · {MEDIA_FORMAT_LABELS[item.format]} — retirée à l’enregistrement
+              </span>
+              <button type="button" className="text-xs font-semibold text-[#0759e6] hover:underline" onClick={() => update(item.id, { removed: false })}>
+                Annuler le retrait
+              </button>
+            </article>
+          );
+        }
         const mediaReady = item.format === "texte_seul" || hasMedia(item);
         const itemReady = Boolean(item.caption.trim() && item.hashtags.trim() && mediaReady);
         return (
@@ -176,6 +192,19 @@ export function SheetContentEditor({ sheetId, clientId, clientName, initialItems
               >
                 {previewing[item.id] ? "Masquer l’aperçu" : "Aperçu du post"}
               </button>
+              {/*
+                Une fiche sans publication ne peut être ni envoyée ni validée :
+                on garde toujours la dernière.
+              */}
+              {active.length > 1 && (
+                <button
+                  type="button"
+                  className="shrink-0 text-xs text-state-changes hover:underline"
+                  onClick={() => update(item.id, { removed: true })}
+                >
+                  Retirer
+                </button>
+              )}
             </div>
 
             {previewing[item.id] && (
