@@ -146,40 +146,42 @@ export default async function SheetsPage() {
   const previousWeekStart = civilDaysBefore(range.currentStart, 7);
   /*
    * Un client en pause, dont la gestion est terminée ou pas encore commencée
-   * n'a rien à faire dans le planning : ses fiches y encombrent la vue d'un
-   * travail qu'on ne fera pas cette semaine. Elles restent accessibles depuis
-   * sa fiche client.
+   * n'a rien à faire dans le planning.
+   *
+   * La question se pose **à la semaine concernée**, pas aujourd'hui : une
+   * gestion qui s'arrête le 15 août n'a rien à produire la semaine du 17, et
+   * une gestion qui démarre le 17 doit au contraire y figurer. Juger sur la
+   * date du jour donnait les deux erreurs à la fois.
    */
-  const producibleClientIds = new Set(
-    (clients ?? []).filter((client) => clientLifecycle({
+  const clientById = new Map((clients ?? []).map((client) => [client.id, client]));
+  const producesOn = (clientId: string | undefined, weekStart: string): boolean => {
+    if (!clientId) return true;
+    const client = clientById.get(clientId);
+    if (!client) return true;
+    return clientLifecycle({
       isActive: client.is_active,
       contractStartDate: client.contract_start_date,
       contractEndDate: client.contract_end_date,
       pauseStartDate: client.pause_start_date,
       pauseEndDate: client.pause_end_date,
-    }).canProduce).map((client) => client.id),
-  );
-  const sheetsOfManagedClients = sheets.filter((sheet) =>
-    sheet.clients?.id ? producibleClientIds.has(sheet.clients.id) : true);
+    }, weekStart).canProduce;
+  };
 
-  const past = sheetsOfManagedClients.filter((sheet) =>
+  const past = sheets.filter((sheet) =>
     planningBucketForPeriod(sheet.period_start, sheet.period_end) === "past"
-    && sheet.period_start >= previousWeekStart);
-  const current = sheetsOfManagedClients
-    .filter((sheet) => planningBucketForPeriod(sheet.period_start, sheet.period_end) === "current")
+    && sheet.period_start >= previousWeekStart
+    && producesOn(sheet.clients?.id, sheet.period_start));
+  const current = sheets
+    .filter((sheet) => planningBucketForPeriod(sheet.period_start, sheet.period_end) === "current"
+      && producesOn(sheet.clients?.id, range.currentStart))
     .sort((a, b) => Number(hasHighPriorityChange(b)) - Number(hasHighPriorityChange(a))
       || completionForSheet(a).percentage - completionForSheet(b).percentage);
-  const next = sheetsOfManagedClients.filter((sheet) => planningBucketForPeriod(sheet.period_start, sheet.period_end) === "next");
+  const next = sheets.filter((sheet) => planningBucketForPeriod(sheet.period_start, sheet.period_end) === "next"
+    && producesOn(sheet.clients?.id, range.nextStart));
   const nextClientIds = new Set(next.map((sheet) => sheet.clients?.id).filter(Boolean));
-  // Aucune proposition pour un client en pause ou dont la gestion est terminée.
-  const proposals = (clients ?? []).filter((client) => !nextClientIds.has(client.id)
-    && clientLifecycle({
-      isActive: client.is_active,
-      contractStartDate: client.contract_start_date,
-      contractEndDate: client.contract_end_date,
-      pauseStartDate: client.pause_start_date,
-      pauseEndDate: client.pause_end_date,
-    }).canProduce);
+  // Une proposition ne vaut que si le client produit la semaine prochaine.
+  const proposals = (clients ?? []).filter((client) =>
+    !nextClientIds.has(client.id) && producesOn(client.id, range.nextStart));
   // Un taux par période : l'indicateur en tête suit l'onglet consulté.
   const rateOf = (group: PlanningSheet[]) =>
     validationRate(group.map((sheet) => sheet.status as SheetStatus));

@@ -135,3 +135,26 @@ describe("gestion pas encore commencée", () => {
     expect(productionBlockedMessage(lifecycle)).toContain("pas encore commencé");
   });
 });
+
+describe("évaluation à la semaine concernée", () => {
+  const semaine34 = "2026-08-17";
+
+  it("écarte une gestion qui s'arrête avant la semaine préparée", () => {
+    // Fin le 15 août : rien à produire la semaine du 17.
+    const lifecycle = clientLifecycle({ ...base, contractEndDate: "2026-08-15" }, semaine34);
+    expect(lifecycle.canProduce).toBe(false);
+  });
+
+  it("retient une gestion qui démarre le premier jour de cette semaine", () => {
+    const lifecycle = clientLifecycle({ ...base, contractStartDate: semaine34 }, semaine34);
+    expect(lifecycle.canProduce).toBe(true);
+  });
+
+  it("écarte une pause couvrant la semaine préparée", () => {
+    const lifecycle = clientLifecycle(
+      { ...base, pauseStartDate: "2026-08-16", pauseEndDate: "2026-08-30" },
+      semaine34,
+    );
+    expect(lifecycle.canProduce).toBe(false);
+  });
+});
