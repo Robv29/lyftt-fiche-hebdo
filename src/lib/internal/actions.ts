@@ -10,6 +10,7 @@ import { canTransition } from "@/lib/domain/workflow";
 import { checkExportBeforeSend } from "@/lib/domain/edge-cases";
 import { normalizeHashtags, sanitizeText } from "@/lib/security/sanitize";
 import type { TicketStatus } from "@/lib/domain/types";
+import { isServiceRequest, type TicketType } from "@/lib/domain/ticket-types";
 import { whatsappLink } from "@/lib/domain/templates";
 import { sheetCompletion } from "@/lib/domain/planning";
 import type { MediaFormat } from "@/lib/domain/types";
@@ -515,4 +516,44 @@ export async function markNotificationRead(
 
   revalidatePath("/");
   return { ok: true };
+}
+
+/**
+ * Clôture d'une demande hors publication.
+ *
+ * Devis, date de shooting, service annexe : rien à corriger, rien à renvoyer
+ * au client pour revalidation. Le circuit de correction de contenu — corrigé,
+ * relu, renvoyé — n'a aucun sens ici ; il suffit de dire que c'est traité.
+ */
+export async function resolveServiceRequest(ticketId: string): Promise<InternalActionResult> {
+  const profile = await getCurrentProfile();
+  if (!profile || !["super_admin", "production_manager", "community_manager"].includes(profile.role)) {
+    return { ok: false, message: "Action non autorisée." };
+  }
+  if (!z.string().uuid().safeParse(ticketId).success) {
+    return { ok: false, message: "Demande invalide." };
+  }
+
+  const scoped = await createSupabaseServerClient();
+  const { data: ticket } = await scoped
+    .from("client_tickets")
+    .select("id, ticket_type, status")
+    .eq("id", ticketId)
+    .maybeSingle();
+  if (!ticket) return { ok: false, message: "Demande introuvable ou accès refusé." };
+
+  if (!isServiceRequest(ticket.ticket_type as TicketType)) {
+    return { ok: false, message: "Cette demande porte sur un contenu : utilisez le circuit de correction." };
+  }
+
+  const now = new Date().toISOString();
+  const { error } = await createSupabaseAdminClient()
+    .from("client_tickets")
+    .update({ status: "closed", resolved_at: now, closed_at: now })
+    .eq("id", ticketId);
+  if (error) return { ok: false, message: `Clôture impossible : ${error.message}` };
+
+  revalidatePath("/retours");
+  revalidatePath(`/retours/${ticketId}`);
+  return { ok: true, message: "Demande marquée comme traitée." };
 }

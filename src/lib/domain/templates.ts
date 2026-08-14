@@ -16,6 +16,12 @@ export const TEMPLATE_VARIABLES = [
   "publication_end_date",
   "validation_deadline",
   "review_link",
+  /*
+   * Second lien : tout ce qui ne concerne pas les publications de la semaine.
+   * Devis, dates de shooting, services annexes arrivaient par message et se
+   * perdaient ; ils passent désormais par un formulaire suivi.
+   */
+  "request_link",
   "community_manager_name",
 ] as const;
 
@@ -29,6 +35,7 @@ export const TEMPLATE_VARIABLE_LABELS: Record<TemplateVariable, string> = {
   publication_end_date: "Fin de période",
   validation_deadline: "Date limite de validation",
   review_link: "Lien sécurisé",
+  request_link: "Lien « autre demande »",
   community_manager_name: "Community manager",
 };
 
@@ -86,6 +93,9 @@ Merci de le consulter et de nous transmettre votre validation ou vos demandes de
 
 Pour valider ou demander une modification, cliquez sur ce lien et sélectionnez le contenu concerné :
 {{review_link}}
+
+Pour toute autre demande — devis, date de shooting, site internet — utilisez ce second lien :
+{{request_link}}
 
 Merci et bonne journée.
 {{community_manager_name}} — LYFTT`,

@@ -42,6 +42,7 @@ describe("Scénario 1 — lien sécurisé et message personnalisé", () => {
       publication_end_date: "16/08/2026",
       validation_deadline: formatDeadline(deadline),
       review_link: reviewLink,
+      request_link: `${reviewLink}/demandes`,
       community_manager_name: "Élena",
     });
 

@@ -10,6 +10,7 @@ import {
   itemApprovalStatusLabel
 } from "@/lib/domain/types";
 import { TicketActions } from "./TicketActions";
+import { isServiceRequest } from "@/lib/domain/ticket-types";
 
 /** §9 / §12 — Vue détail d'un ticket, avec comparatif du texte. */
 export default async function TicketDetailPage({
@@ -25,7 +26,7 @@ export default async function TicketDetailPage({
     .from("client_tickets")
     .select(
       `id, ticket_number, title, description, client_suggestion, details, ticket_type,
-       category, status, priority, due_at, submitted_at, created_by_name, created_by_email,
+       category, status, priority, due_at, submitted_at, resolved_at, created_by_name, created_by_email,
        reopen_count, weekly_sheet_id,
        clients ( id, name ),
        weekly_sheets ( iso_week, iso_year ),
@@ -236,6 +237,9 @@ export default async function TicketDetailPage({
           </section>
 
           <TicketActions
+            serviceRequest={isServiceRequest(ticket.ticket_type)}
+            submittedAt={ticket.submitted_at}
+            resolvedAt={ticket.resolved_at}
             ticketId={ticket.id}
             ticketNumber={ticket.ticket_number}
             sheetId={ticket.weekly_sheet_id}

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { isServiceRequest, isServiceRequestOverdue, serviceRequestAgeInDays } from "@/lib/domain/ticket-types";
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
 import { deadlineState } from "@/lib/domain/deadline";
 import {
@@ -42,7 +43,7 @@ export default async function TicketsPage({
     .from("client_tickets")
     .select(
       `id, ticket_number, title, ticket_type, category, status, priority, due_at,
-       submitted_at, updated_at, weekly_sheet_id,
+       submitted_at, updated_at, resolved_at, weekly_sheet_id,
        clients ( id, name ),
        weekly_sheets ( iso_week ),
        client_ticket_assignments ( assignment_role, profiles ( full_name ) )`,
@@ -107,6 +108,16 @@ export default async function TicketsPage({
                   <ClientAvatar name={client?.name ?? "Client"}/>
                   <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><strong className="truncate text-sm">{client?.name ?? "Client"}</strong><span className="text-[11px] text-ink-faint">{ticket.ticket_number}{week && ` · semaine ${week.iso_week}`}</span></div><p className="mt-1 truncate text-sm text-ink-soft">{getTicketTypeDefinition(ticket.ticket_type).label} — {ticket.title}</p>{assignments.length > 0 && <p className="mt-1 truncate text-xs text-ink-faint">Responsable : {assignments.map((a) => a.profiles?.full_name).filter(Boolean).join(" · ")}</p>}</div>
                   <div className="flex flex-wrap items-center gap-2 pl-[60px] text-xs sm:max-w-60 sm:justify-end sm:pl-0">
+                      {/*
+                        Une demande hors publication ne suit pas le circuit de
+                        correction : elle doit se repérer d'un coup d'œil, et
+                        alerter dès qu'elle traîne au-delà de trois jours.
+                      */}
+                      {isServiceRequest(ticket.ticket_type) && (
+                        isServiceRequestOverdue({ submittedAt: ticket.submitted_at, resolvedAt: ticket.resolved_at })
+                          ? <span className="badge bg-state-changes text-white">Sans réponse depuis {Math.floor(serviceRequestAgeInDays(ticket.submitted_at))} j</span>
+                          : <span className="badge bg-[#e8f2ff] text-[#0b5e9f]">Hors publication</span>
+                      )}
                       {ticket.priority !== "normal" && (
                         <span className="badge bg-state-progress/10 text-state-progress">
                           {ticketPriorityLabel(ticket.priority)}

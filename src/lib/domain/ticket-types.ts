@@ -18,6 +18,14 @@ export const TICKET_TYPES = [
   "publication_remove",
   "publication_add",
   "other",
+  /*
+   * Demandes hors publication : elles ne portent sur aucun contenu de la
+   * semaine. Elles empruntent le circuit des tickets, qui sait déjà router,
+   * assigner et clore, mais arrivent par un lien distinct.
+   */
+  "quote_request",
+  "shooting_request",
+  "side_service",
 ] as const;
 
 export type TicketType = (typeof TICKET_TYPES)[number];
@@ -194,7 +202,64 @@ export const TICKET_TYPE_DEFINITIONS: Record<TicketType, TicketTypeDefinition> =
     category: "editorial",
     form: "generic",
   },
+  quote_request: {
+    type: "quote_request",
+    label: "Demande de devis",
+    group: "Hors publication",
+    category: "scope",
+    form: "generic",
+  },
+  shooting_request: {
+    type: "shooting_request",
+    label: "Date de shooting",
+    group: "Hors publication",
+    category: "scope",
+    form: "generic",
+  },
+  side_service: {
+    type: "side_service",
+    label: "Service annexe (site web, autre)",
+    group: "Hors publication",
+    category: "scope",
+    form: "generic",
+  },
 };
+
+/**
+ * Demandes qui ne portent sur aucune publication.
+ *
+ * Elles arrivent par le second lien du message hebdomadaire et suivent un
+ * traitement propre : pas de correction de contenu, juste une réponse à
+ * apporter.
+ */
+export const SERVICE_REQUEST_TYPES = [
+  "quote_request",
+  "shooting_request",
+  "side_service",
+] as const;
+
+export function isServiceRequest(type: TicketType): boolean {
+  return (SERVICE_REQUEST_TYPES as readonly string[]).includes(type);
+}
+
+/** Délai au-delà duquel une demande non traitée devient alarmante. */
+export const SERVICE_REQUEST_ALERT_DAYS = 3;
+
+/** Jours écoulés depuis la demande, pour signaler celles qui traînent. */
+export function serviceRequestAgeInDays(submittedAt: string, now: Date = new Date()): number {
+  const submitted = new Date(submittedAt).getTime();
+  if (Number.isNaN(submitted)) return 0;
+  return Math.max(0, (now.getTime() - submitted) / 86_400_000);
+}
+
+/** Une demande non résolue au-delà du délai passe en alerte rouge. */
+export function isServiceRequestOverdue(
+  input: { submittedAt: string; resolvedAt: string | null },
+  now: Date = new Date(),
+): boolean {
+  if (input.resolvedAt) return false;
+  return serviceRequestAgeInDays(input.submittedAt, now) >= SERVICE_REQUEST_ALERT_DAYS;
+}
 
 export function getTicketTypeDefinition(type: TicketType): TicketTypeDefinition {
   return TICKET_TYPE_DEFINITIONS[type];

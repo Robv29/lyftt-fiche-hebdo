@@ -66,7 +66,16 @@ export function SendPanel({
   const template = templates.find((t) => t.type === templateType) ?? templates[0];
 
   const rendered = useMemo(
-    () => renderTemplate(template.body, { ...context, review_link: reviewUrl ?? "" }),
+    /*
+     * Le second lien dérive du premier : même jeton, même expiration. Le
+     * client n'a donc qu'une adresse à conserver, et révoquer le lien ferme
+     * les deux accès d'un coup.
+     */
+    () => renderTemplate(template.body, {
+      ...context,
+      review_link: reviewUrl ?? "",
+      request_link: reviewUrl ? `${reviewUrl}/demandes` : "",
+    }),
     [template, context, reviewUrl],
   );
 

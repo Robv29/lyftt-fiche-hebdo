@@ -660,3 +660,112 @@ async function handleAttachment(
 
   await logReviewEvent(context.linkId, "attachment_uploaded", { ticketId });
 }
+
+const serviceRequestSchema = z.object({
+  requestType: z.enum(["quote_request", "shooting_request", "side_service"]),
+  description: z.string().trim().min(10, "Décrivez votre demande en quelques mots.").max(3000),
+  clientName: z.string().trim().max(120).optional(),
+  clientEmail: z.string().trim().email().max(200).optional().or(z.literal("")),
+});
+
+/**
+ * Demande hors publication : devis, date de shooting, service annexe.
+ *
+ * Elle n'est rattachée à aucun contenu de la semaine — c'est ce qui la
+ * distingue d'une correction — mais emprunte le circuit des tickets, qui sait
+ * déjà router, assigner, alerter et clore. Elle arrive par le second lien du
+ * message hebdomadaire, avec le même jeton : le client n'a rien de plus à
+ * retenir.
+ */
+export async function createServiceRequest(
+  token: string,
+  formData: FormData,
+): Promise<ActionResult> {
+  const link = await requireLink(token);
+  if (!link.ok) return link.result;
+
+  if (!rateLimit("ticketCreation", link.context.linkId).allowed) {
+    return { ok: false, message: "Trop de demandes successives. Réessayez dans un instant." };
+  }
+
+  const parsed = serviceRequestSchema.safeParse({
+    requestType: formData.get("requestType"),
+    description: formData.get("description"),
+    clientName: formData.get("clientName") ?? undefined,
+    clientEmail: formData.get("clientEmail") ?? undefined,
+  });
+  if (!parsed.success) {
+    return { ok: false, message: parsed.error.issues[0]?.message ?? "Demande incomplète." };
+  }
+
+  const input = parsed.data;
+  const definition = getTicketTypeDefinition(input.requestType);
+  const description = sanitizeText(input.description, 3000);
+  const sheet = await loadReviewSheet(link.context);
+  const supabase = createSupabaseAdminClient();
+
+  const { data: ticket, error } = await supabase
+    .from("client_tickets")
+    .insert({
+      client_id: link.context.clientId,
+      /*
+       * Rattachée à la fiche du lien pour retrouver le contexte, mais à
+       * aucune publication : elle ne porte sur aucun contenu.
+       */
+      weekly_sheet_id: link.context.sheetId,
+      weekly_sheet_item_id: null,
+      review_link_id: link.context.linkId,
+      ticket_type: input.requestType,
+      category: definition.category,
+      title: definition.label,
+      description,
+      priority: "normal",
+      status: "new",
+      created_by_type: "client",
+      created_by_name: input.clientName ? sanitizeText(input.clientName, 120) : null,
+      created_by_email: input.clientEmail || null,
+    })
+    .select("id, ticket_number")
+    .single();
+
+  if (error || !ticket) {
+    return { ok: false, message: "La demande n'a pas pu être enregistrée. Réessayez." };
+  }
+
+  const recipients = await assignAndNotify(
+    ticket.id,
+    link.context.clientId,
+    routeTicket(input.requestType, { priority: "normal" }),
+    definition.label,
+  );
+
+  await sendTicketAlert({
+    recipients,
+    email: {
+      ticketNumber: ticket.ticket_number,
+      clientName: sheet?.clientName ?? "Client",
+      ticketType: input.requestType,
+      priority: "normal",
+      description,
+      clientSuggestion: null,
+      itemLabel: null,
+      authorName: input.clientName ? sanitizeText(input.clientName, 120) : null,
+      ticketUrl: `${env.appUrl}/retours/${ticket.id}`,
+      deadlineLabel: null,
+      escalationReasons: [],
+      afterDeadline: false,
+    },
+  });
+
+  await logReviewEvent(link.context.linkId, "ticket_created", {
+    ticketId: ticket.id,
+    ticketType: input.requestType,
+    serviceRequest: true,
+  });
+
+  revalidatePath(`/client-review/${token}/demandes`);
+  return {
+    ok: true,
+    message: `Demande ${ticket.ticket_number} enregistrée. Nous revenons vers vous rapidement.`,
+  };
+}

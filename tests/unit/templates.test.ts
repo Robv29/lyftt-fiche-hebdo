@@ -14,6 +14,7 @@ const context = {
   publication_end_date: "16/08/2026",
   validation_deadline: "mardi 11 août à 10 h",
   review_link: "https://app.lyftt.fr/client-review/abc",
+  request_link: "https://app.lyftt.fr/client-review/abc/demandes",
   community_manager_name: "Élena",
 };
 

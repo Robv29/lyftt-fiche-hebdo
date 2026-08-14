@@ -1,15 +1,20 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { addTicketComment, prepareCorrectionForClient, sendCorrectionToClient, transitionTicket, type InternalActionResult } from "@/lib/internal/actions";
+import { addTicketComment, prepareCorrectionForClient, resolveServiceRequest, sendCorrectionToClient, transitionTicket, type InternalActionResult } from "@/lib/internal/actions";
+import { isServiceRequestOverdue, serviceRequestAgeInDays, SERVICE_REQUEST_ALERT_DAYS } from "@/lib/domain/ticket-types";
 import { Icon } from "@/components/Icon";
 
 interface Transition { to:string; label:string; requiresReason:boolean }
 
-export function TicketActions({ ticketId, ticketNumber, sheetId, item, category, status, clientName, transitions }: {
+export function TicketActions({ ticketId, ticketNumber, sheetId, item, category, status, clientName, transitions, serviceRequest, submittedAt, resolvedAt }: {
   ticketId:string; ticketNumber:string; sheetId:string; category:string; status:string; clientName:string;
   item:{ id:string; caption:string; hashtags:string[]; scheduledDate:string } | null;
   transitions:Transition[];
+  /** Demande hors publication : ni correction, ni renvoi pour revalidation. */
+  serviceRequest:boolean;
+  submittedAt:string;
+  resolvedAt:string|null;
 }) {
   const [pending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<InternalActionResult | null>(null);
@@ -22,6 +27,47 @@ export function TicketActions({ ticketId, ticketNumber, sheetId, item, category,
   const run = (action:()=>Promise<InternalActionResult>, onSuccess?:(result:InternalActionResult)=>void) => startTransition(async()=>{
     const result = await action(); setFeedback(result); if (result.ok) onSuccess?.(result);
   });
+
+  /*
+   * Une demande hors publication n'a rien à corriger ni à renvoyer : le
+   * parcours en quatre étapes ne s'y applique pas. Un seul geste suffit —
+   * dire que c'est traité — et l'attente se signale au-delà de trois jours.
+   */
+  if (serviceRequest) {
+    const done = Boolean(resolvedAt) || status === "closed";
+    const overdue = isServiceRequestOverdue({ submittedAt, resolvedAt });
+    const days = Math.floor(serviceRequestAgeInDays(submittedAt));
+
+    return <div className="space-y-5">
+      {feedback?.message && <p className={`rounded-xl border px-4 py-3 text-sm ${feedback.ok ? "border-state-approved/30 bg-state-approved/5 text-state-approved" : "border-state-changes/30 bg-state-changes/5 text-state-changes"}`}>{feedback.message}</p>}
+
+      <section className={`card p-5 ${overdue ? "border-2 border-state-changes bg-state-changes/5" : done ? "border-state-approved/40 bg-[#f6fdf9]" : ""}`}>
+        <p className="eyebrow">Demande hors publication</p>
+        <h2 className="mt-1 font-semibold">
+          {done ? "Demande traitée" : overdue ? `Sans réponse depuis ${days} jours` : "À traiter"}
+        </h2>
+        <p className="mt-2 text-sm leading-relaxed text-ink-soft">
+          {done
+            ? "Rien de plus à faire : le client a eu sa réponse."
+            : overdue
+              ? `Passé ${SERVICE_REQUEST_ALERT_DAYS} jours sans réponse, une demande client se transforme en reproche. Répondez à ${clientName}, puis marquez-la traitée.`
+              : `Répondez à ${clientName} par le canal habituel, puis marquez la demande comme traitée.`}
+        </p>
+
+        {!done && (
+          <button
+            type="button"
+            className="btn-primary mt-4"
+            disabled={pending}
+            onClick={() => run(() => resolveServiceRequest(ticketId))}
+          >
+            <Icon name="check" className="h-4 w-4"/>
+            {pending ? "Enregistrement…" : "C’est fait"}
+          </button>
+        )}
+      </section>
+    </div>;
+  }
 
   return <div className="space-y-5">
     <section className="card overflow-hidden">
