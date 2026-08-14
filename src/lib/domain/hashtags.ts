@@ -42,6 +42,14 @@ export const LYFTT_CLIENT_TYPES: ReadonlyArray<{
   { id: "lyftt", label: "LYFTT — communication de l’agence", examples: "agence, social media, coulisses" },
 ];
 
+/*
+ * Hashtags de métier, communs à tous les clients d'une même typologie.
+ *
+ * Aucun n'y porte de nom de ville : ces listes servent des clients répartis
+ * sur des communes différentes, et un hashtag de ville erroné coûte plus qu'il
+ * ne rapporte. L'ancrage local passe par les cinq hashtags propres au client,
+ * saisis sur sa fiche.
+ */
 const LYFTT_HASHTAG_PRESETS: Record<LyfttClientType, readonly string[]> = {
   /*
    * Nettoyage et préparation esthétique automobile. Le registre mêle le
@@ -51,7 +59,7 @@ const LYFTT_HASHTAG_PRESETS: Record<LyfttClientType, readonly string[]> = {
   automobile: [
     "#NettoyageAuto", "#LavageAuto", "#Detailing", "#DetailingAuto", "#PreparationEsthetique",
     "#RenovationAuto", "#CarCare", "#AvantApres", "#InterieurImpeccable", "#CarrosserieBrillante",
-    "#NettoyageAutoToulouse", "#NettoyageAutoMontauban", "#SavoirFaire", "#Occitanie", "#CommerceLocal",
+    "#VoitureCommeNeuve", "#LavageAutoPro", "#SavoirFaire", "#Occitanie", "#CommerceLocal",
   ],
   /*
    * Communication de l'agence. Le registre est différent de celui d'un client :
@@ -61,61 +69,61 @@ const LYFTT_HASHTAG_PRESETS: Record<LyfttClientType, readonly string[]> = {
   lyftt: [
     "#LYFTT", "#AgenceCommunication", "#CommunityManager", "#SocialMedia", "#ReseauxSociaux",
     "#CommunicationDigitale", "#StrategieDeContenu", "#CreationDeContenu", "#PhotographiePro", "#VideoMarketing",
-    "#AgenceToulouse", "#AgenceMontauban", "#CommerceLocal", "#Occitanie", "#SavoirFaire",
+    "#StrategieDigitale", "#IdentiteDeMarque", "#CommerceLocal", "#Occitanie", "#SavoirFaire",
   ],
   restaurant: [
-    "#Restaurant", "#RestaurantToulouse", "#RestaurantMontauban", "#CuisineMaison", "#FaitMaison",
+    "#Restaurant", "#CuisineDuMarche", "#MenuDuJour", "#CuisineMaison", "#FaitMaison",
     "#ProduitsLocaux", "#BonnesAdresses", "#GastronomieLocale", "#TableGourmande", "#ArtisanDuGout",
-    "#SortirAToulouse", "#SortirAMontauban", "#CommerceLocal", "#Occitanie", "#SavoirFaire",
+    "#Terrasse", "#SortirCeSoir", "#CommerceLocal", "#Occitanie", "#SavoirFaire",
   ],
   bar: [
-    "#Bar", "#BarToulouse", "#BarMontauban", "#Afterwork", "#Convivialite",
-    "#SortirAToulouse", "#SortirAMontauban", "#BonnesAdresses", "#Apero", "#Cocktails",
+    "#Bar", "#Brasserie", "#AmbianceConviviale", "#Afterwork", "#Convivialite",
+    "#SortirCeSoir", "#Biere", "#BonnesAdresses", "#Apero", "#Cocktails",
     "#Vins", "#VieLocale", "#CommerceLocal", "#Occitanie", "#EntreAmis",
   ],
   boucherie: [
     "#Boucherie", "#BoucherieArtisanale", "#ArtisanBoucher", "#MetiersDeBouche", "#ViandeFrancaise",
     "#ProduitsLocaux", "#CircuitCourt", "#QualiteArtisanale", "#SavoirFaire", "#CommerceLocal",
-    "#BoucherieToulouse", "#BoucherieMontauban", "#GastronomieLocale", "#Occitanie", "#MangerLocal",
+    "#ViandeMaturee", "#ConseilBoucher", "#GastronomieLocale", "#Occitanie", "#MangerLocal",
   ],
   commerce: [
     "#CommerceLocal", "#AcheterLocal", "#BoutiqueLocale", "#Commercant", "#Proximite",
-    "#EntrepriseLocale", "#Toulouse", "#Montauban", "#Occitanie", "#BonnesAdresses",
+    "#EntrepriseLocale", "#CommerceDeProximite", "#SoutienAuxCommercants", "#Occitanie", "#BonnesAdresses",
     "#SavoirFaire", "#ConseilClient", "#VieLocale", "#ShoppingLocal", "#ConsommerLocal",
   ],
   cuisiniste: [
     "#Cuisiniste", "#CuisineSurMesure", "#AgencementInterieur", "#AmenagementInterieur", "#ProjetCuisine",
     "#CuisineDesign", "#Maison", "#DecorationInterieure", "#SavoirFaire", "#Artisan",
-    "#CuisinisteToulouse", "#CuisinisteMontauban", "#EntrepriseLocale", "#Occitanie", "#InspirationMaison",
+    "#CuisineEquipee", "#RenovationCuisine", "#EntrepriseLocale", "#Occitanie", "#InspirationMaison",
   ],
   design: [
     "#Design", "#DesignLocal", "#Creation", "#Decoration", "#Inspiration",
     "#SurMesure", "#SavoirFaire", "#CreateurLocal", "#ArtisanCreateur", "#ProjetUnique",
-    "#DesignToulouse", "#DesignMontauban", "#EntrepriseLocale", "#Occitanie", "#MadeInFrance",
+    "#DesignGraphique", "#IdentiteVisuelle", "#EntrepriseLocale", "#Occitanie", "#MadeInFrance",
   ],
   loisirs: [
     "#Loisirs", "#EscapeGame", "#Experience", "#SortieEnFamille", "#SortieEntreAmis",
-    "#ActiviteToulouse", "#ActiviteMontauban", "#QueFaireAToulouse", "#QueFaireAMontauban", "#Occitanie",
+    "#ActiviteEnFamille", "#JeuDEvasion", "#SortieOriginale", "#IdeeCadeau", "#Occitanie",
     "#Divertissement", "#TeamBuilding", "#IdeeSortie", "#BonPlanLocal", "#Aventure",
   ],
   hotel: [
     "#Hotel", "#Gite", "#Tourisme", "#SejourEnFrance", "#Hospitalite",
     "#Escapade", "#WeekendEnFrance", "#ExperienceClient", "#DestinationOccitanie", "#TourismeLocal",
-    "#HotelToulouse", "#HotelMontauban", "#VoyageEnFrance", "#ArtDeVivre", "#BonnesAdresses",
+    "#ChambreAvecVue", "#SejourNature", "#VoyageEnFrance", "#ArtDeVivre", "#BonnesAdresses",
   ],
   beaute: [
     "#InstitutDeBeaute", "#Beaute", "#BienEtre", "#PrendreSoinDeSoi", "#SoinsVisage",
-    "#SoinsCorps", "#BeauteNaturelle", "#MomentPourSoi", "#ExpertiseBeaute", "#InstitutToulouse",
-    "#InstitutMontauban", "#Spa", "#Detente", "#CommerceLocal", "#Occitanie",
+    "#SoinsCorps", "#BeauteNaturelle", "#MomentPourSoi", "#ExpertiseBeaute", "#RituelBeaute",
+    "#PeauEclatante", "#Spa", "#Detente", "#CommerceLocal", "#Occitanie",
   ],
   paysagiste: [
     "#Paysagiste", "#AmenagementExterieur", "#Jardin", "#CreationJardin", "#EntretienJardin",
     "#Terrasse", "#EspaceVert", "#JardinSurMesure", "#SavoirFaire", "#Artisan",
-    "#PaysagisteToulouse", "#PaysagisteMontauban", "#EntrepriseLocale", "#Occitanie", "#InspirationJardin",
+    "#JardinPaysager", "#AmenagementPaysager", "#EntrepriseLocale", "#Occitanie", "#InspirationJardin",
   ],
   artisan: [
     "#Artisan", "#ArtisanLocal", "#SavoirFaire", "#FaitMain", "#ArtisanatFrancais",
-    "#EntrepriseLocale", "#Toulouse", "#Montauban", "#Occitanie", "#Proximite",
+    "#EntrepriseLocale", "#ArtisanDuCoin", "#QualiteArtisanale", "#Occitanie", "#Proximite",
     "#TravailBienFait", "#SurMesure", "#Expertise", "#MetierPassion", "#ValorisonsNosArtisans",
   ],
 };

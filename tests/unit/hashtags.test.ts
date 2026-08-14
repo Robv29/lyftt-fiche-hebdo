@@ -44,3 +44,19 @@ describe("bibliothèque de hashtags LYFTT", () => {
     expect(tags.filter((tag) => tag.toLowerCase() === "#restaurant")).toHaveLength(1);
   });
 });
+
+describe("hashtags de métier", () => {
+  it("ne porte aucun nom de ville", () => {
+    /*
+     * Ces listes servent des clients répartis sur des communes différentes :
+     * un hashtag de ville y serait faux pour la plupart d'entre eux.
+     */
+    // Le nom doit former un mot entier : « Agencement » n'est pas « Agen ».
+    const villes = /(Toulouse|Montauban|Castres|Albi|Agen|Paris|Bordeaux)(?![a-z])/;
+    for (const type of LYFTT_CLIENT_TYPE_IDS) {
+      for (const hashtag of hashtagsForClientType(type)) {
+        expect(hashtag, `${type} : ${hashtag}`).not.toMatch(villes);
+      }
+    }
+  });
+});
