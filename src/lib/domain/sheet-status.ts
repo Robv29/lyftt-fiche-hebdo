@@ -68,15 +68,24 @@ export function isClientValidated(status: SheetStatus): boolean {
 }
 
 /**
- * La rédaction reste possible avant l'envoi, ainsi que sur une fiche déjà
- * envoyée ou entièrement validée. Dans ce dernier cas, l'enregistrement doit
- * créer une nouvelle version et demander une nouvelle validation au client.
+ * La rédaction reste possible à tout stade vivant de la fiche : avant l'envoi,
+ * une fois partie chez le client, pendant les corrections, et jusqu'après la
+ * validation. Dès que le client a vu la fiche, l'enregistrement crée une
+ * nouvelle version et redemande sa validation.
+ *
+ * Seules les fins de parcours en sont exclues — une fiche rejetée ou périmée
+ * ne se reprend pas, elle se refait.
  */
 export const DIRECTLY_EDITABLE_SHEET_STATUSES: readonly SheetStatus[] = [
   "draft",
   "internal_review",
   "ready_to_send",
   "sent_to_client",
+  "partially_approved",
+  "changes_requested",
+  "corrections_in_progress",
+  "new_version_to_send",
+  "awaiting_revalidation",
   "approved_by_client",
   "tacitly_approved",
 ];
@@ -85,9 +94,19 @@ export function canEditSheetContent(status: SheetStatus): boolean {
   return DIRECTLY_EDITABLE_SHEET_STATUSES.includes(status);
 }
 
-/** Une modification de ce statut rend nécessaire une nouvelle validation. */
+/**
+ * Une modification de ce statut rend nécessaire une nouvelle validation.
+ *
+ * Le critère est simple : le client a-t-il déjà vu la fiche ? Si oui, ce qu'il
+ * a sous les yeux vient de changer, et son accord — donné ou en cours — ne
+ * porte plus sur le même contenu.
+ */
 export function editRequiresRevalidation(status: SheetStatus): boolean {
-  return ["sent_to_client", ...CLIENT_VALIDATED_STATUSES].includes(status);
+  return ![
+    "draft",
+    "internal_review",
+    "ready_to_send",
+  ].includes(status) && canEditSheetContent(status);
 }
 
 /** Part des fiches validées, pour le suivi hebdomadaire. */

@@ -37,10 +37,21 @@ describe("édition du planning", () => {
     expect(editRequiresRevalidation("tacitly_approved")).toBe(true);
   });
 
-  it("conserve le workflow dédié quand une correction est déjà en cours", () => {
-    expect(canEditSheetContent("changes_requested")).toBe(false);
-    expect(canEditSheetContent("corrections_in_progress")).toBe(false);
-    expect(canEditSheetContent("awaiting_revalidation")).toBe(false);
+  it("laisse aussi corriger une fiche en cours de correction", () => {
+    /*
+     * Le circuit de correction sert les demandes du client ; il ne doit pas
+     * empêcher de rattraper nos propres oublis sur la même fiche.
+     */
+    expect(canEditSheetContent("changes_requested")).toBe(true);
+    expect(canEditSheetContent("corrections_in_progress")).toBe(true);
+    expect(canEditSheetContent("awaiting_revalidation")).toBe(true);
+    expect(canEditSheetContent("partially_approved")).toBe(true);
+    expect(editRequiresRevalidation("changes_requested")).toBe(true);
+  });
+
+  it("ne reprend pas une fiche dont le parcours est terminé", () => {
+    expect(canEditSheetContent("rejected")).toBe(false);
+    expect(canEditSheetContent("expired")).toBe(false);
   });
 });
 
