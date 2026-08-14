@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   canApproveAll,
+  canEditSheetContent,
   computeSheetStatus,
+  editRequiresRevalidation,
   isClientValidated,
   isSheetFullyApproved,
   validationRate,
@@ -11,6 +13,35 @@ import type { ItemApprovalStatus } from "@/lib/domain/types";
 const item = (approvalStatus: ItemApprovalStatus, isCancelled = false) => ({
   approvalStatus,
   isCancelled,
+});
+
+describe("édition du planning", () => {
+  it("autorise les fiches en préparation, envoyées ou validées", () => {
+    for (const status of [
+      "draft",
+      "internal_review",
+      "ready_to_send",
+      "sent_to_client",
+      "approved_by_client",
+      "tacitly_approved",
+    ] as const) {
+      expect(canEditSheetContent(status)).toBe(true);
+    }
+  });
+
+  it("demande une nouvelle validation après l'envoi ou la validation", () => {
+    expect(editRequiresRevalidation("draft")).toBe(false);
+    expect(editRequiresRevalidation("ready_to_send")).toBe(false);
+    expect(editRequiresRevalidation("sent_to_client")).toBe(true);
+    expect(editRequiresRevalidation("approved_by_client")).toBe(true);
+    expect(editRequiresRevalidation("tacitly_approved")).toBe(true);
+  });
+
+  it("conserve le workflow dédié quand une correction est déjà en cours", () => {
+    expect(canEditSheetContent("changes_requested")).toBe(false);
+    expect(canEditSheetContent("corrections_in_progress")).toBe(false);
+    expect(canEditSheetContent("awaiting_revalidation")).toBe(false);
+  });
 });
 
 describe("§15 — statut global de la fiche", () => {

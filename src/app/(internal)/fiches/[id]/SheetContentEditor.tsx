@@ -81,7 +81,7 @@ function hasMedia(item: EditorItem): boolean {
     || Boolean(item.mediaAssetId || item.mediaFileName || item.mediaExternalUrl);
 }
 
-export function SheetContentEditor({ sheetId, clientId, clientName, initialItems }: { sheetId: string; clientId: string; clientName: string; initialItems: EditableSheetItem[] }) {
+export function SheetContentEditor({ sheetId, clientId, clientName, initialItems, requiresRevalidation = false }: { sheetId: string; clientId: string; clientName: string; initialItems: EditableSheetItem[]; requiresRevalidation?: boolean }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<SheetContentActionResult | null>(null);
@@ -386,7 +386,7 @@ export function SheetContentEditor({ sheetId, clientId, clientName, initialItems
         );
       })}
 
-      <button type="submit" className="btn-primary" disabled={pending}>{pending ? "Enregistrement…" : progress === 100 ? "Enregistrer la fiche complète" : "Enregistrer l’avancement"}</button>
+      <button type="submit" className="btn-primary" disabled={pending}>{pending ? "Enregistrement…" : requiresRevalidation ? "Enregistrer et créer une nouvelle version" : progress === 100 ? "Enregistrer la fiche complète" : "Enregistrer l’avancement"}</button>
     </form>
   );
 }

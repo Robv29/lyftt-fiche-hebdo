@@ -10,6 +10,7 @@ import {
 } from "@/lib/internal/authorization";
 import { normalizeHashtags, sanitizeText } from "@/lib/security/sanitize";
 import type { MediaFormat, PublicationType } from "@/lib/domain/types";
+import { canEditSheetContent, editRequiresRevalidation } from "@/lib/domain/sheet-status";
 
 export interface SheetContentActionResult {
   ok: boolean;
@@ -66,9 +67,10 @@ export async function saveSheetContent(formData: FormData): Promise<SheetContent
     .eq("id", sheetId.data)
     .maybeSingle();
   if (!sheet) return { ok: false, message: ACCESS_DENIED_MESSAGE };
-  if (!["draft", "internal_review", "ready_to_send"].includes(sheet.status)) {
-    return { ok: false, message: "Cette fiche a déjà été envoyée. Utilisez le workflow de correction pour la modifier." };
+  if (!canEditSheetContent(sheet.status)) {
+    return { ok: false, message: "Le statut actuel de cette fiche ne permet pas sa modification directe." };
   }
+  const requiresRevalidation = editRequiresRevalidation(sheet.status);
 
   const existingItems = new Map((sheet.weekly_sheet_items ?? []).map((item) => [item.id, item]));
   if (items.data.some((item) => !existingItems.has(item.id))) {
@@ -84,8 +86,7 @@ export async function saveSheetContent(formData: FormData): Promise<SheetContent
     return { ok: false, message: "Une fiche doit garder au moins une publication." };
   }
 
-  for (const [index, item] of items.data.entries()) {
-    const existing = existingItems.get(item.id)!;
+  for (const item of items.data) {
     const patch: Record<string, unknown> = {
       scheduled_date: item.scheduledDate,
       scheduled_time: item.scheduledTime,
@@ -142,7 +143,56 @@ export async function saveSheetContent(formData: FormData): Promise<SheetContent
     }
   }
 
+  if (requiresRevalidation) {
+    /*
+     * Le contenu que le client avait accepté reste conservé dans l'ancienne
+     * version. Le nouveau contenu repart en validation : on ne peut pas
+     * conserver silencieusement un accord donné sur un texte ou un média qui
+     * vient de changer.
+     */
+    const { error: approvalError } = await admin
+      .from("weekly_sheet_items")
+      .update({ approval_status: "pending" })
+      .eq("weekly_sheet_id", sheet.id)
+      .eq("is_cancelled", false);
+    if (approvalError) {
+      return { ok: false, message: `Validations non réinitialisées : ${approvalError.message}` };
+    }
+
+    const { data: versionId, error: versionError } = await admin.rpc("create_sheet_version", {
+      target_sheet_id: sheet.id,
+      summary: "Modification interne après envoi ou validation",
+      author: profile.id,
+    });
+    if (versionError || !versionId) {
+      return { ok: false, message: "La fiche a été modifiée, mais la nouvelle version n’a pas pu être créée." };
+    }
+
+    // L'ancien lien pointait vers la version précédemment validée.
+    await admin
+      .from("client_review_links")
+      .update({
+        revoked_at: new Date().toISOString(),
+        revoked_reason: "Planning modifié après envoi ou validation",
+      })
+      .eq("weekly_sheet_id", sheet.id)
+      .is("revoked_at", null);
+
+    const { error: statusError } = await admin
+      .from("weekly_sheets")
+      .update({ status: "new_version_to_send", approved_at: null })
+      .eq("id", sheet.id);
+    if (statusError) {
+      return { ok: false, message: `Nouvelle version créée, mais son statut n’a pas été actualisé : ${statusError.message}` };
+    }
+  }
+
   revalidatePath("/fiches");
   revalidatePath(`/fiches/${sheet.id}`);
-  return { ok: true, message: "Fiche enregistrée." };
+  return {
+    ok: true,
+    message: requiresRevalidation
+      ? "Nouvelle version enregistrée. Elle doit maintenant être renvoyée au client pour validation."
+      : "Fiche enregistrée.",
+  };
 }

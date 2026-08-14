@@ -67,6 +67,29 @@ export function isClientValidated(status: SheetStatus): boolean {
   return CLIENT_VALIDATED_STATUSES.includes(status);
 }
 
+/**
+ * La rédaction reste possible avant l'envoi, ainsi que sur une fiche déjà
+ * envoyée ou entièrement validée. Dans ce dernier cas, l'enregistrement doit
+ * créer une nouvelle version et demander une nouvelle validation au client.
+ */
+export const DIRECTLY_EDITABLE_SHEET_STATUSES: readonly SheetStatus[] = [
+  "draft",
+  "internal_review",
+  "ready_to_send",
+  "sent_to_client",
+  "approved_by_client",
+  "tacitly_approved",
+];
+
+export function canEditSheetContent(status: SheetStatus): boolean {
+  return DIRECTLY_EDITABLE_SHEET_STATUSES.includes(status);
+}
+
+/** Une modification de ce statut rend nécessaire une nouvelle validation. */
+export function editRequiresRevalidation(status: SheetStatus): boolean {
+  return ["sent_to_client", ...CLIENT_VALIDATED_STATUSES].includes(status);
+}
+
 /** Part des fiches validées, pour le suivi hebdomadaire. */
 export function validationRate(statuses: SheetStatus[]): {
   validated: number;
