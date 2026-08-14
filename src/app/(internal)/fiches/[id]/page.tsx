@@ -18,6 +18,7 @@ import { SheetContentEditor } from "./SheetContentEditor";
 import { sheetCompletion } from "@/lib/domain/planning";
 import { resolveMediaUrl } from "@/lib/media/signed-url";
 import { resolveClientLogoUrl } from "@/lib/media/client-logo";
+import { canEditSheetContent, editRequiresRevalidation } from "@/lib/domain/sheet-status";
 
 /** §21 — Onglet « Retours et validations » d'une fiche. */
 export default async function SheetDetailPage({
@@ -133,7 +134,8 @@ export default async function SheetDetailPage({
     : null;
   const deadlineInfo = deadline ? deadlineState(deadline) : null;
   const primaryContact = contacts?.[0];
-  const sheetIsEditable = ["draft", "internal_review", "ready_to_send"].includes(sheet.status);
+  const sheetIsEditable = canEditSheetContent(sheet.status);
+  const editingRequiresRevalidation = editRequiresRevalidation(sheet.status);
 
   // Le bucket est privé : chaque média doit être signé pour être affiché.
   const mediaByItem = new Map(await Promise.all(items.map(async (item) => [
@@ -245,11 +247,18 @@ export default async function SheetDetailPage({
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="space-y-6">
           {sheetIsEditable ? (
-            <SheetContentEditor
-              sheetId={sheet.id}
-              clientId={client.id}
-              clientName={client.name}
-              initialItems={items
+            <div className="space-y-4">
+              {editingRequiresRevalidation && (
+                <p className="rounded-md border border-state-progress/30 bg-state-progress/5 px-4 py-3 text-sm text-state-progress">
+                  Ce planning a déjà été envoyé ou validé. Toute modification enregistrée créera une nouvelle version à renvoyer au client pour validation.
+                </p>
+              )}
+              <SheetContentEditor
+                sheetId={sheet.id}
+                clientId={client.id}
+                clientName={client.name}
+                requiresRevalidation={editingRequiresRevalidation}
+                initialItems={items
                 .filter((item) => !item.is_cancelled)
                 .sort((a, b) => a.position - b.position)
                 .map((item) => ({
@@ -268,7 +277,8 @@ export default async function SheetDetailPage({
                   collaborationHandle: item.collaboration_handle ?? "",
                   mediaExternalUrl: item.media_external_url,
                 }))}
-            />
+              />
+            </div>
           ) : <section className="card">
             <h2 className="border-b border-line px-4 py-3 text-sm font-semibold">
               Contenus ({items.filter((i) => !i.is_cancelled).length})
