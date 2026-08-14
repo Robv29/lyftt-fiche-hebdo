@@ -96,3 +96,27 @@ describe("jours de publication", () => {
     ]);
   });
 });
+
+describe("étalement du rythme mensuel", () => {
+  it("répartit deux vidéos par mois une semaine sur deux", () => {
+    const semaines = [33, 34, 35, 36].map((week) =>
+      weeklyFormatsForCadence({ video: 2 }, week).filter((format) => format === "video").length);
+    // Deux semaines servies sur quatre, alternées et non groupées.
+    expect(semaines.reduce((total, count) => total + count, 0)).toBe(2);
+    expect(semaines[0]).not.toBe(semaines[1]);
+    expect(semaines[1]).not.toBe(semaines[2]);
+    expect(semaines[2]).not.toBe(semaines[3]);
+  });
+
+  it("sert une prestation mensuelle une semaine sur quatre", () => {
+    const semaines = [33, 34, 35, 36].map((week) =>
+      weeklyFormatsForCadence({ video: 1 }, week).filter((format) => format === "video").length);
+    expect(semaines.reduce((total, count) => total + count, 0)).toBe(1);
+  });
+
+  it("sert chaque semaine dès que le volume atteint quatre", () => {
+    for (const week of [33, 34, 35, 36]) {
+      expect(weeklyFormatsForCadence({ video: 4 }, week).filter((f) => f === "video")).toHaveLength(1);
+    }
+  });
+});

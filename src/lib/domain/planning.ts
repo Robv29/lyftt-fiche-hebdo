@@ -119,7 +119,15 @@ const CADENCE_FORMATS: Array<{ key: keyof MonthlyCadence; format: MediaFormat; o
   { key: "visual", format: "visuel", offset: 3 },
 ];
 
-/** Répartit un volume mensuel sur quatre semaines, sans changer le contrat client. */
+/**
+ * Répartit un volume mensuel sur quatre semaines, sans changer le contrat.
+ *
+ * Le reste doit être **étalé**, pas groupé : deux vidéos par mois se tournent
+ * une semaine sur deux, pas deux semaines de suite suivies de deux semaines
+ * vides. La comparaison porte donc sur le reste multiplié par le rang de la
+ * semaine, ce qui distribue les semaines retenues au lieu de les tasser en
+ * début de cycle.
+ */
 export function weeklyFormatsForCadence(cadence: MonthlyCadence, isoWeek: number): MediaFormat[] {
   const formats: MediaFormat[] = [];
 
@@ -127,8 +135,10 @@ export function weeklyFormatsForCadence(cadence: MonthlyCadence, isoWeek: number
     const monthly = Math.max(0, Math.min(31, Math.trunc(Number(cadence[entry.key] ?? 0))));
     const base = Math.floor(monthly / 4);
     const remainder = monthly % 4;
-    const count = base + (remainder > 0 && (isoWeek + entry.offset) % 4 < remainder ? 1 : 0);
-    formats.push(...Array.from({ length: count }, () => entry.format));
+    // Décalage par format : deux prestations rares ne tombent pas le même jour.
+    const week = isoWeek + entry.offset;
+    const extra = remainder > 0 && (week * remainder) % 4 < remainder ? 1 : 0;
+    formats.push(...Array.from({ length: base + extra }, () => entry.format));
   }
 
   return formats.length ? formats : ["photo"];

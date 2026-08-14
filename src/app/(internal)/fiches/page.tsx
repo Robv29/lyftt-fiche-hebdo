@@ -135,7 +135,7 @@ export default async function SheetsPage() {
       .limit(300),
     supabase
       .from("clients")
-      .select("id, name, notes, is_active, contract_end_date, pause_start_date, pause_end_date")
+      .select("id, name, notes, is_active, contract_start_date, contract_end_date, pause_start_date, pause_end_date")
       .eq("is_active", true)
       .order("name", { ascending: true }),
   ]);
@@ -144,19 +144,38 @@ export default async function SheetsPage() {
   // Une seule semaine d'historique est conservee ; la purge planifiee supprime
   // les fiches plus anciennes.
   const previousWeekStart = civilDaysBefore(range.currentStart, 7);
-  const past = sheets.filter((sheet) =>
+  /*
+   * Un client en pause, dont la gestion est terminée ou pas encore commencée
+   * n'a rien à faire dans le planning : ses fiches y encombrent la vue d'un
+   * travail qu'on ne fera pas cette semaine. Elles restent accessibles depuis
+   * sa fiche client.
+   */
+  const producibleClientIds = new Set(
+    (clients ?? []).filter((client) => clientLifecycle({
+      isActive: client.is_active,
+      contractStartDate: client.contract_start_date,
+      contractEndDate: client.contract_end_date,
+      pauseStartDate: client.pause_start_date,
+      pauseEndDate: client.pause_end_date,
+    }).canProduce).map((client) => client.id),
+  );
+  const sheetsOfManagedClients = sheets.filter((sheet) =>
+    sheet.clients?.id ? producibleClientIds.has(sheet.clients.id) : true);
+
+  const past = sheetsOfManagedClients.filter((sheet) =>
     planningBucketForPeriod(sheet.period_start, sheet.period_end) === "past"
     && sheet.period_start >= previousWeekStart);
-  const current = sheets
+  const current = sheetsOfManagedClients
     .filter((sheet) => planningBucketForPeriod(sheet.period_start, sheet.period_end) === "current")
     .sort((a, b) => Number(hasHighPriorityChange(b)) - Number(hasHighPriorityChange(a))
       || completionForSheet(a).percentage - completionForSheet(b).percentage);
-  const next = sheets.filter((sheet) => planningBucketForPeriod(sheet.period_start, sheet.period_end) === "next");
+  const next = sheetsOfManagedClients.filter((sheet) => planningBucketForPeriod(sheet.period_start, sheet.period_end) === "next");
   const nextClientIds = new Set(next.map((sheet) => sheet.clients?.id).filter(Boolean));
   // Aucune proposition pour un client en pause ou dont la gestion est terminée.
   const proposals = (clients ?? []).filter((client) => !nextClientIds.has(client.id)
     && clientLifecycle({
       isActive: client.is_active,
+      contractStartDate: client.contract_start_date,
       contractEndDate: client.contract_end_date,
       pauseStartDate: client.pause_start_date,
       pauseEndDate: client.pause_end_date,

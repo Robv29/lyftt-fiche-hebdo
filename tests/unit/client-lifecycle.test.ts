@@ -113,3 +113,25 @@ describe("blocage de la production", () => {
     expect(productionBlockedMessage(clientLifecycle(base, today))).toBe("");
   });
 });
+
+describe("gestion pas encore commencée", () => {
+  it("écarte un client dont la date de début n'est pas atteinte", () => {
+    const lifecycle = clientLifecycle({ ...base, contractStartDate: "2026-08-17" }, today);
+    expect(lifecycle.state).toBe("not_started");
+    expect(lifecycle.canProduce).toBe(false);
+    expect(lifecycle.detail).toContain("17 août 2026");
+  });
+
+  it("produit dès le premier jour de gestion", () => {
+    expect(clientLifecycle({ ...base, contractStartDate: today }, today).canProduce).toBe(true);
+  });
+
+  it("ne change rien sans date de début", () => {
+    expect(clientLifecycle({ ...base, contractStartDate: null }, today).state).toBe("active");
+  });
+
+  it("explique pourquoi aucune fiche ne peut être créée", () => {
+    const lifecycle = clientLifecycle({ ...base, contractStartDate: "2026-09-01" }, today);
+    expect(productionBlockedMessage(lifecycle)).toContain("pas encore commencé");
+  });
+});

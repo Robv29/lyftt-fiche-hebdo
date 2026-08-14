@@ -8,11 +8,13 @@
  * Ici, la lecture est toujours juste.
  */
 
-export type ClientLifecycleState = "active" | "paused" | "ended" | "archived";
+export type ClientLifecycleState = "active" | "not_started" | "paused" | "ended" | "archived";
 
 export interface ClientLifecycleInput {
   /** Archivage manuel, qui prime sur tout le reste. */
   isActive: boolean;
+  /** Début de gestion. Rien n'est produit avant cette date. */
+  contractStartDate?: string | null;
   /** Fin de gestion. Le client est archivé le lendemain de cette date. */
   contractEndDate: string | null;
   pauseStartDate: string | null;
@@ -58,6 +60,20 @@ export function clientLifecycle(
       canProduce: false,
       label: "Archivé",
       detail: "Archivé manuellement.",
+    };
+  }
+
+  /*
+   * Gestion pas encore commencée : le contrat est signé, la date de départ
+   * n'est pas atteinte. Proposer une fiche à ce client remplirait le planning
+   * de travail qu'on n'a pas à faire.
+   */
+  if (input.contractStartDate && today < input.contractStartDate) {
+    return {
+      state: "not_started",
+      canProduce: false,
+      label: "Pas encore commencé",
+      detail: `Gestion à partir du ${formatDay(input.contractStartDate)}.`,
     };
   }
 
@@ -119,6 +135,8 @@ export function productionBlockedMessage(lifecycle: ClientLifecycle): string {
       return `Ce client est en pause. ${lifecycle.detail ?? ""}`.trim();
     case "ended":
       return `La gestion de ce client est terminée. ${lifecycle.detail ?? ""}`.trim();
+    case "not_started":
+      return `La gestion de ce client n'a pas encore commencé. ${lifecycle.detail ?? ""}`.trim();
     case "archived":
       return "Ce client est archivé. Réactivez-le pour préparer une fiche.";
     default:
