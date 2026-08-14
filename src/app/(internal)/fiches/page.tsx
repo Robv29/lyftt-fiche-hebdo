@@ -167,17 +167,29 @@ export default async function SheetsPage() {
     }, weekStart).canProduce;
   };
 
+  /*
+   * Une fiche déjà partie chez le client reste visible quoi qu'il arrive.
+   *
+   * Le filtre sert à ne pas proposer de travail pour un client hors gestion ;
+   * il ne doit pas escamoter un travail réel — une fiche envoyée, corrigée ou
+   * validée — sur la foi d'une date de contrat mal saisie. Seul un brouillon
+   * jamais transmis peut disparaître sans rien coûter.
+   */
+  const isVisible = (sheet: PlanningSheet, weekStart: string): boolean =>
+    !["draft", "internal_review", "ready_to_send"].includes(sheet.status)
+    || producesOn(sheet.clients?.id, weekStart);
+
   const past = sheets.filter((sheet) =>
     planningBucketForPeriod(sheet.period_start, sheet.period_end) === "past"
     && sheet.period_start >= previousWeekStart
-    && producesOn(sheet.clients?.id, sheet.period_start));
+    && isVisible(sheet, sheet.period_start));
   const current = sheets
     .filter((sheet) => planningBucketForPeriod(sheet.period_start, sheet.period_end) === "current"
-      && producesOn(sheet.clients?.id, range.currentStart))
+      && isVisible(sheet, range.currentStart))
     .sort((a, b) => Number(hasHighPriorityChange(b)) - Number(hasHighPriorityChange(a))
       || completionForSheet(a).percentage - completionForSheet(b).percentage);
   const next = sheets.filter((sheet) => planningBucketForPeriod(sheet.period_start, sheet.period_end) === "next"
-    && producesOn(sheet.clients?.id, range.nextStart));
+    && isVisible(sheet, range.nextStart));
   const nextClientIds = new Set(next.map((sheet) => sheet.clients?.id).filter(Boolean));
   // Une proposition ne vaut que si le client produit la semaine prochaine.
   const proposals = (clients ?? []).filter((client) =>

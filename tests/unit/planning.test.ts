@@ -120,3 +120,27 @@ describe("étalement du rythme mensuel", () => {
     }
   });
 });
+
+describe("visibilité d'une fiche hors gestion", () => {
+  /*
+   * Le filtre sert à ne pas proposer de travail ; il ne doit pas escamoter un
+   * travail réel sur la foi d'une date de contrat mal saisie.
+   */
+  const estVisible = (statut: string, produit: boolean) =>
+    !["draft", "internal_review", "ready_to_send"].includes(statut) || produit;
+
+  it("garde une fiche envoyée ou validée même hors gestion", () => {
+    expect(estVisible("sent_to_client", false)).toBe(true);
+    expect(estVisible("approved_by_client", false)).toBe(true);
+    expect(estVisible("awaiting_revalidation", false)).toBe(true);
+  });
+
+  it("écarte un brouillon jamais transmis", () => {
+    expect(estVisible("draft", false)).toBe(false);
+    expect(estVisible("ready_to_send", false)).toBe(false);
+  });
+
+  it("garde tout ce qui relève d'un client en gestion", () => {
+    expect(estVisible("draft", true)).toBe(true);
+  });
+});
