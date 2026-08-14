@@ -26,6 +26,8 @@ export interface EditableSheetItem {
   mediaExternalUrl: string | null;
   /** Images de la publication, dans l'ordre. La première fait la couverture. */
   gallery: GalleryImage[];
+  /** Compte partenaire, vide s'il n'y a pas de collaboration. */
+  collaborationHandle: string;
 }
 
 export interface GalleryImage {
@@ -201,6 +203,7 @@ export function SheetContentEditor({ sheetId, clientId, clientName, initialItems
         mediaAssetIds: item.gallery.map((image) => image.mediaAssetId),
         mediaCleared: item.mediaCleared,
         isCancelled: item.removed,
+        collaborationHandle: item.collaborationHandle,
       }))));
       startTransition(async () => {
         const result = await saveSheetContent(formData);
@@ -280,6 +283,23 @@ export function SheetContentEditor({ sheetId, clientId, clientName, initialItems
               <div className="space-y-3">
                 <div><label className="label" htmlFor={`caption-${item.id}`}>Texte libre</label><textarea id={`caption-${item.id}`} rows={7} className="field" value={item.caption} placeholder="Écrivez le texte de la publication…" onChange={(event) => update(item.id, { caption: event.target.value })}/></div>
                 <div><label className="label" htmlFor={`hashtags-${item.id}`}>Hashtags</label><textarea id={`hashtags-${item.id}`} rows={3} className="field" value={item.hashtags} onChange={(event) => update(item.id, { hashtags: event.target.value })}/></div>
+                <div>
+                  <label className="label" htmlFor={`collab-${item.id}`}>
+                    Collaboration <span className="font-normal text-ink-faint">(facultatif)</span>
+                  </label>
+                  <input
+                    id={`collab-${item.id}`}
+                    className="field"
+                    maxLength={120}
+                    placeholder="@compte_partenaire"
+                    value={item.collaborationHandle}
+                    onChange={(event) => update(item.id, { collaborationHandle: event.target.value })}
+                  />
+                  <p className="mt-1 text-xs text-ink-faint">
+                    Laissez vide s&apos;il n&apos;y en a pas : rien ne sera affiché au client
+                    ni à la publication.
+                  </p>
+                </div>
               </div>
               <div>
                 <span className="label">Média · {MEDIA_FORMAT_LABELS[item.format]}</span>

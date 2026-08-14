@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import Image from "next/image";
-import { completePublicationStep, setPublicationPublished, togglePublishedNetwork } from "./actions";
+import { completePublicationStep, setCollaborationDone, setPublicationPublished, togglePublishedNetwork } from "./actions";
 import { Icon } from "@/components/Icon";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
@@ -24,6 +24,9 @@ export interface DailyPublication {
   mediaKind:"image"|"video"|"document"|null; mediaRequired:boolean;
   /** Toutes les images de la publication, dans l'ordre du carrousel. */
   gallery:{fileName:string;kind:"image"|"video"|"document";url:string|null}[];
+  /** Compte partenaire, nul quand il n'y a pas de collaboration. */
+  collaborationHandle:string|null;
+  collaborationDoneAt:string|null;
   /** Réseaux enregistrés sur la fiche du client. */
   plannedNetworks:SocialNetwork[];
   /** Réseaux réellement publiés, cochés un à un. */
@@ -45,6 +48,12 @@ export function PublicationChecklist({ initialItems, nextWithContent }: { initia
     const result = await setPublicationPublished(id,published);
     setFeedback(result.message ?? null);
     if (result.ok) setItems((current)=>current.map((item)=>item.id===id ? { ...item, publishedAt:published?new Date().toISOString():null } : item));
+  });
+
+  const markCollaboration = (id:string,done:boolean) => startTransition(async()=>{
+    const result = await setCollaborationDone(id,done);
+    setFeedback(result.message ?? null);
+    if (result.ok) setItems((current)=>current.map((item)=>item.id===id ? { ...item, collaborationDoneAt:done?new Date().toISOString():null } : item));
   });
 
   const toggleNetwork = (id:string,network:SocialNetwork,on:boolean) => startTransition(async()=>{
@@ -103,7 +112,7 @@ export function PublicationChecklist({ initialItems, nextWithContent }: { initia
         </div>
         <span className="badge bg-white text-ink-soft shadow-sm">{dayItems.filter((item)=>item.publishedAt).length}/{dayItems.length}</span>
       </div>
-      <div className="grid gap-4 xl:grid-cols-2">{dayItems.map((item)=><PublicationCard key={item.id} item={item} pending={pending} onDownload={()=>download(item)} onCopy={()=>copy(item)} onPublished={(published)=>confirmPublished(item.id,published)} onNetwork={(network,on)=>toggleNetwork(item.id,network,on)}/>)}</div>
+      <div className="grid gap-4 xl:grid-cols-2">{dayItems.map((item)=><PublicationCard key={item.id} item={item} pending={pending} onDownload={()=>download(item)} onCopy={()=>copy(item)} onPublished={(published)=>confirmPublished(item.id,published)} onNetwork={(network,on)=>toggleNetwork(item.id,network,on)} onCollaboration={(done)=>markCollaboration(item.id,done)}/>)}</div>
     </section>)}
   </div>;
 }
@@ -136,8 +145,14 @@ function MediaPreview({ item }:{ item:DailyPublication }) {
  * distincts le disent — la confirmation, et le réseau par réseau repris de la
  * fiche du client.
  */
-function PublishPanel({item,pending,locked,onPublished,onNetwork}:{item:DailyPublication;pending:boolean;locked:boolean;onPublished:(published:boolean)=>void;onNetwork:(network:SocialNetwork,on:boolean)=>void}) {
-  const ready=canConfirmPublication({ mediaRequired:item.mediaRequired, mediaDownloaded:Boolean(item.mediaDownloadedAt), contentCopied:Boolean(item.contentCopiedAt) });
+function PublishPanel({item,pending,locked,onPublished,onNetwork,onCollaboration}:{item:DailyPublication;pending:boolean;locked:boolean;onPublished:(published:boolean)=>void;onNetwork:(network:SocialNetwork,on:boolean)=>void;onCollaboration:(done:boolean)=>void}) {
+  const collaborationDone=Boolean(item.collaborationDoneAt);
+  /*
+   * Une invitation en collaboration s'envoie à la création du post : oubliée,
+   * elle ne se rattrape pas. Elle conditionne donc la confirmation.
+   */
+  const ready=canConfirmPublication({ mediaRequired:item.mediaRequired, mediaDownloaded:Boolean(item.mediaDownloadedAt), contentCopied:Boolean(item.contentCopiedAt) })
+    && (!item.collaborationHandle || collaborationDone);
   const published=Boolean(item.publishedAt);
   const remaining=missingNetworks(item.plannedNetworks,item.publishedNetworks);
 
@@ -147,7 +162,23 @@ function PublishPanel({item,pending,locked,onPublished,onNetwork}:{item:DailyPub
       <span className="text-sm font-semibold">{published?"Publié":"Confirmer la publication"}</span>
     </label>
 
-    {!ready&&!locked&&<p className="mt-1.5 pl-7 text-[11px] text-ink-faint">Téléchargez le média et copiez le texte pour pouvoir confirmer.</p>}
+    {!ready&&!locked&&<p className="mt-1.5 pl-7 text-[11px] text-ink-faint">
+      {item.collaborationHandle&&!collaborationDone
+        ? "Invitez le compte en collaboration pour pouvoir confirmer."
+        : "Téléchargez le média et copiez le texte pour pouvoir confirmer."}
+    </p>}
+
+    {/* Rien ne s'affiche quand la publication n'est pas en collaboration. */}
+    {item.collaborationHandle&&<label className={`mt-3 flex items-start gap-3 border-t pt-3 ${locked?"opacity-50":"cursor-pointer"}`}>
+      <input type="checkbox" className="mt-0.5" checked={collaborationDone} disabled={pending||locked} onChange={(event)=>onCollaboration(event.target.checked)}/>
+      <span>
+        <span className="text-sm font-semibold">Collaboration avec {item.collaborationHandle}</span>
+        <span className="mt-0.5 block text-[11px] leading-relaxed text-ink-faint">
+          Le post doit être créé en invitant ce compte, sinon il ne paraîtra que
+          sur celui du client.
+        </span>
+      </span>
+    </label>}
 
     {item.plannedNetworks.length>0&&<div className="mt-3 border-t pt-3">
       <p className="text-[11px] font-medium text-ink-faint">Réseaux publiés{remaining.length>0&&published&&` · reste ${remaining.map((network)=>SOCIAL_NETWORK_LABELS[network]).join(", ")}`}</p>
@@ -165,7 +196,7 @@ function PublishPanel({item,pending,locked,onPublished,onNetwork}:{item:DailyPub
   </div>;
 }
 
-function PublicationCard({item,pending,onDownload,onCopy,onPublished,onNetwork}:{item:DailyPublication;pending:boolean;onDownload:()=>void;onCopy:()=>void;onPublished:(published:boolean)=>void;onNetwork:(network:SocialNetwork,on:boolean)=>void}) {
+function PublicationCard({item,pending,onDownload,onCopy,onPublished,onNetwork,onCollaboration}:{item:DailyPublication;pending:boolean;onDownload:()=>void;onCopy:()=>void;onPublished:(published:boolean)=>void;onNetwork:(network:SocialNetwork,on:boolean)=>void;onCollaboration:(done:boolean)=>void}) {
   const mediaDone=!item.mediaRequired||Boolean(item.mediaDownloadedAt); const contentDone=Boolean(item.contentCopiedAt); const done=Boolean(item.publishedAt);
   // Publier un contenu que le client n'a pas validé est le risque que tout le
   // module cherche à éliminer : les actions restent bloquées jusque-là.
@@ -178,7 +209,7 @@ function PublicationCard({item,pending,onDownload,onCopy,onPublished,onNetwork}:
     </div>
     <div className="border-t bg-[#fbfcfe] p-4">{locked&&<p className="mb-3 rounded-xl bg-[#fff4e5] px-3 py-2 text-xs leading-relaxed text-[#8a5700]">En attente de validation client. Le média et le texte se débloqueront dès que le client aura validé cette publication.</p>}<div className="grid gap-2 sm:grid-cols-2"><button type="button" className={mediaDone?"btn-secondary border-state-approved/30 text-state-approved":"btn-secondary"} disabled={pending||locked||(!item.mediaUrl&&item.mediaRequired)} onClick={onDownload}>{mediaDone?<Icon name="check" className="h-4 w-4"/>:<Icon name="download" className="h-4 w-4"/>}{mediaDone?"Média téléchargé":item.mediaRequired?(item.gallery.length>1?`Télécharger les ${item.gallery.length} images`:"Télécharger le média"):"Aucun média requis"}</button><button type="button" className={contentDone?"btn-secondary border-state-approved/30 text-state-approved":"btn-primary"} disabled={pending||locked} onClick={onCopy}>{contentDone?<Icon name="check" className="h-4 w-4"/>:<Icon name="copy" className="h-4 w-4"/>}{contentDone?"Texte copié":"Copier texte + hashtags"}</button></div>
 
-      <PublishPanel item={item} pending={pending} locked={locked} onPublished={onPublished} onNetwork={onNetwork}/>
+      <PublishPanel item={item} pending={pending} locked={locked} onPublished={onPublished} onNetwork={onNetwork} onCollaboration={onCollaboration}/>
     </div>
   </article>;
 }

@@ -29,6 +29,8 @@ const editableItemSchema = z.object({
   mediaCleared: z.boolean().optional(),
   /** Publication retirée de la fiche, sans être effacée. */
   isCancelled: z.boolean().optional(),
+  /** Compte partenaire d'une publication en collaboration. */
+  collaborationHandle: z.string().trim().max(120, "Compte de collaboration trop long.").optional(),
 });
 
 function publicationTypeForFormat(format: MediaFormat): PublicationType {
@@ -97,6 +99,14 @@ export async function saveSheetContent(formData: FormData): Promise<SheetContent
        * client restent attachés à la fiche.
        */
       is_cancelled: Boolean(item.isCancelled),
+      /*
+       * Vide vaut absence de collaboration : on stocke null plutôt qu'une
+       * chaîne vide, pour que « y a-t-il une collaboration ? » se lise d'un
+       * seul test partout ailleurs.
+       */
+      collaboration_handle: item.collaborationHandle?.trim()
+        ? sanitizeText(item.collaborationHandle, 120)
+        : null,
     };
     // Le média a déjà été téléversé depuis le navigateur ; on ne reçoit que
     // son identifiant. Une suppression explicite détache le média du contenu :

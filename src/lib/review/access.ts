@@ -71,6 +71,8 @@ export interface ReviewItem {
   mediaPendingNote: string | null;
   mediaExternalUrl: string | null;
   openTicketCount: number;
+  /** Compte partenaire, nul quand la publication n'est pas en collaboration. */
+  collaborationHandle: string | null;
 }
 
 export interface ReviewSheet {
@@ -259,6 +261,7 @@ export async function loadReviewSheet(
       `id, position, scheduled_date, scheduled_time, publication_type, format,
        networks, caption, hashtags, approval_status, is_cancelled, published_at,
        media_external_url, media_pending_note,
+       collaboration_handle,
        media_assets:media_asset_id ( kind, storage_path, thumbnail_path, file_name, preview_path, purged_at, preview_purged_at ),
        weekly_sheet_item_media ( position, media_assets ( kind, storage_path, thumbnail_path, file_name, preview_path, purged_at, preview_purged_at ) )`,
     )
@@ -367,6 +370,7 @@ export async function loadReviewSheet(
       mediaExternalUrl: item.media_external_url,
       mediaPendingNote: item.media_pending_note,
       openTicketCount: ticketCountByItem.get(item.id) ?? 0,
+      collaborationHandle: (item.collaboration_handle as string | null)?.trim() || null,
       media: media
         ? {
             kind: media.kind,

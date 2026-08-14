@@ -36,7 +36,7 @@ export default async function SheetDetailPage({
        clients ( id, name, logo_url, timezone, approval_policy ),
        profiles:community_manager_id ( full_name ),
        weekly_sheet_items ( id, position, scheduled_date, scheduled_time, format, caption, hashtags,
-         media_asset_id, media_external_url, approval_status, is_cancelled,
+         media_asset_id, media_external_url, approval_status, is_cancelled, collaboration_handle,
          media_assets:media_asset_id ( id, file_name, kind, storage_path, preview_path, purged_at, preview_purged_at ),
          weekly_sheet_item_media ( position, media_assets ( id, file_name, kind, storage_path, preview_path, purged_at, preview_purged_at ) ) ),
        weekly_sheet_versions!weekly_sheet_versions_weekly_sheet_id_fkey (
@@ -77,6 +77,7 @@ export default async function SheetDetailPage({
     hashtags: string[];
     media_asset_id: string | null;
     media_external_url: string | null;
+    collaboration_handle: string | null;
     media_assets: { id: string; file_name: string; kind: string; storage_path: string; preview_path: string | null; purged_at: string | null; preview_purged_at: string | null } | null;
     weekly_sheet_item_media: { position: number; media_assets: { id: string; file_name: string; kind: string; storage_path: string; preview_path: string | null; purged_at: string | null; preview_purged_at: string | null } | null }[] | null;
     approval_status: string;
@@ -264,6 +265,7 @@ export default async function SheetDetailPage({
                   mediaUrl: mediaByItem.get(item.id)?.url ?? null,
                   mediaIsPreviewOnly: mediaByItem.get(item.id)?.isPreviewOnly ?? false,
                   gallery: galleryByItem.get(item.id) ?? [],
+                  collaborationHandle: item.collaboration_handle ?? "",
                   mediaExternalUrl: item.media_external_url,
                 }))}
             />

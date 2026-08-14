@@ -52,6 +52,34 @@ export async function completePublicationStep(itemId:string, step:"media"|"conte
   return { ok:true, published, message:published ? "Publication terminée." : "Étape enregistrée." };
 }
 
+/**
+ * Invitation en collaboration envoyée depuis le réseau.
+ *
+ * C'est une étape manuelle, distincte de la publication : le post doit être
+ * créé en invitant le compte partenaire, sans quoi il ne paraît que sur un
+ * seul compte. On la coche donc à part.
+ */
+export async function setCollaborationDone(itemId:string, done:boolean):Promise<PublicationActionResult> {
+  const profile = await requireEditorialProfile();
+  if (!profile) return { ok:false, published:false, message:"Action non autorisée." };
+  if (!z.string().uuid().safeParse(itemId).success) {
+    return { ok:false, published:false, message:"Publication invalide." };
+  }
+  if (!(await resolveAccessibleItem(itemId))) {
+    return { ok:false, published:false, message:ACCESS_DENIED_MESSAGE };
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { error } = await admin
+    .from("weekly_sheet_items")
+    .update({ collaboration_done_at: done ? new Date().toISOString() : null })
+    .eq("id", itemId);
+  if (error) return { ok:false, published:false, message:"La collaboration n’a pas été enregistrée." };
+
+  revalidatePath("/publications");
+  return { ok:true, published:false, message: done ? "Collaboration notée." : "Collaboration retirée." };
+}
+
 /** Confirmation, ou retrait, de la mise en ligne effective. */
 export async function setPublicationPublished(itemId:string, published:boolean):Promise<PublicationActionResult> {
   const profile = await requireEditorialProfile();
@@ -66,7 +94,7 @@ export async function setPublicationPublished(itemId:string, published:boolean):
   const admin = createSupabaseAdminClient();
   const { data:item } = await admin
     .from("weekly_sheet_items")
-    .select("id, format, media_downloaded_at, content_copied_at")
+    .select("id, format, media_downloaded_at, content_copied_at, collaboration_handle, collaboration_done_at")
     .eq("id", itemId)
     .maybeSingle();
   if (!item) return { ok:false, published:false, message:"Publication introuvable." };
@@ -77,6 +105,15 @@ export async function setPublicationPublished(itemId:string, published:boolean):
     contentCopied: Boolean(item.content_copied_at),
   })) {
     return { ok:false, published:false, message:"Téléchargez le média et copiez le texte avant de confirmer." };
+  }
+
+  /*
+   * Une collaboration oubliée ne se rattrape pas : l'invitation doit être
+   * envoyée à la création du post. On refuse donc de confirmer la publication
+   * tant qu'elle n'est pas cochée.
+   */
+  if (published && item.collaboration_handle && !item.collaboration_done_at) {
+    return { ok:false, published:false, message:`Invitez d’abord ${item.collaboration_handle} en collaboration.` };
   }
 
   const { error } = await admin

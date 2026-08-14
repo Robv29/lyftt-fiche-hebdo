@@ -181,6 +181,17 @@ function PublicationCard({
           <p className="whitespace-pre-wrap text-sm leading-relaxed">
             {item.caption || <span className="text-ink-faint">Texte à venir</span>}
           </p>
+          {/*
+            La collaboration change ce que le client verra publié : le post
+            paraîtra aussi sur le compte partenaire. Il doit le valider en
+            connaissance de cause — mais l'immense majorité des publications
+            n'en ont pas, et la mention ne s'affiche alors pas du tout.
+          */}
+          {item.collaborationHandle && (
+            <p className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-[#e8f2ff] px-3 py-1 text-xs font-medium text-[#0b5e9f]">
+              En collaboration avec {item.collaborationHandle}
+            </p>
+          )}
           {item.hashtags.length > 0 && (
             <p className="mt-3 break-words text-sm text-ink-soft">
               {item.hashtags.join(" ")}
