@@ -517,3 +517,68 @@ export async function updateClientLifecycle(formData: FormData): Promise<ClientA
   revalidatePath("/fiches");
   return { ok: true, message: "Gestion du client mise à jour." };
 }
+
+/**
+ * Suppression définitive d'un client.
+ *
+ * L'effacement se propage à tout ce qui lui est rattaché : fiches, contenus,
+ * validations données par le client, tickets, budget et facturation. Il n'y a
+ * pas de corbeille — d'où la double barrière, le rôle et la saisie du nom.
+ *
+ * Archiver suffit dans presque tous les cas : le client sort des écrans de
+ * production sans qu'on perde la trace de ce qui a été fait pour lui. La
+ * suppression sert aux doublons et aux essais.
+ */
+export async function deleteClient(
+  clientId: string,
+  confirmation: string,
+): Promise<ClientActionResult> {
+  const profile = await getCurrentProfile();
+  if (profile?.role !== "super_admin") {
+    return { ok: false, message: "Seul un administrateur peut supprimer un client." };
+  }
+  if (!z.string().uuid().safeParse(clientId).success) {
+    return { ok: false, message: "Client invalide." };
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { data: client } = await admin
+    .from("clients")
+    .select("id, name, logo_url")
+    .eq("id", clientId)
+    .maybeSingle();
+  if (!client) return { ok: false, message: "Client introuvable." };
+
+  // Le nom saisi doit correspondre : on ne supprime pas par inadvertance.
+  if (confirmation.trim().toLocaleLowerCase("fr") !== client.name.trim().toLocaleLowerCase("fr")) {
+    return { ok: false, message: "Le nom saisi ne correspond pas à celui du client." };
+  }
+
+  /*
+   * Les fichiers d'abord : la cascade efface les lignes `media_assets`, et
+   * sans leurs chemins plus rien ne permettrait de retrouver les fichiers
+   * correspondants dans le stockage. Ils y resteraient indéfiniment.
+   */
+  const { data: assets } = await admin
+    .from("media_assets")
+    .select("storage_path, preview_path")
+    .eq("client_id", clientId);
+
+  const paths = [
+    ...(assets ?? []).flatMap((asset) => [asset.storage_path, asset.preview_path]),
+    client.logo_url,
+  ].filter((path): path is string => Boolean(path) && !/^https?:\/\//i.test(String(path)));
+
+  if (paths.length > 0) {
+    await admin.storage.from("media").remove(paths);
+  }
+
+  const { error } = await admin.from("clients").delete().eq("id", clientId);
+  if (error) return { ok: false, message: `Suppression impossible : ${error.message}` };
+
+  revalidatePath("/clients");
+  revalidatePath("/fiches");
+  revalidatePath("/budget");
+  revalidatePath("/publications");
+  return { ok: true, message: `${client.name} a été supprimé.` };
+}

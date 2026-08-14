@@ -7,6 +7,7 @@ import { Icon } from "@/components/Icon";
 import { ClientEditor } from "./ClientEditor";
 import { resolveClientLogoUrl } from "@/lib/media/client-logo";
 import { normalizeWeekdays } from "@/lib/domain/planning";
+import { DeleteClient } from "./DeleteClient";
 
 const weekDays = ["lundi","mardi","mercredi","jeudi","vendredi","samedi","dimanche"];
 const brandTones = ["chaleureux","premium","expert","dynamique","institutionnel"] as const;
@@ -52,6 +53,27 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
     visual:Number(settings.monthlyCadence?.visual ?? 0),
   };
   const publicationWeekdays=normalizeWeekdays(settings.publicationWeekdays ?? []);
+
+  /*
+   * Volume de ce qu'une suppression emporterait. Annoncer « définitif » sans
+   * dire ce que cela recouvre n'aide personne à décider.
+   */
+  const deletionScope = profile?.role === "super_admin"
+    ? await (async () => {
+        const [tickets, budgetLines, media] = await Promise.all([
+          supabase.from("client_tickets").select("id", { count: "exact", head: true }).eq("client_id", client.id),
+          supabase.from("client_budget_lines").select("id", { count: "exact", head: true }).eq("client_id", client.id),
+          supabase.from("media_assets").select("id", { count: "exact", head: true }).eq("client_id", client.id),
+        ]);
+        return {
+          sheets: sheets.length,
+          publications: sheets.reduce((total, sheet) => total + sheet.weekly_sheet_items.length, 0),
+          tickets: tickets.count ?? 0,
+          budgetLines: budgetLines.count ?? 0,
+          media: media.count ?? 0,
+        };
+      })()
+    : null;
   const rawTone = settings.brandProfile?.tone;
   const brandTone = brandTones.includes(rawTone as typeof brandTones[number])
     ? rawTone as typeof brandTones[number]
@@ -97,5 +119,10 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
         <section className="rounded-[20px] bg-[#123f73] p-5 text-white shadow-[0_16px_36px_rgba(18,63,115,.16)]"><Icon name="spark" className="h-5 w-5 text-[#8fd1ff]"/><h2 className="mt-4 font-semibold">Mises à jour du site</h2><p className="mt-1 text-xs leading-relaxed text-white/70">Le suivi apparaîtra ici dès qu’une prestation web sera enregistrée dans Supabase.</p></section>
       </aside>
     </div>
+
+    {/* Réservé à la direction : la suppression n'a pas de retour possible. */}
+    {deletionScope && (
+      <DeleteClient clientId={client.id} clientName={client.name} scope={deletionScope}/>
+    )}
   </div>;
 }
