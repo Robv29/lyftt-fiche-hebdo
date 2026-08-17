@@ -5,6 +5,9 @@ import { deadlineState } from "@/lib/domain/deadline";
 import { ticketStatusLabel } from "@/lib/domain/types";
 import { ClientAvatar, EmptyState, PageHeader, StatusDot } from "@/components/ui";
 import { Icon } from "@/components/Icon";
+import { resolveMediaUrl } from "@/lib/media/signed-url";
+import { todayInParis } from "@/lib/domain/client-lifecycle";
+import { ProductionRequests, type ProductionRequestRow } from "./ProductionRequests";
 
 /**
  * §22 — Espace de production.
@@ -32,9 +35,57 @@ export default async function ProductionPage() {
     profile?.role ?? "",
   );
 
+  /*
+   * Commandes internes : la RLS borne déjà la lecture au périmètre de chacun.
+   * Les médias livrés sont signés ici — bucket privé oblige.
+   */
+  const [{ data: rawRequests }, { data: requestClients }] = await Promise.all([
+    supabase
+      .from("production_requests")
+      .select(`id, client_id, kind, title, brief, due_on, status, requested_by, requested_by_name, clients ( name ),
+        media_assets:media_asset_id ( kind, file_name, storage_path, preview_path, purged_at, preview_purged_at )`)
+      .order("due_on", { ascending: true }),
+    supabase.from("clients").select("id, name").eq("is_active", true).order("name"),
+  ]);
+
+  const today = todayInParis();
+  const requests: ProductionRequestRow[] = await Promise.all((rawRequests ?? []).map(async (row) => {
+    const media = row.media_assets as unknown as { kind: string; file_name: string; storage_path: string; preview_path: string | null; purged_at: string | null; preview_purged_at: string | null } | null;
+    const resolved = media
+      ? await resolveMediaUrl({ storagePath: media.storage_path, previewPath: media.preview_path, purgedAt: media.purged_at, previewPurgedAt: media.preview_purged_at })
+      : null;
+    return {
+      id: row.id as string,
+      clientId: row.client_id as string,
+      clientName: (row.clients as unknown as { name: string } | null)?.name ?? "Client",
+      kind: row.kind as ProductionRequestRow["kind"],
+      title: row.title as string,
+      brief: (row.brief as string | null) ?? null,
+      dueOn: row.due_on as string,
+      status: row.status as ProductionRequestRow["status"],
+      requestedByName: (row.requested_by_name as string | null) ?? null,
+      isMine: row.requested_by === profile?.id,
+      mediaUrl: resolved?.url ?? null,
+      mediaFileName: media?.file_name ?? null,
+      mediaKind: media?.kind ?? null,
+      overdue: (row.due_on as string) < today && row.status === "a_faire",
+    };
+  }));
+
   return (
     <div className="space-y-7">
-      <PageHeader eyebrow="Studio de production" title="Corrections clients" description={isProductionRole ? "Les corrections qui vous sont affectées, triées selon leur échéance." : "Les retours qui nécessitent une intervention graphique ou vidéo."} />
+      <PageHeader eyebrow="Studio de production" title={isProductionRole ? "Production" : "Production"} description={isProductionRole ? "Les corrections qui vous sont affectées et les commandes internes, triées selon leur échéance." : "Les retours clients à corriger et les commandes internes de l'équipe."} />
+
+      <ProductionRequests
+        requests={requests}
+        clients={(requestClients ?? []).map((client) => ({ id: client.id as string, name: client.name as string }))}
+        canRequest={!isProductionRole}
+      />
+
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 className="font-semibold">Corrections clients</h2>
+        <span className="text-xs text-ink-faint">{(tickets ?? []).length} en cours</span>
+      </div>
 
       {(tickets ?? []).length === 0 ? (
         <EmptyState icon="layers" title="Production à jour" description="Aucune correction graphique ou vidéo n’attend d’intervention." />
