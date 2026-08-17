@@ -284,13 +284,20 @@
 @keyframes insights-reveal { from { opacity:0; transform:translate3d(0,8px,0); } to { opacity:1; transform:translate3d(0,0,0); } }
 
 @media (min-width: 1280px) {
+  /*
+   * Densité, pas enfermement.
+   *
+   * L'écran était figé à la hauteur de la fenêtre avec `overflow:hidden` : tout
+   * ce qui dépassait devenait inatteignable, sans barre de défilement ni indice
+   * — on ne pouvait pas descendre jusqu'en bas. La mise en page reste compacte,
+   * mais la page s'allonge et défile dès qu'il y a plus à montrer, ce qui est
+   * la règle sur toutes les autres.
+   */
   .dashboard-page {
-    height:calc(100vh - 205px);
     min-height:0;
     display:grid;
     grid-template-rows:auto auto minmax(0,1fr);
     gap:14px;
-    overflow:hidden;
   }
   .dashboard-hero { padding:18px 24px; border-radius:22px; }
   .dashboard-hero h1 { margin-top:4px; font-size:clamp(1.65rem,2.3vw,2.15rem); }
@@ -305,26 +312,25 @@
   .dashboard-stat-label { margin-top:9px; }
   .dashboard-stat-value { font-size:25px; }
   .dashboard-stat-detail { margin-top:4px; font-size:10px; }
-  .dashboard-bottom { min-height:0; height:100%; gap:14px; }
+  .dashboard-bottom { min-height:0; gap:14px; }
   .dashboard-bottom>* { min-height:0; }
-  .dashboard-bottom .section-card { height:100%; overflow:hidden; }
+  .dashboard-bottom .section-card { overflow:hidden; }
   .dashboard-bottom .section-card-header { padding:11px 16px; }
   .dashboard-bottom .section-card-header h2 { margin-top:2px; font-size:.875rem; }
   .dashboard-bottom li a { padding:9px 16px; }
   .dashboard-bottom li a .h-10 { width:34px; height:34px; border-radius:10px; }
 
+  /* Même correction que le tableau de bord : les indicateurs défilent. */
   .insights-page {
-    height:calc(100vh - 205px);
     min-height:0;
     display:grid;
     grid-template-rows:auto auto minmax(0,1fr);
     gap:12px;
-    overflow:hidden;
   }
   .insights-header .page-title { font-size:clamp(1.65rem,2.3vw,2.15rem); }
   .insights-header p.mt-2 { margin-top:3px; font-size:11px; }
   .insights-menu { min-height:50px; }
-  .insights-view { height:100%; overflow:hidden; }
+  .insights-view { min-height:0; }
   .insights-overview { grid-template-rows:minmax(0,1.05fr) minmax(0,.95fr); }
   .insights-overview-top { grid-template-columns:minmax(0,1.55fr) minmax(300px,.75fr); }
   .insights-hero-panel { min-height:0; height:100%; padding:22px 24px; }
