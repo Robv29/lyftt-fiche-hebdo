@@ -10,10 +10,14 @@ import {
   formatEuros,
   isManagementMonth,
   lineTotalCents,
+  shootingMonthlyCostCents,
+  shootingPlanSummary,
+  shootingsPerYear,
   type BillingMode,
   type BudgetLine,
   type BudgetSummary,
   type ServiceDefinition,
+  type ShootingPlan,
 } from "@/lib/domain/budget";
 import type { MonthlyCadence } from "@/lib/domain/planning";
 import {
@@ -23,7 +27,7 @@ import {
   pendingInvoiceCount,
   type InvoiceMonth,
 } from "@/lib/domain/invoicing";
-import { addBudgetLine, deleteMonthInvoice, removeBudgetLine, saveBudgetSettings, saveContractDates, setInvoiceStatus, type BudgetActionResult } from "../actions";
+import { addBudgetLine, deleteMonthInvoice, removeBudgetLine, removeClientRib, saveBudgetSettings, saveContractDates, setInvoiceStatus, uploadClientRib, type BudgetActionResult } from "../actions";
 
 type EditorLine = BudgetLine & { note: string | null };
 
@@ -35,9 +39,13 @@ export function BudgetEditor({
   contractStartDate,
   contractEndDate,
   cadence,
+  shooting,
+  shootingDueOn,
+  shootingPlannedOn,
   initialMode,
   initialBudgetCents,
   initialNote,
+  rib,
   lines,
   months,
   summary,
@@ -47,9 +55,16 @@ export function BudgetEditor({
   contractStartDate: string | null;
   contractEndDate: string | null;
   cadence: MonthlyCadence;
+  /** Forfait shooting vendu dans la formule, repris de la fiche client. */
+  shooting: ShootingPlan | null;
+  /** Échéance du prochain shooting du forfait. */
+  shootingDueOn: string | null;
+  /** Date déjà calée avec le client, si elle l'est. */
+  shootingPlannedOn: string | null;
   initialMode: BillingMode;
   initialBudgetCents: number;
   initialNote: string;
+  rib: { fileName: string | null; uploadedAt: string | null; url: string | null };
   lines: EditorLine[];
   months: InvoiceMonth[];
   summary: BudgetSummary;
@@ -212,8 +227,33 @@ export function BudgetEditor({
         </button>
       </form>
 
+      {/*
+        Le RIB n'est exigé que si l'on prélève le client : au comptant toujours,
+        en hybride pour la gestion mensuelle. Un financement intégral ne passe
+        pas par son compte. Il suit le mode sélectionné, sans attendre
+        l'enregistrement — c'est au clic qu'on doit savoir ce qui manque.
+      */}
+      {mode !== "financement" && (
+        <RibPanel
+          clientId={clientId}
+          mode={mode}
+          rib={rib}
+          pending={pending}
+          onUpload={(formData) => run(() => uploadClientRib(formData))}
+          onRemove={() => run(() => removeClientRib(clientId))}
+        />
+      )}
+
+      {shooting && (
+        <ShootingPanel
+          shooting={shooting}
+          dueOn={shootingDueOn}
+          plannedOn={shootingPlannedOn}
+        />
+      )}
+
       {financed && (
-        <SummaryPanel summary={summary} cadence={cadence} contractStartDate={contractStartDate} contractEndDate={contractEndDate}/>
+        <SummaryPanel summary={summary} cadence={cadence} shooting={shooting} contractStartDate={contractStartDate} contractEndDate={contractEndDate}/>
       )}
 
       {(
@@ -383,6 +423,149 @@ export function BudgetEditor({
 }
 
 /**
+ * Dépôt du RIB.
+ *
+ * L'absence de RIB n'empêche pas d'enregistrer le budget : bloquer la saisie
+ * pour un document manquant la ferait perdre sans rien accélérer. Elle se
+ * signale, en rouge, jusqu'à ce que le fichier soit là — c'est la facturation
+ * qui se heurterait au mur, plus tard et plus cher.
+ */
+function RibPanel({
+  clientId,
+  mode,
+  rib,
+  pending,
+  onUpload,
+  onRemove,
+}: {
+  clientId: string;
+  mode: BillingMode;
+  rib: { fileName: string | null; uploadedAt: string | null; url: string | null };
+  pending: boolean;
+  onUpload: (formData: FormData) => void;
+  onRemove: () => void;
+}) {
+  const missing = !rib.fileName;
+
+  return (
+    <section className={`card p-5 ${missing ? "border-2 border-state-changes bg-state-changes/5" : "border-state-approved/40 bg-[#f6fdf9]"}`}>
+      <div className="flex items-start gap-3">
+        <span className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl text-white ${missing ? "bg-state-changes" : "bg-state-approved"}`}>
+          <Icon name={missing ? "warning" : "check"} className="h-5 w-5"/>
+        </span>
+        <div className="min-w-0 flex-1">
+          <strong className={`text-base ${missing ? "text-state-changes" : "text-state-approved"}`}>
+            {missing ? "RIB manquant" : "RIB déposé"}
+          </strong>
+          <p className="mt-1 text-sm leading-relaxed text-ink-soft">
+            {missing
+              ? mode === "comptant"
+                ? "Ce client est facturé au comptant : sans RIB, aucun prélèvement ne peut être mis en place. Le budget s’enregistre quand même, mais l’alerte restera."
+                : "En hybride, la gestion mensuelle est prélevée : sans RIB, la facturation restera bloquée. Le budget s’enregistre quand même, mais l’alerte restera."
+              : <>
+                  {rib.fileName}
+                  {rib.uploadedAt && ` · déposé le ${new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "long", year: "numeric" }).format(new Date(rib.uploadedAt))}`}
+                </>}
+          </p>
+
+          <form
+            className="mt-4 flex flex-wrap items-end gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const formData = new FormData(event.currentTarget);
+              onUpload(formData);
+              event.currentTarget.reset();
+            }}
+          >
+            <input type="hidden" name="clientId" value={clientId}/>
+            <div className="min-w-0">
+              <label className="label" htmlFor="rib">
+                {missing ? "Fichier du RIB" : "Remplacer le RIB"}
+              </label>
+              <input
+                id="rib"
+                name="rib"
+                type="file"
+                required
+                accept="application/pdf,image/jpeg,image/png,image/webp,image/heic"
+                className="field bg-white text-xs"
+              />
+            </div>
+            <button type="submit" className="btn-primary" disabled={pending}>
+              {pending ? "Dépôt…" : "Déposer"}
+            </button>
+          </form>
+
+          {!missing && (
+            <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
+              {rib.url && (
+                <a href={rib.url} target="_blank" rel="noreferrer" className="font-semibold text-[#0b63ad] hover:underline">
+                  Ouvrir le RIB
+                </a>
+              )}
+              <button
+                type="button"
+                className="text-state-changes hover:underline"
+                disabled={pending}
+                onClick={() => {
+                  if (window.confirm("Retirer le RIB de ce client ?")) onRemove();
+                }}
+              >
+                Retirer
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Forfait shooting vendu dans la formule.
+ *
+ * Son prix ne s'ajoute pas à l'addition au moment du tournage : il est lissé
+ * sur la période et déjà compris dans chaque mois de gestion. Ce qui se suit
+ * ici, c'est le cycle — l'échéance suivante et la date convenue.
+ */
+function ShootingPanel({
+  shooting,
+  dueOn,
+  plannedOn,
+}: {
+  shooting: ShootingPlan;
+  dueOn: string | null;
+  plannedOn: string | null;
+}) {
+  const formatDay = (date: string) => new Intl.DateTimeFormat("fr-FR", {
+    day: "numeric", month: "long", year: "numeric", timeZone: "UTC",
+  }).format(new Date(`${date}T00:00:00Z`));
+
+  return (
+    <section className="card p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="eyebrow">Forfait shooting</p>
+          <h2 className="mt-1 font-semibold">{shootingPlanSummary(shooting)}</h2>
+        </div>
+        <span className="badge bg-[#e8f2ff] text-[#0b5e9f]">
+          {formatEuros(shootingMonthlyCostCents(shooting))} / mois
+        </span>
+      </div>
+      <p className="mt-3 text-xs leading-relaxed text-ink-faint">
+        Soit {shootingsPerYear(shooting)} shooting{shootingsPerYear(shooting) > 1 ? "s" : ""} par an,
+        étalés sur la facture : le montant est déjà compris dans chaque mois de gestion,
+        et les shootings réalisés apparaissent à zéro euro dans l&apos;addition pour ne pas
+        être payés deux fois.
+        {plannedOn
+          ? ` Prochain shooting calé le ${formatDay(plannedOn)}.`
+          : dueOn ? ` Prochaine échéance le ${formatDay(dueOn)} — le rappel s'ouvre un mois avant, sur le tableau de bord.` : ""}
+      </p>
+    </section>
+  );
+}
+
+/**
  * Récapitulatif mois par mois des factures à établir.
  *
  * Le mois est l'unité de facturation : chaque prestation notée rejoint le mois
@@ -522,11 +705,13 @@ function InvoiceBoard({
 function SummaryPanel({
   summary,
   cadence,
+  shooting,
   contractStartDate,
   contractEndDate,
 }: {
   summary: BudgetSummary;
   cadence: MonthlyCadence;
+  shooting: ShootingPlan | null;
   contractStartDate: string | null;
   contractEndDate: string | null;
 }) {
@@ -539,6 +724,10 @@ function SummaryPanel({
   ].filter(([, value]) => Number(value ?? 0) > 0)
     .map(([label, value]) => `${value} ${label}`)
     .join(" · ");
+  // Le shooting du forfait pèse sur le coût mensuel : il doit se lire ici aussi.
+  const rhythmWithShooting = shooting
+    ? [rhythm, shootingPlanSummary(shooting).toLocaleLowerCase("fr")].filter(Boolean).join(" · ")
+    : rhythm;
 
   return (
     <section className="space-y-4">
@@ -578,7 +767,7 @@ function SummaryPanel({
         </div>
 
         <p className="mt-4 text-xs leading-relaxed text-ink-faint">
-          Rythme vendu : {rhythm || "aucun"} par mois, soit{" "}
+          Rythme vendu : {rhythmWithShooting || "aucun"} par mois, soit{" "}
           <strong className="text-ink-soft">{formatEuros(summary.monthlyCadenceCostCents)} par mois</strong>{" "}
           de production récurrente.
           {contractEndDate && summary.monthsRemaining > 0 && (

@@ -5,8 +5,10 @@ import { billableLines, budgetSummary, type BillingMode, type BudgetLine } from 
 import { todayInParis } from "@/lib/domain/client-lifecycle";
 import type { MonthlyCadence } from "@/lib/domain/planning";
 import { BudgetEditor } from "./BudgetEditor";
-import { cadenceFromNotes, syncManagementMonths } from "@/lib/budget/management-months";
+import { cadenceFromNotes, shootingPlanFromNotes, syncManagementMonths } from "@/lib/budget/management-months";
 import { invoiceMonths, type InvoiceStatus } from "@/lib/domain/invoicing";
+import { resolveMediaUrl } from "@/lib/media/signed-url";
+import { SHOOTING_FORFAIT_KEY, shootingSchedule } from "@/lib/domain/budget";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +34,7 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
       .maybeSingle(),
     supabase
       .from("client_budgets")
-      .select("billing_mode, budget_cents, note")
+      .select("billing_mode, budget_cents, note, rib_storage_path, rib_file_name, rib_uploaded_at")
       .eq("client_id", clientId)
       .maybeSingle(),
   ]);
@@ -50,6 +52,7 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
       contractStartDate: client.contract_start_date,
       contractEndDate: client.contract_end_date,
       cadence: cadenceFromNotes(client.notes),
+      shooting: shootingPlanFromNotes(client.notes),
     });
   }
 
@@ -92,14 +95,46 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
   const months = invoiceMonths(billableLines(lines, mode), invoiceStatuses);
 
   const cadence = settings.monthlyCadence ?? {};
+  const shooting = shootingPlanFromNotes(client.notes);
+  const today = todayInParis();
   const summary = budgetSummary({
     billingMode: mode,
     annualBudgetCents: budget?.budget_cents ?? 0,
     lines,
     cadence,
+    shooting,
+    ribOnFile: Boolean(budget?.rib_storage_path),
     contractStartDate: client.contract_start_date,
     contractEndDate: client.contract_end_date,
-    today: todayInParis(),
+    today,
+  });
+
+  /*
+   * Le RIB vit dans le bucket privé : rien ne s'affiche sans URL signée, qui
+   * n'est valable qu'une heure. Elle est donc calculée à chaque affichage.
+   */
+  const ribUrl = budget?.rib_storage_path
+    ? (await resolveMediaUrl({
+        storagePath: budget.rib_storage_path as string,
+        previewPath: null,
+        purgedAt: null,
+        previewPurgedAt: null,
+      })).url
+    : null;
+
+  /*
+   * Cycle du shooting vendu : les dates réalisées ou calées sont des lignes de
+   * l'addition, à zéro euro — le forfait est déjà réglé par le lissage mensuel.
+   */
+  const shootingDates = lines
+    .filter((line) => line.serviceKey === SHOOTING_FORFAIT_KEY)
+    .map((line) => line.performedOn)
+    .sort();
+  const schedule = shootingSchedule({
+    plan: shooting,
+    lastDoneOn: [...shootingDates].reverse().find((date) => date <= today) ?? null,
+    contractStartDate: client.contract_start_date,
+    today,
   });
 
   return (
@@ -116,9 +151,17 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
         contractStartDate={client.contract_start_date}
         contractEndDate={client.contract_end_date}
         cadence={cadence}
+        shooting={shooting}
+        shootingDueOn={schedule?.dueOn ?? null}
+        shootingPlannedOn={shootingDates.find((date) => date > today) ?? null}
         initialMode={mode}
         initialBudgetCents={budget?.budget_cents ?? 0}
         initialNote={budget?.note ?? ""}
+        rib={{
+          fileName: (budget?.rib_file_name as string | null) ?? null,
+          uploadedAt: (budget?.rib_uploaded_at as string | null) ?? null,
+          url: ribUrl,
+        }}
         lines={lines}
         months={months}
         summary={summary}

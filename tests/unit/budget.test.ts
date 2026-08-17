@@ -16,7 +16,11 @@ import {
   isManagementMonth,
   MANAGEMENT_MONTH_KEY,
   monthsBetween,
+  parseShootingPlan,
   SERVICE_CATALOGUE,
+  shootingMonthlyCostCents,
+  shootingSchedule,
+  shootingsPerYear,
   totalCents,
   type BudgetLine,
 } from "@/lib/domain/budget";
@@ -499,5 +503,110 @@ describe("malus budgétaire", () => {
 
   it("ne s'applique pas sans portefeuille connu", () => {
     expect(budgetPenalty({ clientsWithIssue: 3, clientsTotal: 0 })).toBe(0);
+  });
+});
+
+describe("forfait shooting", () => {
+  const demiTousLes4Mois = { serviceKey: "shooting_demi", everyMonths: 4 } as const;
+
+  it("étale le prix du shooting sur sa période", () => {
+    // 450 € tous les 4 mois : le client en paie le quart chaque mois.
+    expect(shootingMonthlyCostCents(demiTousLes4Mois)).toBe(11_250);
+    expect(shootingMonthlyCostCents({ serviceKey: "shooting_express", everyMonths: 2 })).toBe(11_250);
+    expect(shootingMonthlyCostCents({ serviceKey: "shooting_jour", everyMonths: 1 })).toBe(85_000);
+  });
+
+  it("ne compte rien sans forfait ni période valable", () => {
+    expect(shootingMonthlyCostCents(null)).toBe(0);
+    expect(shootingMonthlyCostCents({ serviceKey: "shooting_demi", everyMonths: 0 })).toBe(0);
+  });
+
+  it("s'ajoute au coût mensuel du rythme vendu", () => {
+    const cadence = { photo: 4 };
+    const sansShooting = cadenceMonthlyCostCents(cadence);
+    const avecShooting = cadenceMonthlyCostCents(cadence, demiTousLes4Mois);
+    expect(avecShooting - sansShooting).toBe(11_250);
+  });
+
+  it("compte les shootings de l'année", () => {
+    expect(shootingsPerYear(demiTousLes4Mois)).toBe(3);
+    expect(shootingsPerYear({ serviceKey: "shooting_demi", everyMonths: 5 })).toBe(2.4);
+  });
+
+  it("écarte un forfait illisible venu des réglages", () => {
+    expect(parseShootingPlan(null)).toBeNull();
+    expect(parseShootingPlan({ serviceKey: "site_one_page", everyMonths: 3 })).toBeNull();
+    expect(parseShootingPlan({ serviceKey: "shooting_demi" })).toBeNull();
+    expect(parseShootingPlan({ serviceKey: "shooting_demi", everyMonths: 99 })).toBeNull();
+    expect(parseShootingPlan({ serviceKey: "shooting_demi", everyMonths: 4 })).toEqual(demiTousLes4Mois);
+  });
+
+  /*
+   * Le cas donné par la direction : dernier shooting le 4 août, un tous les deux
+   * mois. Le rappel doit s'ouvrir le 4 septembre pour une échéance au 4 octobre.
+   */
+  it("ouvre le rappel un mois avant l'échéance", () => {
+    const plan = { serviceKey: "shooting_demi", everyMonths: 2 } as const;
+    const base = { plan, lastDoneOn: "2026-08-04", contractStartDate: "2026-01-01" };
+
+    expect(shootingSchedule({ ...base, today: "2026-09-03" })).toMatchObject({
+      dueOn: "2026-10-04",
+      remindFrom: "2026-09-04",
+      remindNow: false,
+      overdue: false,
+    });
+    expect(shootingSchedule({ ...base, today: "2026-09-04" })?.remindNow).toBe(true);
+    expect(shootingSchedule({ ...base, today: "2026-10-05" })?.overdue).toBe(true);
+  });
+
+  it("compte depuis le début de gestion quand aucun shooting n'a eu lieu", () => {
+    const schedule = shootingSchedule({
+      plan: demiTousLes4Mois,
+      lastDoneOn: null,
+      contractStartDate: "2026-03-15",
+      today: "2026-07-01",
+    });
+    expect(schedule?.dueOn).toBe("2026-07-15");
+  });
+
+  it("ne planifie rien sans forfait", () => {
+    expect(shootingSchedule({
+      plan: null,
+      lastDoneOn: null,
+      contractStartDate: "2026-03-15",
+      today: "2026-07-01",
+    })).toBeNull();
+  });
+});
+
+describe("RIB manquant", () => {
+  const base = {
+    annualBudgetCents: 600_000,
+    lines: [],
+    cadence: { photo: 4 },
+    contractStartDate: "2026-01-01",
+    contractEndDate: "2026-12-31",
+    today,
+  };
+
+  it("alerte au comptant, où il n'y a pourtant aucune enveloppe à suivre", () => {
+    const summary = budgetSummary({ ...base, billingMode: "comptant", ribOnFile: false });
+    expect(summary.applicable).toBe(false);
+    expect(summary.alerts.map((alert) => alert.title)).toContain("RIB manquant");
+  });
+
+  it("alerte en hybride, où la gestion mensuelle est prélevée", () => {
+    const summary = budgetSummary({ ...base, billingMode: "hybride", ribOnFile: false });
+    expect(summary.alerts.some((alert) => alert.title === "RIB manquant" && alert.level === "critique")).toBe(true);
+  });
+
+  it("ne dit rien en financement : le client n'est pas prélevé", () => {
+    const summary = budgetSummary({ ...base, billingMode: "financement", ribOnFile: false });
+    expect(summary.alerts.map((alert) => alert.title)).not.toContain("RIB manquant");
+  });
+
+  it("se taît dès que le RIB est déposé, et reste muet si l'on n'en sait rien", () => {
+    expect(budgetSummary({ ...base, billingMode: "comptant", ribOnFile: true }).alerts).toEqual([]);
+    expect(budgetSummary({ ...base, billingMode: "comptant" }).alerts).toEqual([]);
   });
 });

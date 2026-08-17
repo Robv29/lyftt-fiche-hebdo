@@ -3,8 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sanitizeText } from "@/lib/security/sanitize";
-import { addMonths, findService, MANAGEMENT_MONTH_KEY } from "@/lib/domain/budget";
+import { checkAttachment, safeFileName } from "@/lib/security/attachments";
+import { addMonths, findService, MANAGEMENT_MONTH_KEY, SHOOTING_FORFAIT_KEY } from "@/lib/domain/budget";
 
 export interface BudgetActionResult {
   ok: boolean;
@@ -288,11 +290,17 @@ export async function deleteMonthInvoice(
   // Bornes du mois : du premier jour inclus au premier jour du mois suivant.
   const nextMonth = addMonths(parsed.data.periodMonth, 1);
 
+  /*
+   * Les mois de gestion et les shootings du forfait survivent à la suppression :
+   * les premiers ont bien été produits, et les seconds ne sont pas une prestation
+   * facturée mais la trace d'une date — c'est d'elle que se déduit l'échéance du
+   * shooting suivant. Les effacer décalerait tout le cycle de planification.
+   */
   const { error, count } = await supabase
     .from("client_budget_lines")
     .delete({ count: "exact" })
     .eq("client_id", parsed.data.clientId)
-    .neq("service_key", MANAGEMENT_MONTH_KEY)
+    .not("service_key", "in", `(${MANAGEMENT_MONTH_KEY},${SHOOTING_FORFAIT_KEY})`)
     .gte("performed_on", parsed.data.periodMonth)
     .lt("performed_on", nextMonth);
 
@@ -311,6 +319,105 @@ export async function deleteMonthInvoice(
     ok: true,
     message: `Facture supprimée : ${count ?? 0} prestation${(count ?? 0) > 1 ? "s" : ""} retirée${(count ?? 0) > 1 ? "s" : ""}.`,
   };
+}
+
+/*
+ * Dépôt du RIB.
+ *
+ * Le fichier va dans le bucket privé, hors de `media_assets` : ce n'est pas un
+ * média de production, il ne suit ni le cycle de purge ni les partages avec le
+ * client. Seul le chemin est conservé, et l'affichage passe par une URL signée.
+ *
+ * Les coordonnées bancaires ne se remplacent pas en silence : l'ancien fichier
+ * est effacé une fois le nouveau écrit, jamais avant.
+ */
+const RIB_TYPES = ["application/pdf", "image/jpeg", "image/png", "image/webp", "image/heic"];
+
+export async function uploadClientRib(formData: FormData): Promise<BudgetActionResult> {
+  const profile = await requireAdmin();
+  if (!profile) return { ok: false, message: ACCESS_DENIED };
+
+  const clientId = z.string().uuid().safeParse(formData.get("clientId"));
+  if (!clientId.success) return { ok: false, message: "Client invalide." };
+
+  const file = formData.get("rib");
+  if (!(file instanceof File) || file.size === 0) {
+    return { ok: false, message: "Choisissez le fichier du RIB." };
+  }
+  if (!RIB_TYPES.includes(file.type)) {
+    return { ok: false, message: "Le RIB doit être un PDF ou une photo (JPEG, PNG, WEBP, HEIC)." };
+  }
+
+  const head = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+  const check = checkAttachment({ size: file.size, type: file.type, name: file.name }, head);
+  if (!check.valid) return { ok: false, message: check.message ?? "Fichier refusé." };
+
+  const admin = createSupabaseAdminClient();
+  const { data: current } = await admin
+    .from("client_budgets")
+    .select("rib_storage_path")
+    .eq("client_id", clientId.data)
+    .maybeSingle();
+
+  const fileName = safeFileName(file.name);
+  const storagePath = `clients/${clientId.data}/rib/${crypto.randomUUID()}-${fileName}`;
+  const { error: storageError } = await admin.storage.from("media").upload(
+    storagePath,
+    await file.arrayBuffer(),
+    { contentType: file.type, upsert: false },
+  );
+  if (storageError) return { ok: false, message: `Dépôt impossible : ${storageError.message}` };
+
+  const { error } = await admin.from("client_budgets").upsert({
+    client_id: clientId.data,
+    rib_storage_path: storagePath,
+    rib_file_name: fileName,
+    rib_uploaded_at: new Date().toISOString(),
+    rib_uploaded_by: profile.id,
+  });
+  if (error) {
+    await admin.storage.from("media").remove([storagePath]);
+    return { ok: false, message: `RIB non enregistré : ${error.message}` };
+  }
+
+  const previous = current?.rib_storage_path as string | null | undefined;
+  if (previous && previous !== storagePath) {
+    await admin.storage.from("media").remove([previous]);
+  }
+
+  revalidatePath("/budget");
+  revalidatePath(`/budget/${clientId.data}`);
+  return { ok: true, message: "RIB déposé." };
+}
+
+export async function removeClientRib(clientId: string): Promise<BudgetActionResult> {
+  const profile = await requireAdmin();
+  if (!profile) return { ok: false, message: ACCESS_DENIED };
+
+  const parsed = z.string().uuid().safeParse(clientId);
+  if (!parsed.success) return { ok: false, message: "Client invalide." };
+
+  const admin = createSupabaseAdminClient();
+  const { data: current } = await admin
+    .from("client_budgets")
+    .select("rib_storage_path")
+    .eq("client_id", parsed.data)
+    .maybeSingle();
+
+  const { error } = await admin.from("client_budgets").update({
+    rib_storage_path: null,
+    rib_file_name: null,
+    rib_uploaded_at: null,
+    rib_uploaded_by: null,
+  }).eq("client_id", parsed.data);
+  if (error) return { ok: false, message: `Retrait impossible : ${error.message}` };
+
+  const path = current?.rib_storage_path as string | null | undefined;
+  if (path) await admin.storage.from("media").remove([path]);
+
+  revalidatePath("/budget");
+  revalidatePath(`/budget/${parsed.data}`);
+  return { ok: true, message: "RIB retiré." };
 }
 
 const datesSchema = z.object({

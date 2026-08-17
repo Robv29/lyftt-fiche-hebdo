@@ -14,6 +14,11 @@ import {
 } from "@/lib/domain/hashtags";
 import { removeClientLogo, uploadClientLogo } from "@/lib/media/client-logo";
 import { normalizeWeekdays } from "@/lib/domain/planning";
+import {
+  SHOOTING_PLAN_SERVICES,
+  parseShootingPlan,
+  type ShootingPlan,
+} from "@/lib/domain/budget";
 
 export interface ClientActionResult {
   ok: boolean;
@@ -80,7 +85,35 @@ const clientSchema = z.object({
   storyPerMonth: z.coerce.number().int().min(0).max(31),
   visualPerMonth: z.coerce.number().int().min(0).max(31),
   postSignature: z.string().trim().max(300, "Signature trop longue (300 caractères maximum).").optional(),
+  /*
+   * Forfait shooting vendu dans la formule : une prestation du catalogue et sa
+   * périodicité. Les deux vont ensemble — un shooting sans rythme ne peut être
+   * ni lissé sur les factures ni programmé.
+   */
+  shootingService: z.enum(["", ...SHOOTING_PLAN_SERVICES]).default(""),
+  shootingEveryMonths: z.coerce.number()
+    .int("Indiquez un nombre entier de mois.")
+    .min(1, "Le shooting revient au minimum chaque mois.")
+    .max(24, "Périodicité trop longue (24 mois maximum).")
+    .optional(),
+}).superRefine((input, context) => {
+  if (input.shootingService && !input.shootingEveryMonths) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["shootingEveryMonths"],
+      message: "Indiquez tous les combien de mois ce shooting est vendu.",
+    });
+  }
 });
+
+/** Forfait shooting tel qu'il sera stocké dans les réglages du client. */
+function shootingPlanFromInput(input: z.infer<typeof clientSchema>): ShootingPlan | null {
+  if (!input.shootingService) return null;
+  return parseShootingPlan({
+    serviceKey: input.shootingService,
+    everyMonths: input.shootingEveryMonths,
+  });
+}
 
 function clientFormValues(formData: FormData) {
   return {
@@ -113,6 +146,9 @@ function clientFormValues(formData: FormData) {
     storyPerMonth: formData.get("storyPerMonth"),
     visualPerMonth: formData.get("visualPerMonth"),
     postSignature: formData.get("postSignature") ?? undefined,
+    shootingService: formData.get("shootingService") ?? "",
+    // Champ laissé vide quand aucun shooting n'est vendu : pas de valeur, pas d'erreur.
+    shootingEveryMonths: formData.get("shootingEveryMonths") || undefined,
   };
 }
 
@@ -199,6 +235,7 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
       story: input.storyPerMonth,
       visual: input.visualPerMonth,
     },
+    shootingPlan: shootingPlanFromInput(input),
   });
 
   // Un slug déjà pris est suffixé plutôt que de faire échouer la création.
@@ -361,6 +398,7 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
       story: input.storyPerMonth,
       visual: input.visualPerMonth,
     },
+    shootingPlan: shootingPlanFromInput(input),
   };
 
   const { error: clientError } = await admin.from("clients").update({
@@ -420,6 +458,8 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
   revalidatePath("/clients");
   revalidatePath(`/clients/${clientId.data}`);
   revalidatePath("/fiches");
+  // Le tableau de bord porte le rappel des shootings : il suit le forfait vendu.
+  revalidatePath("/");
   // Le budget affiche le nom du client : il doit suivre un renommage.
   revalidatePath("/budget");
   revalidatePath(`/budget/${clientId.data}`);

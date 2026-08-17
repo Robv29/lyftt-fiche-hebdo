@@ -8,6 +8,12 @@ import { ClientEditor } from "./ClientEditor";
 import { resolveClientLogoUrl } from "@/lib/media/client-logo";
 import { normalizeWeekdays } from "@/lib/domain/planning";
 import { DeleteClient } from "./DeleteClient";
+import {
+  formatEuros,
+  parseShootingPlan,
+  shootingMonthlyCostCents,
+  shootingPlanSummary,
+} from "@/lib/domain/budget";
 
 const weekDays = ["lundi","mardi","mercredi","jeudi","vendredi","samedi","dimanche"];
 const brandTones = ["chaleureux","premium","expert","dynamique","institutionnel"] as const;
@@ -34,6 +40,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
     recommendedHashtags?: string[];
     publicationWeekdays?: number[];
     monthlyCadence?: { photo?: number; video?: number; story?: number; visual?: number };
+    shootingPlan?: unknown;
   } = {};
   try { settings = typeof client.notes === "string" ? JSON.parse(client.notes) : {}; } catch { settings = {}; }
   const rawClientType = settings.brandProfile?.clientType;
@@ -53,6 +60,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
     visual:Number(settings.monthlyCadence?.visual ?? 0),
   };
   const publicationWeekdays=normalizeWeekdays(settings.publicationWeekdays ?? []);
+  const shooting = parseShootingPlan(settings.shootingPlan);
 
   /*
    * Volume de ce qu'une suppression emporterait. Annoncer « définitif » sans
@@ -100,7 +108,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
         keywords:settings.brandProfile?.keywords ?? "",
       },
       networks:networks.length ? networks : ["instagram","facebook"],
-      cadence, publicationWeekdays,
+      cadence, publicationWeekdays, shooting,
       validation:{ deadlineWeekday:client.validation_deadline_weekday, deadlineTime:String(client.validation_deadline_time), approvalPolicy:client.approval_policy as "explicit_required"|"tacit_allowed", tacitNotice:client.tacit_approval_notice ?? "Sans retour avant cette échéance, les contenus seront considérés comme validés, selon les modalités prévues ensemble.", whatsappGroup:client.whatsapp_group_name ?? "", postSignature:client.post_signature ?? "" },
       customHashtags,
     }} managers={(managers ?? []).map((manager)=>({id:manager.id,name:manager.full_name}))}/></div></header>
@@ -108,6 +116,11 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
       <div className="space-y-6">
         <section className="card p-4 sm:p-6"><div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="eyebrow">Cadence éditoriale</p><h2 className="mt-1 text-lg font-semibold">Prestations en cours</h2></div><span className="rounded-full bg-[#edf4ff] px-3 py-1 text-xs font-semibold text-[#1468ff]">Volume mensuel vendu</span></div>
           <div className="mt-6 grid gap-3 sm:grid-cols-3">{[{label:"Photos",count:cadence.photo},{label:"Vidéos / Reels",count:cadence.video},{label:"Visuels",count:cadence.visual}].map((item)=><div key={item.label} className="rounded-xl bg-canvas p-4"><div className="flex items-center justify-between gap-2"><strong className="text-sm">{item.label}</strong><span className="text-2xl font-semibold tracking-tight">{item.count}</span></div><p className="mt-1 text-xs text-ink-faint">par mois</p></div>)}</div>
+          {/* Le shooting du forfait n'est pas un volume hebdomadaire : il a son propre rythme. */}
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-[#f7faff] p-4">
+            <div><strong className="text-sm">Shooting du forfait</strong><p className="mt-1 text-xs text-ink-faint">{shooting ? shootingPlanSummary(shooting) : "Aucun shooting vendu dans la formule"}</p></div>
+            {shooting && <span className="text-xs font-semibold text-[#0b5e9f]">{formatEuros(shootingMonthlyCostCents(shooting))} / mois lissés</span>}
+          </div>
         </section>
         <section className="card overflow-hidden"><div className="flex items-center justify-between border-b px-4 py-4 sm:px-6 sm:py-5"><div><p className="eyebrow">Historique</p><h2 className="mt-1 font-semibold">Fiches hebdomadaires</h2></div><Link href="/fiches" className="mobile-inline-btn min-h-11 shrink-0 px-2 text-xs font-semibold text-[#1468ff]">Tout voir</Link></div>{sheets.length ? <ul className="divide-y">{sheets.slice(0,6).map(s=><li key={s.id}><Link href={`/fiches/${s.id}`} className="grid grid-cols-[40px_1fr_auto] items-center gap-3 px-4 py-4 hover:bg-canvas sm:px-6"><span className="grid h-10 w-10 place-items-center rounded-xl bg-canvas text-xs font-bold">S{s.iso_week}</span><div className="min-w-0"><strong className="text-sm">Semaine {s.iso_week}</strong><p className="text-xs text-ink-faint">{s.weekly_sheet_items.length} contenu{s.weekly_sheet_items.length>1?"s":""}</p><span className="mt-1 inline-flex max-w-full rounded-full bg-canvas px-2 py-0.5 text-[10px] text-ink-soft sm:hidden">{sheetStatusLabel(s.status)}</span></div><span className="hidden items-center gap-2 sm:flex"><span className="badge bg-canvas text-ink-soft">{sheetStatusLabel(s.status)}</span><Icon name="arrow" className="h-4 w-4 text-ink-faint"/></span><Icon name="arrow" className="h-4 w-4 text-ink-faint sm:hidden"/></Link></li>)}</ul> : <p className="p-8 text-center text-sm text-ink-faint">Aucune fiche créée pour ce client.</p>}</section>
         <section className="card p-6"><p className="eyebrow">Bibliothèque</p><h2 className="mt-1 font-semibold">Hashtags récents</h2>{tags.length ? <div className="mt-4 flex flex-wrap gap-2">{tags.map(t=><span key={t} className="rounded-lg bg-[#f0f3f7] px-2.5 py-1.5 text-xs text-ink-soft">{t}</span>)}</div> : <p className="mt-4 text-sm text-ink-faint">Aucun hashtag enregistré.</p>}</section>

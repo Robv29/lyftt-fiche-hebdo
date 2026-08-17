@@ -6,12 +6,32 @@ import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
 import { requiresProduction } from "@/lib/domain/routing";
 import { Icon } from "@/components/Icon";
 import { planningWeekRange, sheetCompletion } from "@/lib/domain/planning";
-import { budgetSummary, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
+import {
+  SHOOTING_FORFAIT_KEY,
+  budgetSummary,
+  parseShootingPlan,
+  shootingPlanSummary,
+  shootingSchedule,
+  type BillingMode,
+  type BudgetLine,
+} from "@/lib/domain/budget";
 import { clientLifecycle, todayInParis as civilToday } from "@/lib/domain/client-lifecycle";
 import type { MonthlyCadence } from "@/lib/domain/planning";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { ShootingReminders, type ShootingReminderRow } from "./ShootingReminders";
 
 function todayInParis(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+}
+
+/** Réglages du client, stockés en JSON libre dans le champ `notes`. */
+function clientSettings(notes: string | null): Record<string, unknown> {
+  try {
+    const parsed = typeof notes === "string" ? JSON.parse(notes) : {};
+    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
 }
 
 /** Vue opérationnelle du jour, exclusivement alimentée par Supabase. */
@@ -26,7 +46,7 @@ export default async function DashboardPage() {
     supabase.from("client_tickets").select("id, ticket_number, title, ticket_type, status, priority, due_at, created_at, clients ( name )").not("status", "in", "(closed,cancelled,rejected,approved_by_client)").order("created_at", { ascending: false }).limit(50),
     supabase.from("weekly_sheets").select("id, iso_week, status, validation_deadline_at, clients ( name )").in("status", ["sent_to_client", "partially_approved", "changes_requested", "corrections_in_progress", "new_version_to_send", "awaiting_revalidation"]).order("validation_deadline_at", { ascending: true }).limit(120),
     supabase.from("weekly_sheet_items").select("id, published_at").eq("scheduled_date", today).eq("is_cancelled", false),
-    supabase.from("clients").select("id, is_active, notes, contract_start_date, contract_end_date, pause_start_date, pause_end_date").eq("is_active", true),
+    supabase.from("clients").select("id, name, is_active, notes, contract_start_date, contract_end_date, pause_start_date, pause_end_date, client_contacts ( first_name, is_primary )").eq("is_active", true),
     /*
      * Fiches de la semaine prochaine, avec de quoi juger si elles sont prêtes.
      * Un simple comptage de brouillons ne disait pas si le travail était fait :
@@ -44,14 +64,16 @@ export default async function DashboardPage() {
    * complètes, plus les clients actifs pour lesquels aucune fiche n'existe
    * encore — une fiche absente est le cas le moins prêt de tous.
    */
-  const activeClients = (clientsResult.data ?? []) as Array<{
+  const activeClients = (clientsResult.data ?? []) as unknown as Array<{
     id: string;
+    name: string;
     is_active: boolean;
     notes: string | null;
     contract_start_date: string | null;
     contract_end_date: string | null;
     pause_start_date: string | null;
     pause_end_date: string | null;
+    client_contacts: Array<{ first_name: string | null; is_primary: boolean }> | null;
   }>;
 
   const nextWeekSheets = (preparationResult.data ?? []) as unknown as Array<{
@@ -79,6 +101,66 @@ export default async function DashboardPage() {
   const toPrepare = incompleteSheets + producible.filter((client) => !coveredClients.has(client.id)).length;
 
   /*
+   * Shootings du forfait à planifier.
+   *
+   * L'échéance se compte depuis le dernier shooting réalisé — ou depuis le début
+   * de gestion s'il n'y en a pas encore eu — et le rappel s'ouvre un mois avant :
+   * c'est le délai qu'il faut pour trouver une date avec un client qui travaille.
+   *
+   * Les dates de shooting vivent dans le budget, réservé à la direction par RLS.
+   * La lecture passe donc par la clé service, bornée aux clients déjà filtrés
+   * par le périmètre de la personne connectée.
+   */
+  const shootingClients = producible
+    .map((client) => ({ client, plan: parseShootingPlan(clientSettings(client.notes).shootingPlan) }))
+    .filter((entry): entry is { client: typeof entry.client; plan: NonNullable<typeof entry.plan> } => Boolean(entry.plan));
+
+  let shootingRows: ShootingReminderRow[] = [];
+  if (shootingClients.length > 0) {
+    const { data: shootingLines } = await createSupabaseAdminClient()
+      .from("client_budget_lines")
+      .select("client_id, performed_on")
+      .eq("service_key", SHOOTING_FORFAIT_KEY)
+      .in("client_id", shootingClients.map((entry) => entry.client.id));
+
+    const datesByClient = new Map<string, string[]>();
+    for (const row of shootingLines ?? []) {
+      const list = datesByClient.get(row.client_id as string) ?? [];
+      list.push(row.performed_on as string);
+      datesByClient.set(row.client_id as string, list);
+    }
+
+    shootingRows = shootingClients.flatMap(({ client, plan }) => {
+      const dates = (datesByClient.get(client.id) ?? []).sort();
+      // Un shooting à venir est une date calée ; le dernier passé sert d'ancre.
+      const lastDoneOn = [...dates].reverse().find((date) => date <= today) ?? null;
+      const plannedOn = dates.find((date) => date > today) ?? null;
+      const schedule = shootingSchedule({
+        plan,
+        lastDoneOn,
+        contractStartDate: client.contract_start_date,
+        today,
+      });
+      if (!schedule) return [];
+      if (!schedule.remindNow && !plannedOn) return [];
+
+      const contacts = client.client_contacts ?? [];
+      const contact = contacts.find((row) => row.is_primary) ?? contacts[0];
+      const reminderSentOn = clientSettings(client.notes).shootingReminderOn;
+      return [{
+        clientId: client.id,
+        clientName: client.name,
+        contactFirstName: contact?.first_name ?? null,
+        planLabel: shootingPlanSummary(plan),
+        dueOn: schedule.dueOn,
+        overdue: schedule.overdue,
+        plannedOn,
+        reminderSentOn: typeof reminderSentOn === "string" ? reminderSentOn : null,
+      }];
+    }).sort((first, second) => first.dueOn.localeCompare(second.dueOn));
+  }
+
+  /*
    * Budgets à régulariser, pour la direction seule : dates de gestion
    * manquantes, enveloppe non renseignée ou déjà dépassée. Ce sont les
    * dossiers où l'on facture à l'aveugle, ce qui pèse plus lourd qu'un ticket
@@ -87,7 +169,7 @@ export default async function DashboardPage() {
   let budgetIssues = 0;
   if (isAdmin) {
     const [{ data: budgets }, { data: budgetLines }] = await Promise.all([
-      supabase.from("client_budgets").select("client_id, billing_mode, budget_cents"),
+      supabase.from("client_budgets").select("client_id, billing_mode, budget_cents, rib_storage_path"),
       supabase.from("client_budget_lines").select("client_id, service_key, label, billing, unit_price_cents, quantity, months, performed_on, billed_directly"),
     ]);
 
@@ -108,14 +190,16 @@ export default async function DashboardPage() {
     }
 
     budgetIssues = producible.filter((client) => {
-      let settings: { monthlyCadence?: MonthlyCadence } = {};
-      try { settings = client.notes ? JSON.parse(client.notes) : {}; } catch { settings = {}; }
+      const settings = clientSettings(client.notes) as { monthlyCadence?: MonthlyCadence; shootingPlan?: unknown };
       const budget = budgetByClient.get(client.id);
       const summary = budgetSummary({
         billingMode: (budget?.billing_mode ?? "comptant") as BillingMode,
         annualBudgetCents: budget?.budget_cents ?? 0,
         lines: linesByClient.get(client.id) ?? [],
         cadence: settings.monthlyCadence ?? {},
+        shooting: parseShootingPlan(settings.shootingPlan),
+        // Un RIB manquant se compte comme un dossier à régulariser.
+        ribOnFile: Boolean(budget?.rib_storage_path),
         contractStartDate: client.contract_start_date,
         contractEndDate: client.contract_end_date,
         today: civilToday(),
@@ -201,7 +285,10 @@ export default async function DashboardPage() {
           )}
         </section>
 
-        <div>
+        <div className="space-y-6">
+          {/* Rien à afficher tant qu'aucun shooting n'arrive à échéance. */}
+          <ShootingReminders rows={shootingRows}/>
+
           <section className="section-card">
             <div className="section-card-header"><div><p className="eyebrow">Validation</p><h2 className="mt-1 font-semibold">Fiches en attente</h2></div><span className="badge bg-[#e8f2ff] text-[#0b5e9f]">{sheets.length}</span></div>
             {/*

@@ -8,6 +8,14 @@ import { ClientLogoField } from "@/components/ClientLogoField";
 import { SOCIAL_NETWORKS, SOCIAL_NETWORK_LABELS, type SocialNetwork } from "@/lib/domain/types";
 import { WEEKDAY_LABELS } from "@/lib/domain/planning";
 import {
+  SHOOTING_PLAN_SERVICES,
+  findService,
+  formatEuros,
+  shootingMonthlyCostCents,
+  shootingsPerYear,
+  type ShootingPlan,
+} from "@/lib/domain/budget";
+import {
   hashtagsForClientType,
   LYFTT_CLIENT_TYPES,
   normalizeHashtag,
@@ -34,6 +42,8 @@ export interface EditableClient {
   };
   networks: SocialNetwork[];
   cadence: { photo: number; video: number; story: number; visual: number };
+  /** Forfait shooting vendu dans la formule, s'il y en a un. */
+  shooting: ShootingPlan | null;
   publicationWeekdays: number[];
   validation: {
     deadlineWeekday: number;
@@ -62,6 +72,11 @@ export function ClientEditor({ initial, managers }: { initial: EditableClient; m
   const [tacit, setTacit] = useState(initial.validation.approvalPolicy === "tacit_allowed");
   const [clientType, setClientType] = useState<LyfttClientType>(initial.brand.clientType);
   const [customHashtags, setCustomHashtags] = useState(() => fiveHashtags(initial.customHashtags));
+  // Forfait shooting : la périodicité n'a de sens qu'une fois la prestation choisie.
+  const [shootingService, setShootingService] = useState<string>(initial.shooting?.serviceKey ?? "");
+  const [shootingEveryMonths, setShootingEveryMonths] = useState<string>(
+    initial.shooting ? String(initial.shooting.everyMonths) : "3",
+  );
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
 
@@ -101,7 +116,19 @@ export function ClientEditor({ initial, managers }: { initial: EditableClient; m
     setTacit(initial.validation.approvalPolicy === "tacit_allowed");
     setClientType(initial.brand.clientType);
     setCustomHashtags(fiveHashtags(initial.customHashtags));
+    setShootingService(initial.shooting?.serviceKey ?? "");
+    setShootingEveryMonths(initial.shooting ? String(initial.shooting.everyMonths) : "3");
   };
+
+  /*
+   * Le shooting vendu dans la formule est lissé sur sa période : un shooting à
+   * 450 € tous les quatre mois se paie 112,50 € par mois. Le montre ici évite
+   * de découvrir l'impact sur la facture depuis l'écran budget seulement.
+   */
+  const everyMonths = Number(shootingEveryMonths);
+  const shootingPlan: ShootingPlan | null = shootingService && Number.isInteger(everyMonths) && everyMonths >= 1
+    ? { serviceKey: shootingService as ShootingPlan["serviceKey"], everyMonths }
+    : null;
 
   return (
     <>
@@ -226,6 +253,57 @@ export function ClientEditor({ initial, managers }: { initial: EditableClient; m
                   <div><label className="label" htmlFor="edit-video">Vidéos / Reels</label><input id="edit-video" name="videoPerMonth" type="number" min="0" max="31" required className="field" defaultValue={initial.cadence.video}/></div>
                   <div><label className="label" htmlFor="edit-story">Stories</label><input id="edit-story" name="storyPerMonth" type="number" min="0" max="31" required className="field" defaultValue={initial.cadence.story}/></div>
                   <div><label className="label" htmlFor="edit-visual">Visuels / carrousels</label><input id="edit-visual" name="visualPerMonth" type="number" min="0" max="31" required className="field" defaultValue={initial.cadence.visual}/></div>
+                </div>
+
+                <div className="mt-4 rounded-2xl border border-[#d8e4f8] bg-[#f7faff] p-4">
+                  <p className="label">Shooting vendu dans la formule</p>
+                  <p className="mt-1 text-xs text-ink-faint">
+                    Un shooting qui revient à intervalle régulier. Son prix est étalé
+                    sur la période : il entre dans la facture mensuelle et dans le
+                    budget, sans qu&apos;on ait à le ressaisir à chaque fois.
+                  </p>
+                  <div className="mt-3 grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <label className="label" htmlFor="edit-shooting-service">Prestation</label>
+                      <select
+                        id="edit-shooting-service"
+                        name="shootingService"
+                        className="field bg-white"
+                        value={shootingService}
+                        onChange={(event) => setShootingService(event.target.value)}
+                      >
+                        <option value="">Aucun shooting vendu</option>
+                        {SHOOTING_PLAN_SERVICES.map((key) => (
+                          <option key={key} value={key}>
+                            {findService(key)?.label} — {formatEuros(findService(key)?.unitPriceCents ?? 0)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="label" htmlFor="edit-shooting-months">Tous les combien de mois</label>
+                      <input
+                        id="edit-shooting-months"
+                        name="shootingEveryMonths"
+                        type="number"
+                        min="1"
+                        max="24"
+                        className="field bg-white"
+                        value={shootingService ? shootingEveryMonths : ""}
+                        disabled={!shootingService}
+                        required={Boolean(shootingService)}
+                        onChange={(event) => setShootingEveryMonths(event.target.value)}
+                      />
+                    </div>
+                  </div>
+                  {shootingPlan && (
+                    <p className="mt-3 rounded-xl bg-white px-3 py-2 text-xs leading-relaxed text-ink-soft">
+                      Soit <strong>{formatEuros(shootingMonthlyCostCents(shootingPlan))} par mois</strong>{" "}
+                      ajoutés au rythme vendu, et {shootingsPerYear(shootingPlan)} shooting
+                      {shootingsPerYear(shootingPlan) > 1 ? "s" : ""} par an. Le rappel de
+                      planification s&apos;ouvre un mois avant chaque échéance.
+                    </p>
+                  )}
                 </div>
               </fieldset>
 

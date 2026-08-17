@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { Icon } from "@/components/Icon";
-import { BILLING_MODE_LABELS, billableLines, budgetSummary, formatEuros, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
+import { BILLING_MODE_LABELS, billableLines, budgetSummary, formatEuros, parseShootingPlan, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
 import { clientLifecycle, todayInParis } from "@/lib/domain/client-lifecycle";
 import type { MonthlyCadence } from "@/lib/domain/planning";
 import { invoiceMonths, pendingInvoiceCount, type InvoiceStatus } from "@/lib/domain/invoicing";
@@ -49,7 +49,7 @@ export default async function BudgetPage() {
   await syncAllManagementMonths(supabase, clients ?? []);
 
   const [{ data: budgets }, { data: lines }] = await Promise.all([
-    supabase.from("client_budgets").select("client_id, billing_mode, budget_cents"),
+    supabase.from("client_budgets").select("client_id, billing_mode, budget_cents, rib_storage_path"),
     supabase
       .from("client_budget_lines")
       .select("id, client_id, service_key, label, billing, unit_price_cents, quantity, months, performed_on, billed_directly"),
@@ -100,7 +100,7 @@ export default async function BudgetPage() {
   }, today).canProduce);
 
   const rows = managed.map((client) => {
-    let settings: { monthlyCadence?: MonthlyCadence } = {};
+    let settings: { monthlyCadence?: MonthlyCadence; shootingPlan?: unknown } = {};
     try {
       settings = typeof client.notes === "string" ? JSON.parse(client.notes) : {};
     } catch {
@@ -108,11 +108,14 @@ export default async function BudgetPage() {
     }
     const budget = budgetByClient.get(client.id);
     const mode = (budget?.billing_mode ?? "comptant") as BillingMode;
+    const ribOnFile = Boolean(budget?.rib_storage_path);
     const summary = budgetSummary({
       billingMode: mode,
       annualBudgetCents: budget?.budget_cents ?? 0,
       lines: linesByClient.get(client.id) ?? [],
       cadence: settings.monthlyCadence ?? {},
+      shooting: parseShootingPlan(settings.shootingPlan),
+      ribOnFile,
       contractStartDate: client.contract_start_date,
       contractEndDate: client.contract_end_date,
       today,
@@ -128,7 +131,9 @@ export default async function BudgetPage() {
      * se lit comme un bug ; il faut dire pourquoi.
      */
     const missingStart = !client.contract_start_date;
-    return { client, summary, toInvoice, missingStart, mode };
+    // Le RIB ne concerne que les modes qui prélèvent le client.
+    const ribMissing = mode !== "financement" && !ribOnFile;
+    return { client, summary, toInvoice, missingStart, mode, ribMissing };
   });
 
   const totalToInvoice = rows.reduce((total, row) => total + row.toInvoice, 0);
@@ -284,12 +289,14 @@ export default async function BudgetPage() {
           <p className="card px-4 py-6 text-center text-sm text-ink-faint">Aucun client au comptant.</p>
         ) : (
           <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {cash.map(({ client, toInvoice, missingStart: sansDebut }) => (
+            {cash.map(({ client, toInvoice, missingStart: sansDebut, ribMissing }) => (
               <li key={client.id}>
-                <Link href={`/budget/${client.id}`} className={`card flex items-center justify-between gap-3 px-4 py-3 text-sm hover:bg-canvas ${sansDebut ? "border-state-changes/40" : ""}`}>
+                <Link href={`/budget/${client.id}`} className={`card flex items-center justify-between gap-3 px-4 py-3 text-sm hover:bg-canvas ${sansDebut || ribMissing ? "border-state-changes/40" : ""}`}>
                   <span className="truncate text-ink-soft">{client.name}</span>
                   {sansDebut
                     ? <span className="badge shrink-0 bg-state-changes/10 text-state-changes">Début manquant</span>
+                    : ribMissing
+                    ? <span className="badge shrink-0 bg-state-changes/10 text-state-changes">RIB manquant</span>
                     : toInvoice > 0
                       ? <span className="badge shrink-0 bg-[#fff4e5] text-[#8a5700]">{toInvoice} à facturer</span>
                       : <span className="badge shrink-0 bg-canvas text-ink-faint">À jour</span>}

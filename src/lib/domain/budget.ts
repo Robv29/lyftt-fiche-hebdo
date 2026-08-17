@@ -366,14 +366,116 @@ export const BASE_MONTHLY_FEE_CENTS = 5_000;
  * du planning, pour que les deux écrans racontent la même chose. Le forfait
  * de base s'ajoute par-dessus.
  */
-export function cadenceMonthlyCostCents(cadence: MonthlyCadence): number {
+export function cadenceMonthlyCostCents(
+  cadence: MonthlyCadence,
+  shooting?: ShootingPlan | null,
+): number {
   const perWeek = (monthly: number | undefined) => Math.max(0, Number(monthly ?? 0)) / 4;
   return BASE_MONTHLY_FEE_CENTS + Math.round(
     perWeek(cadence.photo) * priceOf("post_photo")
     + perWeek(cadence.video) * priceOf("video")
     + perWeek(cadence.story) * priceOf("story")
     + perWeek(cadence.visual) * priceOf("visuel"),
-  );
+  ) + shootingMonthlyCostCents(shooting ?? null);
+}
+
+/**
+ * Shooting vendu dans la formule : un shooting de X heures tous les N mois.
+ *
+ * Son prix est lissé sur la période — un shooting à 450 € tous les quatre mois
+ * se paie 112,50 € par mois. Il entre ainsi dans le coût mensuel de la
+ * gestion, donc dans l'enveloppe d'un financement, la facture d'un comptant
+ * et la gestion facturée d'un hybride, sans traitement particulier.
+ */
+export interface ShootingPlan {
+  /** Prestation du catalogue : express, demi-journée ou journée. */
+  serviceKey: "shooting_express" | "shooting_demi" | "shooting_jour";
+  /** Un shooting tous les N mois. */
+  everyMonths: number;
+}
+
+export const SHOOTING_PLAN_SERVICES = [
+  "shooting_express",
+  "shooting_demi",
+  "shooting_jour",
+] as const;
+
+/** Clé des lignes posées quand un shooting du forfait est réalisé. */
+export const SHOOTING_FORFAIT_KEY = "shooting_forfait";
+
+export function shootingMonthlyCostCents(plan: ShootingPlan | null): number {
+  if (!plan || !Number.isInteger(plan.everyMonths) || plan.everyMonths < 1) return 0;
+  const price = findService(plan.serviceKey)?.unitPriceCents ?? 0;
+  return Math.round(price / plan.everyMonths);
+}
+
+/**
+ * Lecture d'un forfait shooting venu des réglages du client.
+ *
+ * Les réglages sont un texte JSON libre : une valeur incomplète ou fantaisiste
+ * ne doit pas faire tomber un écran de budget. Tout ce qui n'est pas un forfait
+ * exploitable devient l'absence de forfait.
+ */
+export function parseShootingPlan(value: unknown): ShootingPlan | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as { serviceKey?: unknown; everyMonths?: unknown };
+  const serviceKey = SHOOTING_PLAN_SERVICES.find((key) => key === raw.serviceKey);
+  const everyMonths = Number(raw.everyMonths);
+  if (!serviceKey) return null;
+  if (!Number.isInteger(everyMonths) || everyMonths < 1 || everyMonths > 24) return null;
+  return { serviceKey, everyMonths };
+}
+
+/** Formulation du forfait, telle qu'elle a été vendue. */
+export function shootingPlanSummary(plan: ShootingPlan): string {
+  const label = findService(plan.serviceKey)?.label ?? "Shooting";
+  const rhythm = plan.everyMonths === 1 ? "chaque mois" : `tous les ${plan.everyMonths} mois`;
+  return `${label} ${rhythm}`;
+}
+
+/** Nombre de shootings que le forfait représente sur une année. */
+export function shootingsPerYear(plan: ShootingPlan): number {
+  if (plan.everyMonths < 1) return 0;
+  return Math.round((12 / plan.everyMonths) * 10) / 10;
+}
+
+export interface ShootingSchedule {
+  /** Date à laquelle le prochain shooting devrait avoir lieu. */
+  dueOn: string;
+  /** Un mois avant : le moment de le caler avec le client. */
+  remindFrom: string;
+  /** Le rappel est-il actif à la date donnée ? */
+  remindNow: boolean;
+  /** L'échéance est-elle dépassée sans shooting calé ? */
+  overdue: boolean;
+}
+
+/**
+ * Cycle de planification du shooting.
+ *
+ * Le prochain shooting se déduit du dernier réalisé — ou du début de gestion
+ * s'il n'y en a pas encore eu — plus la période. Le rappel s'ouvre un mois
+ * avant l'échéance : c'est le délai qu'il faut pour trouver une date avec le
+ * client.
+ */
+export function shootingSchedule(input: {
+  plan: ShootingPlan | null;
+  lastDoneOn: string | null;
+  contractStartDate: string | null;
+  today: string;
+}): ShootingSchedule | null {
+  if (!input.plan) return null;
+  const anchor = input.lastDoneOn ?? input.contractStartDate;
+  if (!anchor) return null;
+
+  const dueOn = addMonths(anchor, input.plan.everyMonths);
+  const remindFrom = addMonths(dueOn, -1);
+  return {
+    dueOn,
+    remindFrom,
+    remindNow: input.today >= remindFrom,
+    overdue: input.today > dueOn,
+  };
 }
 
 function priceOf(key: string): number {
@@ -455,10 +557,20 @@ export interface BudgetInput {
   annualBudgetCents: number;
   lines: BudgetLine[];
   cadence: MonthlyCadence;
+  /** Shooting vendu dans la formule, lissé sur sa période. */
+  shooting?: ShootingPlan | null;
   /** Début de gestion, repris de la fiche client. */
   contractStartDate: string | null;
   /** Fin de gestion, reprise de la fiche client. */
   contractEndDate: string | null;
+  /**
+   * Le RIB du client est-il déposé ?
+   *
+   * Dès qu'une part est facturée au client — comptant, ou gestion mensuelle
+   * d'un hybride — le prélèvement suppose un RIB. Son absence n'empêche rien,
+   * elle se signale : c'est la facturation qui se bloquerait plus tard.
+   */
+  ribOnFile?: boolean;
   today: string;
 }
 
@@ -491,7 +603,7 @@ export function budgetSummary(input: BudgetInput): BudgetSummary {
   const charged = envelopeLines(input.lines, input.billingMode);
   const lineCents = totalCents(charged);
   const budgetCents = Math.max(0, input.annualBudgetCents);
-  const monthlyCadenceCostCents = cadenceMonthlyCostCents(input.cadence);
+  const monthlyCadenceCostCents = cadenceMonthlyCostCents(input.cadence, input.shooting ?? null);
 
   /*
    * Chaque mois de gestion écoulé est inscrit à l'addition dès qu'il s'achève.
@@ -510,6 +622,24 @@ export function budgetSummary(input: BudgetInput): BudgetSummary {
     ? monthsBetween(input.contractStartDate, measuredUpTo)
     : 0;
 
+  /*
+   * Le RIB manquant se signale dans les deux modes qui prélèvent le client,
+   * y compris au comptant où il n'y a pourtant aucune enveloppe à suivre :
+   * c'est le seul écran où l'on regarde l'argent de ce client.
+   */
+  const ribAlerts: BudgetAlert[] = [];
+  if (input.billingMode !== "financement" && input.ribOnFile === false) {
+    ribAlerts.push({
+      level: "critique",
+      title: "RIB manquant",
+      detail: input.billingMode === "comptant"
+        ? "Ce client est facturé au comptant : sans RIB déposé, aucun prélèvement "
+          + "ne peut être mis en place. Déposez-le sur cet écran."
+        : "En hybride, la gestion mensuelle est prélevée au client : sans RIB "
+          + "déposé, la facturation restera bloquée. Déposez-le sur cet écran.",
+    });
+  }
+
   // Un client comptant est facturé à la prestation : aucun plafond à suivre.
   if (input.billingMode === "comptant") {
     return {
@@ -526,7 +656,7 @@ export function budgetSummary(input: BudgetInput): BudgetSummary {
       projectedCents: consumedCents,
       projectedGapCents: 0,
       targetMonthlyCents: 0,
-      alerts: [],
+      alerts: ribAlerts,
     };
   }
 
@@ -548,7 +678,7 @@ export function budgetSummary(input: BudgetInput): BudgetSummary {
     ? Math.round(remainingCents / monthsRemaining)
     : 0;
 
-  const alerts: BudgetAlert[] = [];
+  const alerts: BudgetAlert[] = [...ribAlerts];
 
   if (!input.contractEndDate) {
     alerts.push({
