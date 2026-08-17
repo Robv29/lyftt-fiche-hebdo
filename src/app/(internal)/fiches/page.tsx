@@ -11,7 +11,7 @@ import {
 } from "@/lib/domain/planning";
 import { sheetStatusLabel, type MediaFormat, type SheetStatus, type TicketPriority, type TicketStatus } from "@/lib/domain/types";
 import { isClientValidated, validationRate } from "@/lib/domain/sheet-status";
-import { clientLifecycle } from "@/lib/domain/client-lifecycle";
+import { clientLifecycleForWeek } from "@/lib/domain/client-lifecycle";
 import { isTicketOpen } from "@/lib/domain/workflow";
 import { Icon } from "@/components/Icon";
 import { PlanningTabs } from "./PlanningTabs";
@@ -158,7 +158,7 @@ export default async function SheetsPage() {
     if (!clientId) return true;
     const client = clientById.get(clientId);
     if (!client) return true;
-    return clientLifecycle({
+    return clientLifecycleForWeek({
       isActive: client.is_active,
       contractStartDate: client.contract_start_date,
       contractEndDate: client.contract_end_date,

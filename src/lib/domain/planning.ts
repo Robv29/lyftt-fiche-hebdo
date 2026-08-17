@@ -1,5 +1,5 @@
 import { isoWeekStart } from "./deadline";
-import type { MediaFormat } from "./types";
+import { requiresCaption, requiresMedia, type MediaFormat } from "./types";
 
 export type PlanningBucket = "past" | "current" | "next" | "later";
 
@@ -91,11 +91,14 @@ export function sheetCompletion(items: CompletionItem[]): {
 } {
   const active = items.filter((item) => !item.isCancelled);
   const totals = active.reduce((acc, item) => {
-    const requiresMedia = item.format !== "texte_seul";
-    const total = 2 + (requiresMedia ? 1 : 0);
-    const completed = Number(Boolean(item.caption?.trim()))
+    // Une story n'attend pas de légende : ne la compter nulle part, ni au
+    // numérateur ni au dénominateur, sans quoi elle plafonnerait la fiche.
+    const needsCaption = requiresCaption(item.format);
+    const needsMedia = requiresMedia(item.format);
+    const total = 1 + (needsCaption ? 1 : 0) + (needsMedia ? 1 : 0);
+    const completed = Number(needsCaption && Boolean(item.caption?.trim()))
       + Number(hasHashtags(item.hashtags))
-      + Number(requiresMedia && Boolean(item.mediaAssetId || item.mediaExternalUrl));
+      + Number(needsMedia && Boolean(item.mediaAssetId || item.mediaExternalUrl));
     return { completed: acc.completed + completed, total: acc.total + total };
   }, { completed: 0, total: 0 });
 

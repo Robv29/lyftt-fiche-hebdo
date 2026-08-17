@@ -9,7 +9,7 @@ import {
   requireEditorialProfile,
 } from "@/lib/internal/authorization";
 import { isoWeekStart } from "@/lib/domain/deadline";
-import { clientLifecycle, productionBlockedMessage } from "@/lib/domain/client-lifecycle";
+import { clientLifecycleForWeek, productionBlockedMessage } from "@/lib/domain/client-lifecycle";
 import { normalizeHashtags, sanitizeText } from "@/lib/security/sanitize";
 import { SOCIAL_NETWORKS } from "@/lib/domain/types";
 
@@ -28,6 +28,8 @@ const itemSchema = z.object({
   hashtags: z.string().max(1000).default(""),
   mediaPendingNote: z.string().max(200).optional(),
   mediaAssetId: z.string().uuid().nullable().optional(),
+  /** Carrousel complet, dans l'ordre. La première image sert de couverture. */
+  mediaAssetIds: z.array(z.string().uuid()).max(20).optional(),
 });
 
 const sheetSchema = z.object({
@@ -75,31 +77,39 @@ export async function createSheet(formData: FormData): Promise<SheetActionResult
     return { ok: false, message: ACCESS_DENIED_MESSAGE };
   }
 
-  // Un client en pause ou dont la gestion est terminee ne recoit plus de fiche.
-  // Le controle est fait ici, pas seulement dans l interface : le formulaire
-  // reste atteignable par son adresse.
+  // La période est déduite de la semaine ISO : l'échéance de validation est
+  // ensuite calculée par la base à partir du paramétrage du client (§3).
+  const monday = isoWeekStart(input.isoYear, input.isoWeek);
+
+  /*
+   * Un client en pause ou dont la gestion est terminée ne reçoit plus de fiche.
+   * Le contrôle est fait ici, pas seulement dans l'interface : le formulaire
+   * reste atteignable par son adresse.
+   *
+   * La question porte sur la semaine demandée, pas sur aujourd'hui. Juger le
+   * jour présent refusait de préparer la fiche de la semaine suivante pendant
+   * une pause qui s'y terminait : il fallait attendre la reprise pour s'y
+   * mettre, donc produire en retard.
+   */
   const admin = createSupabaseAdminClient();
   const { data: clientRow } = await admin
     .from("clients")
-    .select("is_active, contract_end_date, pause_start_date, pause_end_date")
+    .select("is_active, contract_start_date, contract_end_date, pause_start_date, pause_end_date")
     .eq("id", input.clientId)
     .maybeSingle();
 
   if (clientRow) {
-    const lifecycle = clientLifecycle({
+    const lifecycle = clientLifecycleForWeek({
       isActive: clientRow.is_active,
+      contractStartDate: clientRow.contract_start_date,
       contractEndDate: clientRow.contract_end_date,
       pauseStartDate: clientRow.pause_start_date,
       pauseEndDate: clientRow.pause_end_date,
-    });
+    }, monday.toISOString().slice(0, 10));
     if (!lifecycle.canProduce) {
       return { ok: false, message: productionBlockedMessage(lifecycle) };
     }
   }
-
-  // La période est déduite de la semaine ISO : l'échéance de validation est
-  // ensuite calculée par la base à partir du paramétrage du client (§3).
-  const monday = isoWeekStart(input.isoYear, input.isoWeek);
   const sunday = new Date(monday);
   sunday.setUTCDate(monday.getUTCDate() + 6);
 
@@ -153,17 +163,52 @@ export async function createSheet(formData: FormData): Promise<SheetActionResult
       ? sanitizeText(item.mediaPendingNote, 200)
       : null,
     // Le fichier a déjà été téléversé depuis le navigateur : on ne reçoit ici
-    // que son identifiant.
-    media_asset_id: item.mediaAssetId ?? null,
+    // que son identifiant. Sur un carrousel, la couverture est la première
+    // image de la série : c'est elle que lisent les écrans à vignette unique.
+    media_asset_id: item.mediaAssetIds?.[0] ?? item.mediaAssetId ?? null,
   }));
 
-  const { error: itemsError } = await admin
+  const { data: insertedItems, error: itemsError } = await admin
     .from("weekly_sheet_items")
     .insert(rows)
-    .select("id");
+    .select("id, position");
   if (itemsError) {
     await admin.from("weekly_sheets").delete().eq("id", sheet.id);
     return { ok: false, message: `Publications non enregistrées : ${itemsError?.message ?? "erreur"}` };
+  }
+
+  /*
+   * Carrousels : la série est rattachée après coup, une fois les publications
+   * créées et leurs identifiants connus. Le rapprochement se fait sur la
+   * position, pas sur l'ordre de retour de la base, qui ne garantit rien.
+   */
+  const itemIdByPosition = new Map(
+    (insertedItems ?? []).map((row) => [row.position as number, row.id as string]),
+  );
+  const galleryRows = input.items.flatMap((item, index) => {
+    const gallery = item.mediaAssetIds ?? [];
+    const itemId = itemIdByPosition.get(index + 1);
+    if (!itemId || gallery.length < 2) return [];
+    return gallery.map((mediaAssetId, position) => ({
+      weekly_sheet_item_id: itemId,
+      media_asset_id: mediaAssetId,
+      position,
+    }));
+  });
+
+  if (galleryRows.length > 0) {
+    const { error: galleryError } = await admin
+      .from("weekly_sheet_item_media")
+      .insert(galleryRows);
+    // La couverture est déjà enregistrée : une série incomplète ne doit pas
+    // faire perdre la fiche, elle se recompose dans l'éditeur.
+    if (galleryError) {
+      return {
+        ok: true,
+        message: `Fiche créée, mais le carrousel n'a pas été enregistré : ${galleryError.message}`,
+        sheetId: sheet.id,
+      };
+    }
   }
 
   revalidatePath("/fiches");

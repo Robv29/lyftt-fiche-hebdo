@@ -11,12 +11,14 @@ import {
   weeklyFormatsForCadence,
   type MonthlyCadence,
 } from "@/lib/domain/planning";
-import { mediaFrameBackground, mediaFrameClass } from "@/lib/domain/media-frame";
+import { mediaFrameBackground, mediaFrameClass, supportsGallery } from "@/lib/domain/media-frame";
 import { PostPreview } from "@/components/PostPreview";
 import {
   MEDIA_FORMAT_LABELS,
   SOCIAL_NETWORKS,
   SOCIAL_NETWORK_LABELS,
+  requiresCaption,
+  requiresMedia,
   type SocialNetwork,
   type MediaFormat,
   type PublicationType,
@@ -59,6 +61,14 @@ interface DraftItem {
   /** Aperçu local du fichier déposé, avant tout aller-retour serveur. */
   mediaPreviewUrl: string | null;
   mediaPreviewKind: "image" | "video" | null;
+  /**
+   * Images suivantes du carrousel, couverture exclue et dans l'ordre.
+   *
+   * Un carrousel se montait jusqu'ici en deux temps : créer la fiche avec une
+   * seule image, puis rouvrir l'éditeur pour ajouter les autres. On dépose
+   * désormais toute la série d'un coup, dès la création.
+   */
+  gallery: { mediaAssetId: string; previewUrl: string }[];
 }
 
 const EMPTY_MEDIA = {
@@ -71,10 +81,11 @@ const EMPTY_MEDIA = {
   mediaRemaining: null,
   mediaPreviewUrl: null,
   mediaPreviewKind: null,
+  gallery: [],
 } satisfies Pick<
   DraftItem,
   "mediaAssetId" | "mediaName" | "mediaStatus" | "mediaError" | "mediaSaving" | "mediaPercent" | "mediaRemaining"
-  | "mediaPreviewUrl" | "mediaPreviewKind"
+  | "mediaPreviewUrl" | "mediaPreviewKind" | "gallery"
 >;
 
 /**
@@ -140,16 +151,25 @@ function createDraftItems(client: ClientPreset, isoYear: number, isoWeek: number
     format,
     // La signature est posée en bas du texte : le community manager rédige
     // au-dessus, et reste libre de la retirer publication par publication.
-    caption: signatureBlock(client.postSignature),
+    // Une story n'ayant pas de texte, elle n'a pas de signature non plus.
+    caption: requiresCaption(format) ? signatureBlock(client.postSignature) : "",
     hashtags: selectHashtags(client.defaultHashtags, `${client.id}-${isoYear}-${isoWeek}-${index}`).join(" "),
     ...EMPTY_MEDIA,
   }));
 }
 
-function MediaDropzone({ item, onFile }: { item: DraftItem; onFile: (file: File | null) => void }) {
+function MediaDropzone({
+  item,
+  onFiles,
+  onRemoveGalleryImage,
+}: {
+  item: DraftItem;
+  onFiles: (files: File[]) => void;
+  onRemoveGalleryImage: (mediaAssetId: string) => void;
+}) {
   const [dragging, setDragging] = useState(false);
-  const requiresMedia = item.format !== "texte_seul";
-  if (!requiresMedia) return <p className="rounded-xl bg-canvas px-4 py-3 text-xs text-ink-faint">Aucun média nécessaire pour un texte seul.</p>;
+  if (!requiresMedia(item.format)) return <p className="rounded-xl bg-canvas px-4 py-3 text-xs text-ink-faint">Aucun média nécessaire pour un texte seul.</p>;
+  const gallery = supportsGallery(item.format);
 
   const isVideo = ["video", "reels"].includes(item.format);
   const expected = item.format === "story"
@@ -181,6 +201,7 @@ function MediaDropzone({ item, onFile }: { item: DraftItem; onFile: (file: File 
         : "border-[#cdd5df] bg-canvas hover:border-[#8bb5ff] hover:bg-[#f5f9ff]";
 
   return (
+    <>
     <label
       aria-busy={busy}
       className={`group flex min-h-28 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed px-4 py-5 text-center transition-[border-color,background-color,transform] duration-150 active:scale-[.99] ${border}`}
@@ -190,15 +211,16 @@ function MediaDropzone({ item, onFile }: { item: DraftItem; onFile: (file: File 
       onDrop={(event) => {
         event.preventDefault();
         setDragging(false);
-        onFile(event.dataTransfer.files[0] ?? null);
+        onFiles(Array.from(event.dataTransfer.files));
       }}
     >
       <input
         type="file"
         className="sr-only"
         accept={mediaAccept(item.format)}
+        multiple={gallery}
         disabled={busy}
-        onChange={(event) => onFile(event.target.files?.[0] ?? null)}
+        onChange={(event) => onFiles(Array.from(event.target.files ?? []))}
       />
       {preview}
       <span className={`grid h-9 w-9 place-items-center rounded-xl ${ready ? "bg-state-approved/10 text-state-approved" : failed ? "bg-state-changes/10 text-state-changes" : "bg-white text-[#0759e6] shadow-sm"}`}>
@@ -229,9 +251,43 @@ function MediaDropzone({ item, onFile }: { item: DraftItem; onFile: (file: File 
             ? item.mediaSaving
             : busy
               ? "Vous pouvez continuer à rédiger pendant l’envoi."
-              : `Glisser-déposer ou cliquer · ${isVideo ? "200 Mo" : "15 Mo"} maximum`}
+              : gallery
+                ? `Une ou plusieurs images pour un carrousel · ${isVideo ? "200 Mo" : "15 Mo"} par fichier`
+                : `Glisser-déposer ou cliquer · ${isVideo ? "200 Mo" : "15 Mo"} maximum`}
       </span>
     </label>
+
+    {/*
+      Les images suivantes du carrousel, hors du dépôt : leur bouton de retrait
+      ne doit pas rouvrir le sélecteur de fichiers. La couverture est la
+      première image, celle que le client verra en aperçu.
+    */}
+    {gallery && item.gallery.length > 0 && (
+      <div className="mt-2">
+        <p className="text-[11px] text-ink-faint">
+          Carrousel de {item.gallery.length + 1} images · la première sert de couverture
+        </p>
+        <ul className="mt-2 flex flex-wrap gap-2">
+          {item.gallery.map((image, position) => (
+            <li key={image.mediaAssetId} className="relative">
+              <span className={`block w-[64px] overflow-hidden rounded-lg border border-line ${mediaFrameBackground(item.format)}`}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={image.previewUrl} alt={`Image ${position + 2} du carrousel`} className="block aspect-square w-full object-cover"/>
+              </span>
+              <button
+                type="button"
+                aria-label={`Retirer l’image ${position + 2} du carrousel`}
+                className="absolute -right-1.5 -top-1.5 grid h-5 w-5 place-items-center rounded-full bg-[#123f73] text-[11px] text-white hover:bg-state-changes"
+                onClick={() => onRemoveGalleryImage(image.mediaAssetId)}
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    )}
+    </>
   );
 }
 
@@ -272,17 +328,27 @@ export function SheetBuilder({
     return date.toISOString().slice(0, 10);
   };
   const resolvedItems = items.map((item, index) => ({ ...item, scheduledDate: item.scheduledDate || dayOffset(Math.min(index * 2, 6)) }));
-  const totalRequirements = resolvedItems.reduce((total, item) => total + (item.format === "texte_seul" ? 2 : 3), 0);
+  // Une story ne compte que ses hashtags et son média : elle n'attend pas de texte.
+  const totalRequirements = resolvedItems.reduce((total, item) => total
+    + 1
+    + Number(requiresCaption(item.format))
+    + Number(requiresMedia(item.format)), 0);
   const completedRequirements = resolvedItems.reduce((total, item) => total
-    + Number(hasWrittenCaption(item.caption, activeClient.postSignature))
+    + Number(requiresCaption(item.format) && hasWrittenCaption(item.caption, activeClient.postSignature))
     + Number(Boolean(item.hashtags.trim()))
-    + Number(item.format !== "texte_seul" && Boolean(item.mediaAssetId)), 0);
+    + Number(requiresMedia(item.format) && Boolean(item.mediaAssetId)), 0);
   const progress = totalRequirements ? Math.round((completedRequirements / totalRequirements) * 100) : 0;
   const periodLabel = `${dayOffset(0)} → ${dayOffset(6)}`;
 
   const update = (key: string, patch: Partial<DraftItem>) => setItems((currentItems) =>
     currentItems.map((item) => item.key === key ? { ...item, ...patch } : item),
   );
+
+  /** Même mise à jour, quand le nouvel état dépend de l'ancien — une liste qui s'allonge. */
+  const updateWith = (key: string, patch: (item: DraftItem) => Partial<DraftItem>) =>
+    setItems((currentItems) =>
+      currentItems.map((item) => item.key === key ? { ...item, ...patch(item) } : item),
+    );
 
   // Un blob non libéré retient le fichier entier en mémoire, ce qui pèse vite
   // avec plusieurs vidéos : on relâche tous les aperçus au démontage.
@@ -357,6 +423,66 @@ export function SheetBuilder({
     });
   };
 
+  /**
+   * Image suivante d'un carrousel.
+   *
+   * La couverture garde ses propres champs — nom, aperçu, progression — et les
+   * images suivantes s'empilent dans la galerie. Un échec sur l'une d'elles
+   * n'efface pas ce qui a déjà été déposé : seul le message change.
+   */
+  const handleGalleryFile = async (key: string, file: File) => {
+    const previewUrl = URL.createObjectURL(file);
+    localPreviews.current.push(previewUrl);
+    update(key, { mediaStatus: "envoi", mediaError: null, mediaPercent: null });
+
+    let result;
+    try {
+      result = await uploadMediaDirect({
+        file,
+        clientId: selectedClientId,
+        sheetId: null,
+        onProgress: (step) => update(key, { mediaStatus: step }),
+        onUploadProgress: (percent, _bytes, remaining) =>
+          update(key, { mediaPercent: percent, mediaRemaining: remaining }),
+      });
+    } catch (error) {
+      result = { ok: false, message: error instanceof Error ? error.message : "Envoi interrompu." };
+    }
+
+    if (!result.ok || !result.mediaAssetId) {
+      update(key, {
+        mediaStatus: "erreur",
+        mediaError: result.message ?? "Image du carrousel non envoyée.",
+      });
+      return;
+    }
+
+    const mediaAssetId = result.mediaAssetId;
+    updateWith(key, (item) => ({
+      gallery: [...item.gallery, { mediaAssetId, previewUrl }],
+      mediaStatus: "pret",
+      mediaError: null,
+      mediaPercent: null,
+    }));
+  };
+
+  /**
+   * Dépôt d'un ou plusieurs fichiers.
+   *
+   * Le premier tient la couverture, les suivants forment le carrousel. Les
+   * envois s'enchaînent au lieu de partir ensemble : une seule barre de
+   * progression ne peut pas raconter deux envois à la fois.
+   */
+  const handleFiles = async (key: string, files: File[], format: MediaFormat) => {
+    if (files.length === 0) return;
+    const [first, ...rest] = files;
+    await handleMedia(key, first ?? null);
+    if (!supportsGallery(format)) return;
+    for (const file of rest) {
+      await handleGalleryFile(key, file);
+    }
+  };
+
   const selectClient = (clientId: string) => {
     const client = clients.find((candidate) => candidate.id === clientId);
     if (!client) return;
@@ -390,6 +516,10 @@ export function SheetBuilder({
           caption: item.caption,
           hashtags: item.hashtags,
           mediaAssetId: item.mediaAssetId,
+          // Couverture en tête, puis les images suivantes dans l'ordre affiché.
+          mediaAssetIds: item.mediaAssetId
+            ? [item.mediaAssetId, ...item.gallery.map((image) => image.mediaAssetId)]
+            : [],
         }))));
         startTransition(async () => {
           try {
@@ -469,7 +599,9 @@ export function SheetBuilder({
 
         <div className="space-y-3">
           {resolvedItems.map((item, index) => {
-            const itemComplete = hasWrittenCaption(item.caption, activeClient.postSignature) && Boolean(item.hashtags.trim()) && (item.format === "texte_seul" || Boolean(item.mediaAssetId));
+            const itemComplete = (!requiresCaption(item.format) || hasWrittenCaption(item.caption, activeClient.postSignature))
+              && Boolean(item.hashtags.trim())
+              && (!requiresMedia(item.format) || Boolean(item.mediaAssetId));
             return (
               <article key={item.key} className="card reveal-panel space-y-4 p-4 sm:p-5">
                 <div className="flex items-start justify-between gap-3">
@@ -513,10 +645,22 @@ export function SheetBuilder({
 
                 <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(17rem,.8fr)]">
                   <div className="space-y-3">
-                    <div><label className="label" htmlFor={`caption-${item.key}`}>Texte de la publication</label><textarea id={`caption-${item.key}`} rows={5} className="field" placeholder="Écrivez librement le texte à publier…" value={item.caption} onChange={(event) => update(item.key, { caption: event.target.value })}/></div>
+                    {/* Une story ne porte pas de légende : le texte est incrusté à l'image. */}
+                    {requiresCaption(item.format)
+                      ? <div><label className="label" htmlFor={`caption-${item.key}`}>Texte de la publication</label><textarea id={`caption-${item.key}`} rows={5} className="field" placeholder="Écrivez librement le texte à publier…" value={item.caption} onChange={(event) => update(item.key, { caption: event.target.value })}/></div>
+                      : <p className="rounded-xl bg-canvas p-4 text-xs leading-relaxed text-ink-faint">Pas de texte pour une story : le message se met dans l’image au montage.</p>}
                     <div><label className="label" htmlFor={`hashtags-${item.key}`}>Hashtags sélectionnés automatiquement</label><textarea id={`hashtags-${item.key}`} rows={2} className="field" value={item.hashtags} onChange={(event) => update(item.key, { hashtags: event.target.value })}/><p className="mt-1 flex items-center gap-1.5 text-xs text-ink-faint"><Icon name="layers" className="h-3.5 w-3.5 text-[#0759e6]"/>Sélection variée issue des 20 hashtags enregistrés dans le dossier client.</p></div>
                   </div>
-                  <div><span className="label">Média prévu · {MEDIA_FORMAT_LABELS[item.format]}</span><MediaDropzone item={item} onFile={(file) => handleMedia(item.key, file)}/></div>
+                  <div>
+                    <span className="label">Média prévu · {MEDIA_FORMAT_LABELS[item.format]}</span>
+                    <MediaDropzone
+                      item={item}
+                      onFiles={(files) => { void handleFiles(item.key, files, item.format); }}
+                      onRemoveGalleryImage={(mediaAssetId) => updateWith(item.key, (current) => ({
+                        gallery: current.gallery.filter((image) => image.mediaAssetId !== mediaAssetId),
+                      }))}
+                    />
+                  </div>
                 </div>
               </article>
             );

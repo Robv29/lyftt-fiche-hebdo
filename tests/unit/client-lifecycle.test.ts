@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   clientLifecycle,
+  clientLifecycleForWeek,
   productionBlockedMessage,
   type ClientLifecycleInput,
 } from "@/lib/domain/client-lifecycle";
@@ -156,5 +157,74 @@ describe("évaluation à la semaine concernée", () => {
       semaine34,
     );
     expect(lifecycle.canProduce).toBe(false);
+  });
+});
+
+/*
+ * La production se fait à la semaine, pas à la journée : une semaine touchée
+ * par la pause n'est pas produite, et la reprise a lieu la semaine suivante.
+ */
+describe("pause jugée à la semaine de production", () => {
+  // Semaines ISO commençant les lundis 17 et 24 août 2026.
+  const semaine34 = "2026-08-17";
+  const semaine35 = "2026-08-24";
+
+  it("laisse préparer la semaine suivante pendant une pause qui s'y termine", () => {
+    // Pause du 10 au 21 : la semaine du 24 se prépare dès maintenant.
+    const paused = { ...base, pauseStartDate: "2026-08-10", pauseEndDate: "2026-08-21" };
+    expect(clientLifecycleForWeek(paused, semaine35).canProduce).toBe(true);
+    // Alors qu'au jour présent, le client est bien en pause.
+    expect(clientLifecycle(paused, "2026-08-17").canProduce).toBe(false);
+  });
+
+  it("écarte la semaine entière quand la pause n'en couvre que la fin", () => {
+    // Pause à partir du jeudi 20 : la semaine du 17 n'est pas produite.
+    const lifecycle = clientLifecycleForWeek(
+      { ...base, pauseStartDate: "2026-08-20", pauseEndDate: "2026-09-05" },
+      semaine34,
+    );
+    expect(lifecycle.canProduce).toBe(false);
+    expect(lifecycle.state).toBe("paused");
+  });
+
+  it("écarte la semaine entière quand la pause s'y termine en milieu de semaine", () => {
+    // Pause jusqu'au mercredi 19 : reprise annoncée la semaine du 24.
+    const lifecycle = clientLifecycleForWeek(
+      { ...base, pauseStartDate: "2026-08-03", pauseEndDate: "2026-08-19" },
+      semaine34,
+    );
+    expect(lifecycle.canProduce).toBe(false);
+    expect(lifecycle.detail).toContain("24 août");
+  });
+
+  it("reprend la semaine qui suit une pause finissant un dimanche", () => {
+    const paused = { ...base, pauseStartDate: "2026-08-03", pauseEndDate: "2026-08-23" };
+    expect(clientLifecycleForWeek(paused, semaine34).canProduce).toBe(false);
+    expect(clientLifecycleForWeek(paused, semaine35).canProduce).toBe(true);
+  });
+
+  it("ne produit jamais tant que la pause n'a pas de date de reprise", () => {
+    const lifecycle = clientLifecycleForWeek(
+      { ...base, pauseStartDate: "2026-08-03", pauseEndDate: null },
+      semaine35,
+    );
+    expect(lifecycle.canProduce).toBe(false);
+    expect(lifecycle.detail).toBe("Pause sans date de reprise.");
+  });
+
+  it("laisse les bornes du contrat primer sur la pause", () => {
+    const lifecycle = clientLifecycleForWeek(
+      { ...base, contractEndDate: "2026-08-01", pauseStartDate: "2026-08-20", pauseEndDate: null },
+      semaine34,
+    );
+    expect(lifecycle.state).toBe("ended");
+  });
+
+  it("laisse produire une semaine qu'aucune pause ne touche", () => {
+    const lifecycle = clientLifecycleForWeek(
+      { ...base, pauseStartDate: "2026-09-01", pauseEndDate: "2026-09-30" },
+      semaine34,
+    );
+    expect(lifecycle.canProduce).toBe(true);
   });
 });

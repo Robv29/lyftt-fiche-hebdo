@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { saveSheetContent, type SheetContentActionResult } from "./actions";
 import { Icon } from "@/components/Icon";
-import { MEDIA_FORMAT_LABELS, type MediaFormat } from "@/lib/domain/types";
+import { MEDIA_FORMAT_LABELS, requiresCaption, requiresMedia, type MediaFormat } from "@/lib/domain/types";
 import { mediaFrameBackground, mediaFrameClass, supportsGallery } from "@/lib/domain/media-frame";
 import { PostPreview } from "@/components/PostPreview";
 import { uploadMediaDirect } from "@/lib/media/direct-upload";
@@ -180,11 +180,19 @@ export function SheetContentEditor({ sheetId, clientId, clientName, initialItems
       : { ...EMPTY_UPLOAD, mediaStatus: "erreur", mediaError: result.message ?? "Envoi impossible." });
   };
 
-  const requirements = active.reduce((total, item) => total + (item.format === "texte_seul" ? 2 : 3), 0);
+  /*
+   * Une story n'attend pas de texte : elle ne compte donc que ses hashtags et
+   * son média. La compter sur trois critères la laissait à 66 % pour toujours,
+   * et la fiche entière avec elle.
+   */
+  const requirements = active.reduce((total, item) => total
+    + 1
+    + Number(requiresCaption(item.format))
+    + Number(requiresMedia(item.format)), 0);
   const completed = active.reduce((total, item) => total
-    + Number(Boolean(item.caption.trim()))
+    + Number(requiresCaption(item.format) && Boolean(item.caption.trim()))
     + Number(Boolean(item.hashtags.trim()))
-    + Number(item.format !== "texte_seul" && hasMedia(item)), 0);
+    + Number(requiresMedia(item.format) && hasMedia(item)), 0);
   const progress = requirements ? Math.round((completed / requirements) * 100) : 0;
 
   return (
@@ -232,8 +240,9 @@ export function SheetContentEditor({ sheetId, clientId, clientName, initialItems
             </article>
           );
         }
-        const mediaReady = item.format === "texte_seul" || hasMedia(item);
-        const itemReady = Boolean(item.caption.trim() && item.hashtags.trim() && mediaReady);
+        const mediaReady = !requiresMedia(item.format) || hasMedia(item);
+        const captionReady = !requiresCaption(item.format) || Boolean(item.caption.trim());
+        const itemReady = Boolean(captionReady && item.hashtags.trim() && mediaReady);
         return (
           <article key={item.id} className="card space-y-4 p-4 sm:p-5">
             <div className="flex items-center gap-3">
@@ -281,7 +290,10 @@ export function SheetContentEditor({ sheetId, clientId, clientName, initialItems
             </div>
             <div className="grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
               <div className="space-y-3">
-                <div><label className="label" htmlFor={`caption-${item.id}`}>Texte libre</label><textarea id={`caption-${item.id}`} rows={7} className="field" value={item.caption} placeholder="Écrivez le texte de la publication…" onChange={(event) => update(item.id, { caption: event.target.value })}/></div>
+                {/* Une story ne porte pas de légende : le texte est incrusté à l'image. */}
+                {requiresCaption(item.format)
+                  ? <div><label className="label" htmlFor={`caption-${item.id}`}>Texte libre</label><textarea id={`caption-${item.id}`} rows={7} className="field" value={item.caption} placeholder="Écrivez le texte de la publication…" onChange={(event) => update(item.id, { caption: event.target.value })}/></div>
+                  : <p className="rounded-xl bg-canvas p-4 text-xs leading-relaxed text-ink-faint">Pas de texte libre pour une story : le message se met dans l’image au montage.</p>}
                 <div><label className="label" htmlFor={`hashtags-${item.id}`}>Hashtags</label><textarea id={`hashtags-${item.id}`} rows={3} className="field" value={item.hashtags} onChange={(event) => update(item.id, { hashtags: event.target.value })}/></div>
                 <div>
                   <label className="label" htmlFor={`collab-${item.id}`}>

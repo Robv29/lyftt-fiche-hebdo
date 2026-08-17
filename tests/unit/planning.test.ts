@@ -43,6 +43,22 @@ describe("planning hebdomadaire", () => {
     ])).toEqual({ completed: 2, total: 2, percentage: 100 });
   });
 
+  /*
+   * Une story n'a pas de légende : le texte est incrusté à l'image au montage.
+   * La compter comme manquante bloquait la fiche à 66 % pour toujours.
+   */
+  it("ne demande pas de texte pour une story", () => {
+    expect(sheetCompletion([
+      { caption: "", hashtags: "#Local", format: "story", mediaAssetId: "media" },
+    ])).toEqual({ completed: 2, total: 2, percentage: 100 });
+  });
+
+  it("ne crédite pas un texte écrit par erreur sur une story", () => {
+    expect(sheetCompletion([
+      { caption: "Texte inutile", hashtags: "#Local", format: "story", mediaAssetId: "media" },
+    ])).toEqual({ completed: 2, total: 2, percentage: 100 });
+  });
+
   it("répartit les formats selon la cadence mensuelle", () => {
     const fourWeeks = [33, 34, 35, 36].flatMap((week) =>
       weeklyFormatsForCadence({ photo: 4, video: 2, story: 6, visual: 2 }, week),

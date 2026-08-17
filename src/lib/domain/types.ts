@@ -93,6 +93,23 @@ export const MEDIA_FORMAT_LABELS: Record<MediaFormat, string> = {
   texte_seul: "TEXTE SEUL",
 };
 
+/**
+ * Formats qui portent un texte de publication.
+ *
+ * Une story n'a pas de légende : le texte, quand il y en a, est incrusté dans
+ * l'image au montage. Réclamer un texte libre laissait la fiche à 90 % pour un
+ * champ que personne ne devait remplir, et poussait à écrire une légende qui ne
+ * serait jamais affichée.
+ */
+export function requiresCaption(format: MediaFormat): boolean {
+  return format !== "story";
+}
+
+/** Formats qui attendent un fichier. */
+export function requiresMedia(format: MediaFormat): boolean {
+  return format !== "texte_seul";
+}
+
 export type SheetStatus =
   | "draft"
   | "internal_review"
