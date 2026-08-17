@@ -204,10 +204,26 @@ export default async function DashboardPage() {
         <div>
           <section className="section-card">
             <div className="section-card-header"><div><p className="eyebrow">Validation</p><h2 className="mt-1 font-semibold">Fiches en attente</h2></div><span className="badge bg-[#e8f2ff] text-[#0b5e9f]">{sheets.length}</span></div>
-            {sheets.length === 0 ? <p className="px-5 py-8 text-center text-sm text-ink-faint">Aucune validation en attente.</p> : <ul className="divide-y divide-line">{sheets.slice(0, 3).map((sheet) => {
+            {/*
+              La liste complète, dans un cadre qui défile : tronquer à trois
+              cachait les fiches suivantes sans aucun indice de leur existence.
+              « Relancer » ouvre la fiche avec le message de rappel déjà prêt.
+            */}
+            {sheets.length === 0 ? <p className="px-5 py-8 text-center text-sm text-ink-faint">Aucune validation en attente.</p> : <ul className="max-h-[420px] divide-y divide-line overflow-y-auto">{sheets.map((sheet) => {
               const client = sheet.clients as unknown as { name: string } | null;
               const deadline = sheet.validation_deadline_at ? deadlineState(new Date(sheet.validation_deadline_at)) : null;
-              return <li key={sheet.id}><Link href={`/fiches/${sheet.id}`} className="block px-5 py-4 transition-colors hover:bg-[#f7fafe]"><div className="flex items-center justify-between gap-3"><strong className="truncate text-sm">{client?.name ?? "Client"}</strong><span className={`text-[11px] font-semibold ${deadline?.isOverdue ? "text-state-changes" : "text-ink-faint"}`}>{deadline?.label ?? `S${sheet.iso_week}`}</span></div><p className="mt-1 truncate text-xs text-ink-faint">Semaine {sheet.iso_week} · {sheetStatusLabel(sheet.status)}</p></Link></li>;
+              return <li key={sheet.id} className="flex items-center gap-2 px-5 py-4 transition-colors hover:bg-[#f7fafe]">
+                <Link href={`/fiches/${sheet.id}`} className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-3"><strong className="truncate text-sm">{client?.name ?? "Client"}</strong><span className={`text-[11px] font-semibold ${deadline?.isOverdue ? "text-state-changes" : "text-ink-faint"}`}>{deadline?.label ?? `S${sheet.iso_week}`}</span></div>
+                  <p className="mt-1 truncate text-xs text-ink-faint">Semaine {sheet.iso_week} · {sheetStatusLabel(sheet.status)}</p>
+                </Link>
+                <Link
+                  href={`/fiches/${sheet.id}?relance=1`}
+                  className={`shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-semibold ${deadline?.isOverdue ? "bg-state-changes/10 text-state-changes hover:bg-state-changes/20" : "bg-[#e8f2ff] text-[#0b5e9f] hover:bg-[#d8e9ff]"}`}
+                >
+                  Relancer
+                </Link>
+              </li>;
             })}</ul>}
           </section>
 

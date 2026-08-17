@@ -44,6 +44,7 @@ export function SendPanel({
   recipients,
   recipientLabel,
   canSend,
+  initialTemplateType = "standard",
 }: {
   sheetId: string;
   hasActiveLink: boolean;
@@ -55,11 +56,13 @@ export function SendPanel({
   recipients?: { name: string; phone: string | null }[];
   recipientLabel?: string;
   canSend: boolean;
+  /** Modèle présélectionné — « reminder » quand on arrive par « Relancer ». */
+  initialTemplateType?: MessageTemplateType;
 }) {
   const [pending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<InternalActionResult | null>(null);
   const [reviewUrl, setReviewUrl] = useState<string | null>(null);
-  const [templateType, setTemplateType] = useState<MessageTemplateType>("standard");
+  const [templateType, setTemplateType] = useState<MessageTemplateType>(initialTemplateType);
   const [draft, setDraft] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 

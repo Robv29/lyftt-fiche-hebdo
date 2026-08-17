@@ -23,10 +23,14 @@ import { canEditSheetContent, editRequiresRevalidation } from "@/lib/domain/shee
 /** §21 — Onglet « Retours et validations » d'une fiche. */
 export default async function SheetDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ relance?: string }>;
 }) {
   const { id } = await params;
+  // Arrivée depuis « Relancer » : le modèle de rappel est présélectionné.
+  const relance = (await searchParams).relance === "1";
   const supabase = await createSupabaseServerClient();
 
   const { data: sheet } = await supabase
@@ -390,6 +394,7 @@ export default async function SheetDetailPage({
 
         <aside className="space-y-6">
           <SendPanel
+            initialTemplateType={relance ? "reminder" : "standard"}
             sheetId={sheet.id}
             hasActiveLink={Boolean(activeLink)}
             activeLink={
