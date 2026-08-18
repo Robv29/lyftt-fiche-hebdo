@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { resolveMediaUrl } from "@/lib/media/signed-url";
-import { addDays, endOfISOWeek, format, startOfISOWeek } from "date-fns";
+import { addDays, endOfISOWeek, format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -80,16 +80,16 @@ export default async function PublicationsPage({ searchParams }:{ searchParams:P
   const selectedDayLabel=format(day,"EEEE d MMMM yyyy",{locale:fr});
 
   /*
-   * Ce qui traîne depuis le début de la semaine, pas seulement le jour
-   * affiché : la checklist quotidienne ne montre qu'une journée, et un retard
-   * pris lundi peut se noyer avant d'être vu vendredi.
+   * Tout ce qui n'est pas publié, pas seulement le jour affiché ni la semaine
+   * en cours : la checklist quotidienne ne montre qu'une journée, et un
+   * retard pris la semaine dernière disparaissait purement et simplement une
+   * fois la semaine tournée. La borne haute reste la fin de la semaine
+   * affichée — inutile d'annoncer ce qui n'est pas encore dû.
    */
-  const weekStart=format(startOfISOWeek(day),"yyyy-MM-dd");
   const weekEnd=format(endOfISOWeek(day),"yyyy-MM-dd");
   const { data:unpublishedRows }=await supabase
     .from("weekly_sheet_items")
     .select("id, scheduled_date, scheduled_time, format, weekly_sheets!inner ( clients ( name ) )")
-    .gte("scheduled_date",weekStart)
     .lte("scheduled_date",weekEnd)
     .eq("is_cancelled",false)
     .is("published_at",null)
