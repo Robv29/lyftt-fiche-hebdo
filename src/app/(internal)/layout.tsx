@@ -21,38 +21,48 @@ export default async function InternalLayout({
   const isProduction = ["graphic_designer", "video_editor"].includes(profile.role);
 
   /*
-   * Pastille de la production interne.
+   * Pastille de la production : ce qui attend un geste de la personne qui
+   * regarde, et rien d'autre.
    *
-   * Elle ne dit pas la même chose selon qui regarde : au studio, ce qui reste à
-   * produire ; à la personne qui a passé la commande, ce qui est livré et attend
-   * sa validation. Sans ce signal, un fichier déposé pouvait rester des jours
-   * sans que le demandeur sache qu'il était prêt.
+   * Au studio, ce qu'il y a à produire — les commandes internes à faire et les
+   * corrections clients qui lui sont affectées, jusqu'ici muettes. Au community
+   * manager, ce qui lui revient : ses commandes livrées, les corrections
+   * déposées qu'il doit contrôler, et les versions corrigées qui restent à
+   * envoyer au client.
+   *
+   * Le périmètre est tenu par la RLS : un graphiste ne compte que les tickets
+   * qui lui sont affectés, sans que cette requête ait à le redire.
    */
-  const [{ count: requestsBadge }, { count: correctionsBadge }] = await Promise.all([
+  const productionCounts = await Promise.all(
     isProduction
-      ? supabase
-          .from("production_requests")
-          .select("id", { count: "exact", head: true })
-          .eq("status", "a_faire")
-      : supabase
-          .from("production_requests")
-          .select("id", { count: "exact", head: true })
-          .eq("status", "livree")
-          .eq("requested_by", profile.id),
-    /*
-     * Corrections clients déposées et non contrôlées. Le graphiste n'a rien à
-     * en faire — elles ne lui appartiennent plus — tandis que le community
-     * manager doit les voir : c'est lui qui valide et renvoie au client.
-     */
-    isProduction
-      ? Promise.resolve({ count: 0 })
-      : supabase
-          .from("client_tickets")
-          .select("id", { count: "exact", head: true })
-          .eq("status", "ready_for_review")
-          .in("category", ["graphic", "video"]),
-  ]);
-  const productionBadge = (requestsBadge ?? 0) + (correctionsBadge ?? 0);
+      ? [
+          supabase
+            .from("production_requests")
+            .select("id", { count: "exact", head: true })
+            .eq("status", "a_faire"),
+          supabase
+            .from("client_tickets")
+            .select("id", { count: "exact", head: true })
+            .in("category", ["graphic", "video"])
+            .in("status", ["assigned", "in_progress", "reopened"]),
+        ]
+      : [
+          supabase
+            .from("production_requests")
+            .select("id", { count: "exact", head: true })
+            .eq("status", "livree")
+            .eq("requested_by", profile.id),
+          supabase
+            .from("client_tickets")
+            .select("id", { count: "exact", head: true })
+            .in("category", ["graphic", "video"])
+            .in("status", ["ready_for_review", "new_version_generated"]),
+        ],
+  );
+  const productionBadge = productionCounts.reduce(
+    (total, result) => total + (result.count ?? 0),
+    0,
+  );
 
   const links = isProduction
     ? [{ href: "/production", label: "Corrections clients", icon: "layers", badge: productionBadge }]
