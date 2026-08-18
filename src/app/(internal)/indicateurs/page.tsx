@@ -4,12 +4,14 @@ import { budgetPenalty, budgetSummary, shootingTally, type BillingMode, type Bud
 import { healthActions, healthScore, HEALTH_TARGET, type HealthAction, type HealthPillar } from "@/lib/domain/health-score";
 import { clientLifecycle, todayInParis } from "@/lib/domain/client-lifecycle";
 import type { MonthlyCadence } from "@/lib/domain/planning";
-import { satisfactionSummary } from "@/lib/domain/planning";
+import { satisfactionPercentage, satisfactionSummary, SATISFACTION_LABELS } from "@/lib/domain/planning";
 import { productionPunctuality } from "@/lib/domain/production-requests";
 import { ticketSlaSummary, TICKET_SLA_HOURS } from "@/lib/domain/ticket-sla";
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
+import { resolveClientLogoUrl } from "@/lib/media/client-logo";
 import type { TicketType } from "@/lib/domain/ticket-types";
 import { Icon } from "@/components/Icon";
+import Image from "next/image";
 
 const CHART_COLORS = ["#1b87dd", "#34c5bb", "#78d6a3", "#ef9c50", "#e65b67", "#7768e8"];
 /**
@@ -160,7 +162,7 @@ export default async function MetricsPage({
      * comportements que le reste de l'écran observe.
      */
     supabase.from("client_sheet_ratings")
-      .select("score, comment, submitted_at, weekly_sheet_id, clients ( name )")
+      .select("score, comment, submitted_at, weekly_sheet_id, clients ( id, name, logo_url )")
       .gte("submitted_at", sinceTs),
     /*
      * Commandes internes livrées sur la période. La ponctualité se mesure à la
@@ -247,12 +249,29 @@ export default async function MetricsPage({
       .filter((row) => row.delivered_at)
       .map((row) => ({ dueOn: row.due_on as string, deliveredAt: row.delivered_at as string })),
   );
-  const unhappyComments = (ratings ?? [])
-    .filter((row) => (row.score as number) <= 2 && row.comment)
-    .map((row) => ({
-      client: (row.clients as unknown as { name: string } | null)?.name ?? "Client",
-      comment: row.comment as string,
-    }));
+  /*
+   * Qui a noté quoi.
+   *
+   * La moyenne de satisfaction dit un chiffre ; elle ne dit pas quel client a
+   * trouvé la semaine décevante. Chaque note reste attachée à son client, avec
+   * son logo, pour qu'un signal faible se voie avant de devenir un signal fort.
+   */
+  const satisfactionEntries = await Promise.all((ratings ?? []).map(async (row) => {
+    const client = row.clients as unknown as { id: string; name: string; logo_url: string | null } | null;
+    const score = row.score as number;
+    return {
+      clientId: client?.id ?? row.weekly_sheet_id,
+      clientName: client?.name ?? "Client",
+      clientLogoUrl: await resolveClientLogoUrl(client?.logo_url ?? null),
+      score,
+      percentage: satisfactionPercentage(score),
+      comment: row.comment as string | null,
+      submittedAt: row.submitted_at as string,
+    };
+  }));
+  const unhappyComments = satisfactionEntries
+    .filter((entry) => entry.score <= 2 && entry.comment)
+    .map((entry) => ({ client: entry.clientName, comment: entry.comment! }));
   const outOfScope = received.filter((ticket) => ticket.status === "out_of_scope").length;
   const ticketsPerSheet = sent.length ? received.length / sent.length : 0;
   const viewRate = ratio(viewed.length, sent.length);
@@ -365,6 +384,7 @@ export default async function MetricsPage({
     sla,
     periodLabel: periodLabel(since),
     satisfaction,
+    satisfactionEntries,
     unhappyComments,
     punctuality,
     ticketTotal,
@@ -404,6 +424,7 @@ type MetricsData = {
   /** Fenêtre analysée, telle qu'elle est écrite sur le sélecteur. */
   periodLabel:string;
   satisfaction:ReturnType<typeof satisfactionSummary>;
+  satisfactionEntries:{ clientId:string; clientName:string; clientLogoUrl:string|null; score:number; percentage:number; comment:string|null; submittedAt:string }[];
   unhappyComments:{ client:string; comment:string }[];
   punctuality:ReturnType<typeof productionPunctuality>;
   ticketTotal:number; typeEntries:[TicketType,number][]; clientEntries:[string,number][]; donutGradient:string;
@@ -553,7 +574,86 @@ function ReturnsView({ data }: { data:MetricsData }) {
         <TicketPanel data={data} roomy/>
         <SignalPanel signals={data.signals} roomy/>
       </section>
+      <SatisfactionBoard entries={data.satisfactionEntries}/>
     </div>
+  );
+}
+
+/**
+ * Qui a noté quoi.
+ *
+ * La moyenne ne dit pas quel client a trouvé la semaine décevante. Chaque
+ * note reste ici attachée à son client, dans le niveau qu'il a choisi, du
+ * plus préoccupant au plus rassurant — pour qu'un signal faible se voie
+ * avant de devenir un client qui part.
+ */
+function SatisfactionBoard({ entries }: { entries:MetricsData["satisfactionEntries"] }) {
+  if (entries.length === 0) {
+    return (
+      <article className="insights-card">
+        <div className="insights-panel-heading"><div><p className="eyebrow">Voix du client</p><h2 className="mt-1 font-semibold">Qui a noté quoi</h2></div></div>
+        <EmptyMetric text="Aucune note reçue sur cette période."/>
+      </article>
+    );
+  }
+  const buckets: { score:1|2|3; tone:Tone }[] = [
+    { score:1, tone:"danger" },
+    { score:2, tone:"warning" },
+    { score:3, tone:"success" },
+  ];
+  return (
+    <section className="insights-satisfaction-grid">
+      {buckets.map(({ score, tone }) => {
+        const group = entries.filter((entry) => entry.score === score).sort((a,b) => b.submittedAt.localeCompare(a.submittedAt));
+        return (
+          <article key={score} className="insights-card insights-satisfaction-card">
+            <div className="insights-panel-heading">
+              <div><p className="eyebrow">{SATISFACTION_LABELS[score]}</p><h2 className="mt-1 font-semibold">{group.length} client{group.length > 1 ? "s" : ""}</h2></div>
+              <span className={`insights-health-note insights-tone-${tone}`}>{percentValue(satisfactionPercentage(score))}</span>
+            </div>
+            {group.length === 0
+              ? <EmptyMetric text="Personne dans ce niveau."/>
+              : (
+                <ul className="insights-satisfaction-list">
+                  {group.map((entry) => (
+                    <li key={`${entry.clientId}-${entry.submittedAt}`} className="insights-satisfaction-row">
+                      <ClientSatisfactionGauge name={entry.clientName} logoUrl={entry.clientLogoUrl} percentage={entry.percentage} tone={tone}/>
+                      <div className="min-w-0 flex-1">
+                        <strong className="block truncate text-sm">{entry.clientName}</strong>
+                        <span className="text-[11px] text-ink-faint">{new Intl.DateTimeFormat("fr-FR",{day:"2-digit",month:"short"}).format(new Date(entry.submittedAt))}</span>
+                        {entry.comment && <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-ink-soft">« {entry.comment} »</p>}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+          </article>
+        );
+      })}
+    </section>
+  );
+}
+
+/**
+ * Le logo cerclé de sa propre note : la jauge n'est pas décorative, c'est le
+ * pourcentage de cette note précise — 0, 50 ou 100 — en conic-gradient autour
+ * de l'image. Sans logo, les initiales en tiennent lieu.
+ */
+function ClientSatisfactionGauge({ name, logoUrl, percentage, tone }: { name:string; logoUrl:string|null; percentage:number; tone:Tone }) {
+  const initials = name.split(" ").filter(Boolean).map((word) => word[0]).join("").slice(0,2).toUpperCase();
+  return (
+    <span
+      className={`insights-client-gauge insights-tone-${tone}`}
+      style={{ background:`conic-gradient(var(--kpi-accent) ${percentage}%, #edf1f6 ${percentage}% 100%)` }}
+      role="img"
+      aria-label={`${name} : ${percentage}% de satisfaction`}
+    >
+      <span className="insights-client-gauge-inner">
+        {logoUrl
+          ? <Image src={logoUrl} alt="" width={40} height={40} unoptimized className="h-full w-full rounded-full object-cover"/>
+          : <span className="insights-client-gauge-initials">{initials}</span>}
+      </span>
+    </span>
   );
 }
 
