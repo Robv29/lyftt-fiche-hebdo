@@ -336,7 +336,12 @@ function MetricsMenu({ view, since }: { view:MetricsView; since:string }) {
 }
 
 function PeriodFilter({ since, view }: { since:string; view:MetricsView }) {
-  const options=[{label:"30 j",date:dateDaysAgo(30)},{label:"90 j",date:dateDaysAgo(90)},{label:"6 mois",date:dateDaysAgo(180)}];
+  /*
+   * Sept jours en tête : c'est la maille de la production — une semaine, une
+   * fiche. Sans elle, la plus courte fenêtre était le mois, qui noie ce qui
+   * vient de se passer dans les trois semaines précédentes.
+   */
+  const options=[{label:"7 j",date:dateDaysAgo(7)},{label:"30 j",date:dateDaysAgo(30)},{label:"90 j",date:dateDaysAgo(90)},{label:"6 mois",date:dateDaysAgo(180)}];
   return <nav className="insights-period" aria-label="Période analysée">{options.map((option)=><Link key={option.label} href={`/indicateurs?vue=${view}&depuis=${option.date}`} aria-current={since===option.date?"page":undefined} className={since===option.date?"active":""}>{option.label}</Link>)}</nav>;
 }
 
