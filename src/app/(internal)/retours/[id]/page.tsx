@@ -11,6 +11,7 @@ import {
 } from "@/lib/domain/types";
 import { TicketActions } from "./TicketActions";
 import { isServiceRequest } from "@/lib/domain/ticket-types";
+import { resolveMediaUrl } from "@/lib/media/signed-url";
 
 /** §9 / §12 — Vue détail d'un ticket, avec comparatif du texte. */
 export default async function TicketDetailPage({
@@ -30,7 +31,8 @@ export default async function TicketDetailPage({
        reopen_count, weekly_sheet_id,
        clients ( id, name ),
        weekly_sheets ( iso_week, iso_year ),
-       weekly_sheet_items ( id, caption, hashtags, scheduled_date, approval_status ),
+       weekly_sheet_items ( id, caption, hashtags, scheduled_date, approval_status,
+         media_assets:media_asset_id ( kind, file_name, storage_path, preview_path, purged_at, preview_purged_at ) ),
        client_ticket_assignments ( assignment_role, accepted_at, completed_at, profiles ( full_name, role ) ),
        client_ticket_comments ( id, body, visibility, author_name, author_type, created_at ),
        client_ticket_attachments ( id, media_assets ( file_name, storage_path, kind ) )`,
@@ -48,7 +50,25 @@ export default async function TicketDetailPage({
     hashtags: string[];
     scheduled_date: string;
     approval_status: string;
+    media_assets: {
+      kind: string; file_name: string; storage_path: string;
+      preview_path: string | null; purged_at: string | null; preview_purged_at: string | null;
+    } | null;
   } | null;
+
+  /*
+   * Le média rattaché à la publication, signé pour l'affichage. C'est lui que
+   * la production a déposé : sans cet aperçu, le community manager ouvrait un
+   * ticket corrigé sans aucune trace du travail fait.
+   */
+  const itemMedia = item?.media_assets
+    ? await resolveMediaUrl({
+        storagePath: item.media_assets.storage_path,
+        previewPath: item.media_assets.preview_path,
+        purgedAt: item.media_assets.purged_at,
+        previewPurgedAt: item.media_assets.preview_purged_at,
+      })
+    : null;
 
   const assignments = (ticket.client_ticket_assignments ?? []) as unknown as {
     assignment_role: string;
@@ -246,7 +266,15 @@ export default async function TicketDetailPage({
             status={ticket.status}
             category={ticket.category}
             clientName={client?.name ?? "Client"}
-            item={item ? { id:item.id, caption:item.caption, hashtags:item.hashtags ?? [], scheduledDate:item.scheduled_date } : null}
+            item={item ? {
+              id:item.id,
+              caption:item.caption,
+              hashtags:item.hashtags ?? [],
+              scheduledDate:item.scheduled_date,
+              mediaUrl:itemMedia?.url ?? null,
+              mediaFileName:item.media_assets?.file_name ?? null,
+              mediaKind:item.media_assets?.kind ?? null,
+            } : null}
             transitions={transitions.map((t) => ({
               to: t.to,
               label: t.label,
