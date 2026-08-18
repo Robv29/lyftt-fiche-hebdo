@@ -8,6 +8,7 @@ import { Icon } from "@/components/Icon";
 import { planningWeekRange, sheetCompletion } from "@/lib/domain/planning";
 import {
   SHOOTING_LINE_KEYS,
+  isShootingLine,
   budgetSummary,
   parseShootingPlan,
   shootingPlanSummary,
@@ -170,10 +171,21 @@ export default async function DashboardPage() {
   if (isAdmin) {
     const [{ data: budgets }, { data: budgetLines }] = await Promise.all([
       supabase.from("client_budgets").select("client_id, billing_mode, budget_cents, rib_storage_path"),
-      supabase.from("client_budget_lines").select("client_id, service_key, label, billing, unit_price_cents, quantity, months, performed_on, billed_directly"),
+      supabase.from("client_budget_lines").select("client_id, service_key, label, billing, unit_price_cents, quantity, months, performed_on, billed_directly, forfait_included"),
     ]);
 
     const budgetByClient = new Map((budgets ?? []).map((row) => [row.client_id as string, row]));
+    /*
+     * Shootings dont personne n'a dit s'ils étaient compris dans le forfait ou
+     * vendus en plus. Tant que la question n'est pas tranchée, une prestation
+     * vendue peut rester offerte sans que personne s'en aperçoive : le dossier
+     * est donc à régulariser au même titre qu'un budget non renseigné.
+     */
+    const pendingShootings = new Set(
+      (budgetLines ?? [])
+        .filter((row) => isShootingLine(row.service_key as string) && row.forfait_included === null)
+        .map((row) => row.client_id as string),
+    );
     const linesByClient = new Map<string, BudgetLine[]>();
     for (const row of budgetLines ?? []) {
       const list = linesByClient.get(row.client_id as string) ?? [];
@@ -206,6 +218,7 @@ export default async function DashboardPage() {
       });
       // Sans date de début, rien n'est décompté : le dossier est à l'aveugle.
       if (!client.contract_start_date) return true;
+      if (pendingShootings.has(client.id)) return true;
       return summary.alerts.some((alert) => alert.level === "critique" || alert.level === "attention");
     }).length;
   }

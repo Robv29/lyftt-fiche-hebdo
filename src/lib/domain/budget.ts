@@ -836,3 +836,98 @@ export function budgetPenalty(input: {
   const share = Math.min(1, input.clientsWithIssue / input.clientsTotal);
   return Math.round(share * 33);
 }
+
+/**
+ * Un shooting est-il compris dans le forfait, ou vendu en plus ?
+ *
+ * Le forfait donne droit à **un shooting par période**. Le premier inscrit dans
+ * une période est celui du forfait : il est déjà payé par le lissage mensuel,
+ * le compter une seconde fois doublerait la facture. Tout shooting suivant dans
+ * la même période a été vendu en plus, et doit partir au tarif du catalogue.
+ *
+ * La règle ne repose donc sur la mémoire de personne : c'est la période qui
+ * tranche, et la saisie n'a plus qu'à confirmer.
+ */
+export interface ShootingClassification {
+  /** Rang de la période depuis le début de gestion, à partir de 1. */
+  periodIndex: number;
+  /** Premier jour de la période concernée. */
+  periodStart: string;
+  /** Dernier jour inclus de la période. */
+  periodEnd: string;
+  /** Position du shooting dans sa période, à partir de 1. */
+  rankInPeriod: number;
+  /** Proposition : le premier de la période est compris, les autres sont vendus en plus. */
+  suggestedIncluded: boolean;
+}
+
+/**
+ * Classement de chaque shooting dans le cycle du forfait.
+ *
+ * Les périodes se posent depuis le début de gestion, d'anniversaire en
+ * anniversaire : un shooting fait le 3 août appartient à la période ouverte le
+ * 23 juillet, quelle que soit la date à laquelle le précédent a eu lieu. Compter
+ * depuis le dernier shooting réalisé ferait dériver les périodes à chaque écart.
+ */
+export function classifyShootings(input: {
+  plan: ShootingPlan | null;
+  contractStartDate: string | null;
+  /** Dates des shootings inscrits, dans n'importe quel ordre. */
+  dates: readonly string[];
+}): Map<string, ShootingClassification> {
+  const result = new Map<string, ShootingClassification>();
+  if (!input.plan || !input.contractStartDate) return result;
+
+  const seenByPeriod = new Map<number, number>();
+  for (const date of [...input.dates].sort()) {
+    if (date < input.contractStartDate) continue;
+    /*
+     * Rang de la période : on avance de forfait en forfait jusqu'à contenir la
+     * date. Une gestion de plusieurs années reste bornée.
+     */
+    let index = 1;
+    let periodStart = input.contractStartDate;
+    let periodEnd = addMonths(periodStart, input.plan.everyMonths);
+    while (date >= periodEnd && index <= 240) {
+      index += 1;
+      periodStart = periodEnd;
+      periodEnd = addMonths(periodStart, input.plan.everyMonths);
+    }
+
+    const rank = (seenByPeriod.get(index) ?? 0) + 1;
+    seenByPeriod.set(index, rank);
+    result.set(date, {
+      periodIndex: index,
+      periodStart,
+      // La fin est le jour précédant l'ouverture de la période suivante.
+      periodEnd: addDays(periodEnd, -1),
+      rankInPeriod: rank,
+      suggestedIncluded: rank === 1,
+    });
+  }
+
+  return result;
+}
+
+/** Ce qu'un forfait a consommé et ce qu'il a fait facturer en plus. */
+export interface ShootingTally {
+  included: number;
+  extra: number;
+  extraCents: number;
+  /** Shootings dont personne n'a encore dit s'ils étaient compris ou vendus. */
+  pending: number;
+}
+
+export function shootingTally(
+  lines: readonly (BudgetLine & { forfaitIncluded?: boolean | null })[],
+): ShootingTally {
+  const shootings = lines.filter((line) => isShootingLine(line.serviceKey));
+  const extras = shootings.filter((line) => line.forfaitIncluded === false);
+  return {
+    included: shootings.filter((line) => line.forfaitIncluded === true).length,
+    extra: extras.length,
+    extraCents: extras.reduce((total, line) => total + lineTotalCents(line), 0),
+    pending: shootings.filter((line) => line.forfaitIncluded === null
+      || line.forfaitIncluded === undefined).length,
+  };
+}

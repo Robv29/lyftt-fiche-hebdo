@@ -7,11 +7,15 @@ import {
   BILLING_MODE_LABELS,
   CATEGORY_LABELS,
   SERVICE_CATALOGUE,
+  classifyShootings,
+  findService,
   formatEuros,
   isManagementMonth,
+  isShootingLine,
   lineTotalCents,
   shootingMonthlyCostCents,
   shootingPlanSummary,
+  shootingTally,
   shootingsPerYear,
   type BillingMode,
   type BudgetLine,
@@ -27,11 +31,17 @@ import {
   pendingInvoiceCount,
   type InvoiceMonth,
 } from "@/lib/domain/invoicing";
-import { addBudgetLine, deleteMonthInvoice, removeBudgetLine, removeClientRib, saveBudgetSettings, saveContractDates, setInvoiceStatus, uploadClientRib, type BudgetActionResult } from "../actions";
+import { addBudgetLine, deleteMonthInvoice, removeBudgetLine, removeClientRib, saveBudgetSettings, saveContractDates, setInvoiceStatus, setShootingBilling, uploadClientRib, type BudgetActionResult } from "../actions";
 
-type EditorLine = BudgetLine & { note: string | null };
+type EditorLine = BudgetLine & { note: string | null; forfaitIncluded: boolean | null };
 
 const CATEGORY_ORDER: ServiceDefinition["category"][] = ["entree", "plat", "dessert"];
+
+/** Jour et mois, pour situer une période sans alourdir la phrase. */
+function formatShortFr(date: string): string {
+  return new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "long", timeZone: "UTC" })
+    .format(new Date(`${date}T00:00:00Z`));
+}
 
 export function BudgetEditor({
   clientId,
@@ -42,6 +52,7 @@ export function BudgetEditor({
   shooting,
   shootingDueOn,
   shootingPlannedOn,
+  shootingDates,
   initialMode,
   initialBudgetCents,
   initialNote,
@@ -61,6 +72,8 @@ export function BudgetEditor({
   shootingDueOn: string | null;
   /** Date déjà calée avec le client, si elle l'est. */
   shootingPlannedOn: string | null;
+  /** Toutes les dates de shooting inscrites, pour situer chacune dans sa période. */
+  shootingDates: string[];
   initialMode: BillingMode;
   initialBudgetCents: number;
   initialNote: string;
@@ -81,6 +94,24 @@ export function BudgetEditor({
   const hybrid = mode === "hybride";
   // Refus de prise en charge : la prestation part en facturation directe.
   const [billedDirectly, setBilledDirectly] = useState(false);
+  const [performedOn, setPerformedOn] = useState(() => new Date().toISOString().slice(0, 10));
+
+  /*
+   * Décision proposée pour un shooting : la période tranche.
+   *
+   * On classe la date saisie parmi celles déjà inscrites. Si elle ouvre sa
+   * période, c'est le shooting du forfait — déjà réglé par le lissage mensuel.
+   * Sinon, il a été vendu en plus. Une date identique à une existante retient
+   * le rang le plus élevé, donc bien « supplémentaire ».
+   */
+  const shootingDecision = shooting && isShootingLine(service.key)
+    ? classifyShootings({
+        plan: shooting,
+        contractStartDate,
+        dates: [...shootingDates, performedOn],
+      }).get(performedOn) ?? null
+    : null;
+  const suggestedIncluded = (shootingDecision?.rankInPeriod ?? 1) === 1;
 
   const run = (action: () => Promise<BudgetActionResult>) => {
     startTransition(async () => {
@@ -249,6 +280,11 @@ export function BudgetEditor({
           shooting={shooting}
           dueOn={shootingDueOn}
           plannedOn={shootingPlannedOn}
+          lines={lines}
+          contractStartDate={contractStartDate}
+          shootingDates={shootingDates}
+          pending={pending}
+          onDecide={(lineId, included) => run(() => setShootingBilling(lineId, clientId, included))}
         />
       )}
 
@@ -320,7 +356,7 @@ export function BudgetEditor({
                 <label className="label" htmlFor="performedOn">
                   Date {service.key.startsWith("shooting") ? "du shooting" : "de mise à jour de la formule"}
                 </label>
-                <input id="performedOn" name="performedOn" type="date" required className="field" defaultValue={new Date().toISOString().slice(0, 10)}/>
+                <input id="performedOn" name="performedOn" type="date" required className="field" value={performedOn} onChange={(event) => setPerformedOn(event.target.value)}/>
               </div>
 
               <div>
@@ -328,6 +364,33 @@ export function BudgetEditor({
                 <input id="lineNote" name="note" maxLength={300} className="field" placeholder="Lieu, thème, interlocuteur…"/>
               </div>
             </div>
+
+            {/*
+              Forfait shooting : la période décide, la saisie confirme. Sans ce
+              choix, le shooting partait à plein tarif alors que le forfait le
+              paie déjà mois par mois — ou pire, un supplémentaire vendu
+              finissait offert.
+            */}
+            {shootingDecision && shooting && (
+              <fieldset className="rounded-2xl border border-[#d8e4f8] bg-[#f7faff] p-4">
+                <legend className="label px-1">Ce shooting est-il compris dans le forfait ?</legend>
+                <p className="mb-3 text-xs leading-relaxed text-ink-faint">
+                  {suggestedIncluded
+                    ? `Aucun shooting n'est inscrit dans la période ouverte le ${formatShortFr(shootingDecision.periodStart)} : celui-ci est celui du forfait.`
+                    : `Le forfait de la période ouverte le ${formatShortFr(shootingDecision.periodStart)} a déjà été utilisé : celui-ci a donc été vendu en plus.`}
+                </p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <label className="choice-chip bg-white">
+                    <input type="radio" name="forfaitIncluded" value="oui" defaultChecked={suggestedIncluded}/>
+                    Compris — 0 €
+                  </label>
+                  <label className="choice-chip bg-white">
+                    <input type="radio" name="forfaitIncluded" value="non" defaultChecked={!suggestedIncluded}/>
+                    Supplémentaire — {formatEuros(service.unitPriceCents)}
+                  </label>
+                </div>
+              </fieldset>
+            )}
 
             {financed && (
               <div className={`rounded-2xl border p-4 transition-colors ${billedDirectly ? "border-[#f0c36d] bg-[#fff8ec]" : "border-line bg-canvas"}`}>
@@ -532,14 +595,43 @@ function ShootingPanel({
   shooting,
   dueOn,
   plannedOn,
+  lines,
+  contractStartDate,
+  shootingDates,
+  pending,
+  onDecide,
 }: {
   shooting: ShootingPlan;
   dueOn: string | null;
   plannedOn: string | null;
+  lines: EditorLine[];
+  contractStartDate: string | null;
+  shootingDates: string[];
+  pending: boolean;
+  onDecide: (lineId: string, included: boolean) => void;
 }) {
   const formatDay = (date: string) => new Intl.DateTimeFormat("fr-FR", {
     day: "numeric", month: "long", year: "numeric", timeZone: "UTC",
   }).format(new Date(`${date}T00:00:00Z`));
+
+  const tally = shootingTally(lines);
+  const classification = classifyShootings({
+    plan: shooting,
+    contractStartDate,
+    dates: shootingDates,
+  });
+  const shootingLines = lines.filter((line) => isShootingLine(line.serviceKey));
+  const pendingLines = shootingLines
+    .filter((line) => line.forfaitIncluded === null || line.forfaitIncluded === undefined)
+    .map((line) => {
+      const entry = classification.get(line.performedOn);
+      return { line, classification: entry ?? null, alreadyUsed: (entry?.rankInPeriod ?? 1) > 1 };
+    });
+  // Compris dans le forfait, alors que la période avait déjà donné le sien.
+  const suspicious = shootingLines
+    .filter((line) => line.forfaitIncluded === true)
+    .map((line) => ({ line, entry: classification.get(line.performedOn) }))
+    .filter((row) => (row.entry?.rankInPeriod ?? 1) > 1);
 
   return (
     <section className="card p-5">
@@ -559,8 +651,118 @@ function ShootingPanel({
         être payés deux fois.
         {plannedOn
           ? ` Prochain shooting calé le ${formatDay(plannedOn)}.`
-          : dueOn ? ` Prochaine échéance le ${formatDay(dueOn)} — le rappel s'ouvre un mois avant, sur le tableau de bord.` : ""}
+          : dueOn ? ` Prochaine échéance le ${formatDay(dueOn)} — le rappel s'ouvre avant, sur le tableau de bord.` : ""}
       </p>
+
+      {/* Ce que le forfait a couvert, et ce qu'il a fait facturer en plus. */}
+      <p className="mt-3 grid gap-2 rounded-2xl bg-canvas p-3 text-xs sm:grid-cols-3">
+        <span className="flex items-center justify-between gap-2">
+          <span className="text-ink-faint">Compris dans le forfait</span>
+          <strong>{tally.included}</strong>
+        </span>
+        <span className="flex items-center justify-between gap-2">
+          <span className="text-ink-faint">Supplémentaires facturés</span>
+          <strong>{tally.extra} · {formatEuros(tally.extraCents)}</strong>
+        </span>
+        <span className="flex items-center justify-between gap-2">
+          <span className={tally.pending > 0 ? "font-semibold text-state-changes" : "text-ink-faint"}>À catégoriser</span>
+          <strong className={tally.pending > 0 ? "text-state-changes" : ""}>{tally.pending}</strong>
+        </span>
+      </p>
+
+      {/*
+        Panneau de rattrapage, appelé à disparaître.
+        
+        Tant qu'un shooting n'est pas tranché, on ignore s'il était compris dans
+        le forfait ou vendu en plus — et un supplémentaire oublié, c'est une
+        prestation offerte sans le savoir. La liste s'efface d'elle-même quand
+        tout est catégorisé.
+      */}
+      {pendingLines.length > 0 && (
+        <div className="mt-4 rounded-2xl border-2 border-state-changes bg-state-changes/5 p-4">
+          <div className="flex items-start gap-3">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-state-changes text-white">
+              <Icon name="warning" className="h-4 w-4"/>
+            </span>
+            <div className="min-w-0">
+              <strong className="text-sm text-state-changes">
+                {pendingLines.length} shooting{pendingLines.length > 1 ? "s" : ""} à catégoriser
+              </strong>
+              <p className="mt-1 text-xs leading-relaxed text-ink-soft">
+                Chacun est-il compris dans le forfait, déjà réglé par le lissage
+                mensuel, ou vendu en plus et donc à facturer ? Rien n&apos;est
+                facturé tant que la question n&apos;est pas tranchée.
+              </p>
+            </div>
+          </div>
+
+          <ul className="mt-3 space-y-2">
+            {pendingLines.map(({ line, classification, alreadyUsed }) => (
+              <li key={line.id} className="rounded-xl border border-line bg-white p-3">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <strong className="text-sm">{line.label}</strong>
+                  <span className="text-xs text-ink-faint">{formatDay(line.performedOn)}</span>
+                </div>
+                <p className="mt-1 text-[11px] text-ink-faint">
+                  {classification
+                    ? alreadyUsed
+                      ? `Le forfait de la période ouverte le ${formatDay(classification.periodStart)} a déjà été utilisé : celui-ci a été vendu en plus.`
+                      : `Premier shooting de la période ouverte le ${formatDay(classification.periodStart)} : c'est celui du forfait.`
+                    : "Hors période de gestion connue."}
+                  {line.note ? ` · ${line.note}` : ""}
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className={alreadyUsed ? "btn-secondary" : "btn-primary"}
+                    disabled={pending}
+                    onClick={() => onDecide(line.id, true)}
+                  >
+                    Compris dans le forfait — 0 €
+                  </button>
+                  <button
+                    type="button"
+                    className={alreadyUsed ? "btn-primary" : "btn-secondary"}
+                    disabled={pending}
+                    onClick={() => onDecide(line.id, false)}
+                  >
+                    Supplémentaire — {formatEuros(findService(line.serviceKey)?.unitPriceCents ?? 0)} à facturer
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/*
+        Seconde vérification : un shooting déclaré compris alors que le forfait
+        de sa période l'était déjà. C'est l'erreur qui coûte — une prestation
+        vendue, offerte par inadvertance.
+      */}
+      {suspicious.length > 0 && (
+        <div className="mt-3 rounded-2xl border border-[#f0c36d] bg-[#fff8ec] p-4">
+          <strong className="text-sm text-[#8a5700]">
+            {suspicious.length} shooting{suspicious.length > 1 ? "s" : ""} à 0 € alors que le forfait de la période était déjà pris
+          </strong>
+          <p className="mt-1 text-xs leading-relaxed text-ink-soft">
+            {suspicious.map((entry) => formatDay(entry.line.performedOn)).join(" · ")} — supplémentaires à facturer ?
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {suspicious.map((entry) => (
+              <button
+                key={entry.line.id}
+                type="button"
+                className="btn-secondary"
+                disabled={pending}
+                onClick={() => onDecide(entry.line.id, false)}
+              >
+                Facturer celui du {formatDay(entry.line.performedOn)}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </section>
   );
 }

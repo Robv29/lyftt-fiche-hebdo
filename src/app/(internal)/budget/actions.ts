@@ -6,7 +6,7 @@ import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/se
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sanitizeText } from "@/lib/security/sanitize";
 import { checkAttachment, safeFileName } from "@/lib/security/attachments";
-import { addMonths, findService, MANAGEMENT_MONTH_KEY, SHOOTING_FORFAIT_KEY } from "@/lib/domain/budget";
+import { addMonths, findService, formatEuros, isShootingLine, MANAGEMENT_MONTH_KEY, SHOOTING_FORFAIT_KEY } from "@/lib/domain/budget";
 
 export interface BudgetActionResult {
   ok: boolean;
@@ -72,6 +72,8 @@ const lineSchema = z.object({
   performedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date invalide."),
   note: z.string().trim().max(300, "Note trop longue (300 caractères maximum).").optional(),
   billedDirectly: z.boolean(),
+  /** Shooting compris dans le forfait, vendu en plus, ou sans objet. */
+  forfaitIncluded: z.enum(["oui", "non"]).optional(),
 });
 
 export async function addBudgetLine(formData: FormData): Promise<BudgetActionResult> {
@@ -87,6 +89,7 @@ export async function addBudgetLine(formData: FormData): Promise<BudgetActionRes
     performedOn: formData.get("performedOn"),
     note: formData.get("note") ?? undefined,
     billedDirectly: formData.get("billedDirectly") === "on",
+    forfaitIncluded: formData.get("forfaitIncluded") ?? undefined,
   });
   if (!parsed.success) {
     return { ok: false, message: parsed.error.issues[0]?.message ?? "Formulaire invalide." };
@@ -94,6 +97,16 @@ export async function addBudgetLine(formData: FormData): Promise<BudgetActionRes
 
   const service = findService(parsed.data.serviceKey);
   if (!service) return { ok: false, message: "Prestation inconnue." };
+
+  /*
+   * Un shooting compris dans le forfait ne se facture pas une seconde fois :
+   * il est déjà payé par le lissage mensuel de la gestion. La ligne existe
+   * quand même, à zéro euro, pour dater le cycle.
+   */
+  const included = isShootingLine(service.key) && parsed.data.forfaitIncluded === "oui";
+  const forfaitIncluded = isShootingLine(service.key) && parsed.data.forfaitIncluded
+    ? included
+    : null;
 
   const supabase = await createSupabaseServerClient();
   const { error } = await supabase.from("client_budget_lines").insert({
@@ -105,8 +118,9 @@ export async function addBudgetLine(formData: FormData): Promise<BudgetActionRes
      */
     label: service.label,
     billing: service.billing,
-    unit_price_cents: service.unitPriceCents,
+    unit_price_cents: included ? 0 : service.unitPriceCents,
     quantity: parsed.data.quantity,
+    forfait_included: forfaitIncluded,
     months: service.billing === "mensuel" ? parsed.data.months ?? 1 : null,
     performed_on: parsed.data.performedOn,
     note: parsed.data.note ? sanitizeText(parsed.data.note, 300) : null,
@@ -120,9 +134,11 @@ export async function addBudgetLine(formData: FormData): Promise<BudgetActionRes
   revalidatePath(`/budget/${parsed.data.clientId}`);
   return {
     ok: true,
-    message: parsed.data.billedDirectly
-      ? `${service.label} ajouté et à facturer au client.`
-      : `${service.label} ajouté à l’enveloppe.`,
+    message: included
+      ? `${service.label} inscrit à 0 € : compris dans le forfait.`
+      : parsed.data.billedDirectly
+        ? `${service.label} ajouté et à facturer au client.`
+        : `${service.label} ajouté à l’enveloppe.`,
   };
 }
 
@@ -469,4 +485,68 @@ export async function saveContractDates(formData: FormData): Promise<BudgetActio
   revalidatePath(`/budget/${parsed.data.clientId}`);
   revalidatePath("/clients");
   return { ok: true, message: "Dates de gestion enregistrées." };
+}
+
+/*
+ * Catégorisation des shootings.
+ *
+ * Un forfait donne droit à un shooting par période, déjà réglé par le lissage
+ * mensuel. Le suivant, dans la même période, a été vendu en plus : il se
+ * facture. Tant que personne n'a tranché, la ligne reste « à catégoriser » —
+ * c'est le seul état qui garantit qu'un supplémentaire ne part pas gratuit.
+ */
+const shootingBillingSchema = z.object({
+  lineId: z.string().uuid(),
+  clientId: z.string().uuid(),
+  included: z.boolean(),
+});
+
+export async function setShootingBilling(
+  lineId: string,
+  clientId: string,
+  included: boolean,
+): Promise<BudgetActionResult> {
+  const profile = await requireAdmin();
+  if (!profile) return { ok: false, message: ACCESS_DENIED };
+
+  const parsed = shootingBillingSchema.safeParse({ lineId, clientId, included });
+  if (!parsed.success) return { ok: false, message: "Demande invalide." };
+
+  const supabase = await createSupabaseServerClient();
+  const { data: line } = await supabase
+    .from("client_budget_lines")
+    .select("id, service_key, label")
+    .eq("id", parsed.data.lineId)
+    .eq("client_id", parsed.data.clientId)
+    .maybeSingle();
+  if (!line) return { ok: false, message: "Prestation introuvable ou accès refusé." };
+  if (!isShootingLine(line.service_key as string)) {
+    return { ok: false, message: "Cette prestation n'est pas un shooting." };
+  }
+
+  /*
+   * Le prix suit la décision : compris dans le forfait, la ligne ne consomme
+   * rien ; vendue en plus, elle reprend le tarif du catalogue. Sans cela, la
+   * case cochée et le montant facturé pourraient se contredire.
+   */
+  const catalogPrice = findService(line.service_key as string)?.unitPriceCents ?? 0;
+  const { error } = await supabase
+    .from("client_budget_lines")
+    .update({
+      forfait_included: parsed.data.included,
+      unit_price_cents: parsed.data.included ? 0 : catalogPrice,
+    })
+    .eq("id", parsed.data.lineId);
+
+  if (error) return { ok: false, message: `Enregistrement impossible : ${error.message}` };
+
+  revalidatePath("/");
+  revalidatePath("/budget");
+  revalidatePath(`/budget/${parsed.data.clientId}`);
+  return {
+    ok: true,
+    message: parsed.data.included
+      ? "Shooting compris dans le forfait : inscrit à 0 €."
+      : `Shooting supplémentaire : ${formatEuros(catalogPrice)} à facturer.`,
+  };
 }

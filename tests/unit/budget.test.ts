@@ -10,6 +10,8 @@ import {
   monthsRemainingToBill,
   reconcileManagementMonths,
   cadenceMonthlyCostCents,
+  classifyShootings,
+  shootingTally,
   findService,
   isShootingLine,
   envelopeLines,
@@ -610,6 +612,57 @@ describe("forfait shooting", () => {
       contractStartDate: "2026-03-15",
       today: "2026-07-01",
     })).toBeNull();
+  });
+});
+
+/*
+ * Le forfait donne droit à un shooting par période. Le premier de la période
+ * est compris — déjà payé par le lissage mensuel — les suivants ont été vendus
+ * en plus et doivent partir à la facture. C'est la période qui tranche, pas la
+ * mémoire de celui qui saisit.
+ */
+describe("shooting compris ou vendu en plus", () => {
+  const plan = { serviceKey: "shooting_demi", everyMonths: 1 } as const;
+  const debut = "2026-06-23";
+
+  it("compte le premier shooting de chaque période comme compris", () => {
+    const map = classifyShootings({ plan, contractStartDate: debut, dates: ["2026-07-05", "2026-08-07"] });
+    expect(map.get("2026-07-05")).toMatchObject({ periodIndex: 1, rankInPeriod: 1, suggestedIncluded: true });
+    expect(map.get("2026-08-07")).toMatchObject({ periodIndex: 2, rankInPeriod: 1, suggestedIncluded: true });
+  });
+
+  it("compte le second de la même période comme vendu en plus", () => {
+    const map = classifyShootings({ plan, contractStartDate: debut, dates: ["2026-07-05", "2026-07-19"] });
+    expect(map.get("2026-07-05")?.suggestedIncluded).toBe(true);
+    expect(map.get("2026-07-19")).toMatchObject({ rankInPeriod: 2, suggestedIncluded: false });
+  });
+
+  it("rattache un shooting fait en fin de période précédente à cette période-là", () => {
+    // Période 1 : du 23 juin au 22 juillet inclus.
+    const map = classifyShootings({ plan, contractStartDate: debut, dates: ["2026-07-22", "2026-07-23"] });
+    expect(map.get("2026-07-22")?.periodIndex).toBe(1);
+    expect(map.get("2026-07-23")?.periodIndex).toBe(2);
+    // Chacun ouvre sa période : les deux sont compris, aucun n'est facturé.
+    expect(map.get("2026-07-23")?.suggestedIncluded).toBe(true);
+  });
+
+  it("ne classe rien sans forfait ni date de début", () => {
+    expect(classifyShootings({ plan: null, contractStartDate: debut, dates: ["2026-07-05"] }).size).toBe(0);
+    expect(classifyShootings({ plan, contractStartDate: null, dates: ["2026-07-05"] }).size).toBe(0);
+  });
+
+  it("distingue compris, facturés et pas encore tranchés", () => {
+    const shooting = (id: string, included: boolean | null) => ({
+      ...line({ id, serviceKey: "shooting_demi", unitPriceCents: included ? 0 : 45_000 }),
+      forfaitIncluded: included,
+    });
+    const tally = shootingTally([
+      shooting("a", true),
+      shooting("b", false),
+      shooting("c", null),
+      { ...line({ id: "d", serviceKey: MANAGEMENT_MONTH_KEY }), forfaitIncluded: null },
+    ]);
+    expect(tally).toEqual({ included: 1, extra: 1, extraCents: 45_000, pending: 1 });
   });
 });
 

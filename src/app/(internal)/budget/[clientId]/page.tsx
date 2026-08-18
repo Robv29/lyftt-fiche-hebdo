@@ -63,7 +63,7 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
 
   const { data: rawLines } = await supabase
     .from("client_budget_lines")
-    .select("id, service_key, label, billing, unit_price_cents, quantity, months, performed_on, note, billed_directly")
+    .select("id, service_key, label, billing, unit_price_cents, quantity, months, performed_on, note, billed_directly, forfait_included")
     .eq("client_id", clientId)
     .order("performed_on", { ascending: false });
 
@@ -74,7 +74,7 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
     settings = {};
   }
 
-  const lines: (BudgetLine & { note: string | null })[] = (rawLines ?? []).map((row) => ({
+  const lines: (BudgetLine & { note: string | null; forfaitIncluded: boolean | null })[] = (rawLines ?? []).map((row) => ({
     id: row.id as string,
     serviceKey: row.service_key as string,
     label: row.label as string,
@@ -85,6 +85,8 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
     performedOn: row.performed_on as string,
     billedDirectly: Boolean(row.billed_directly),
     note: (row.note as string | null) ?? null,
+    // Null tant que personne n'a dit si le shooting était compris ou vendu en plus.
+    forfaitIncluded: (row.forfait_included as boolean | null) ?? null,
   }));
 
   const invoiceStatuses = Object.fromEntries(
@@ -152,6 +154,7 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
         contractEndDate={client.contract_end_date}
         cadence={cadence}
         shooting={shooting}
+        shootingDates={shootingDates}
         shootingDueOn={schedule?.dueOn ?? null}
         shootingPlannedOn={shootingDates.find((date) => date > today) ?? null}
         initialMode={mode}
