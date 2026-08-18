@@ -384,7 +384,12 @@ const correctionSchema = z.object({
   hashtags: z.string().max(1000),
   scheduledDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().or(z.literal("")),
   mediaExternalUrl: z.string().url("Le lien du média est invalide.").optional().or(z.literal("")),
-  summary: z.string().trim().min(3, "Résumez brièvement la correction.").max(500),
+  /*
+   * Le résumé n'est plus saisi : il se déduit du ticket. Un champ obligatoire
+   * de plus à chaque correction ne disait jamais rien qui ne fût déjà dans la
+   * demande du client, et retardait l'envoi.
+   */
+  summary: z.string().trim().max(500).optional(),
 });
 
 export async function prepareCorrectionForClient(formData: FormData): Promise<InternalActionResult> {
@@ -410,9 +415,28 @@ export async function prepareCorrectionForClient(formData: FormData): Promise<In
     if (error) return { ok:false, message:"La correction n’a pas pu être enregistrée." };
   }
 
+  /*
+   * L'historique des versions garde une trace lisible : à défaut de résumé
+   * saisi, c'est la demande du client qui nomme la version — elle dit déjà ce
+   * qui a été corrigé, et personne n'a à le réécrire.
+   */
+  const { data:ticketRow } = await admin
+    .from("client_tickets")
+    .select("ticket_number, title")
+    .eq("id", input.ticketId)
+    .maybeSingle();
+  const summary = input.summary?.trim()
+    ? sanitizeText(input.summary, 500)
+    : sanitizeText(
+        ticketRow?.title
+          ? `Correction ${ticketRow.ticket_number} — ${ticketRow.title}`
+          : "Version corrigée",
+        500,
+      );
+
   const { data:versionId, error:versionError } = await admin.rpc("create_sheet_version", {
     target_sheet_id:input.sheetId,
-    summary:sanitizeText(input.summary, 500),
+    summary,
     author:profile.id,
     ticket:input.ticketId,
   });

@@ -92,7 +92,6 @@ export function TicketActions({ ticketId, ticketNumber, sheetId, item, category,
           <div><label className="label" htmlFor="correctedDate">Date de publication</label><input id="correctedDate" name="scheduledDate" type="date" className="field" defaultValue={item.scheduledDate}/></div>
         </>}
         {["graphic","video"].includes(category) && <div><label className="label" htmlFor="mediaExternalUrl">Lien du média corrigé</label><input id="mediaExternalUrl" name="mediaExternalUrl" type="url" className="field" placeholder="https://drive.google.com/…"/><p className="mt-1 text-xs text-ink-faint">Collez le lien du nouveau visuel ou de la nouvelle vidéo si le fichier est hébergé ailleurs.</p></div>}
-        <div><label className="label" htmlFor="summary">Résumé de la correction</label><input id="summary" name="summary" required className="field" placeholder="Ex. texte raccourci et photo remplacée"/></div>
         <button type="submit" className="btn-primary w-full" disabled={pending}><Icon name="spark" className="h-4 w-4"/>{pending ? "Préparation…" : "Enregistrer et préparer l’envoi"}</button>
       </form>
     </section>}

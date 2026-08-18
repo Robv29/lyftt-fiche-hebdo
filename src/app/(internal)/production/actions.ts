@@ -434,7 +434,8 @@ export async function validateTicketCorrection(
 
   /*
    * Le texte et les hashtags ne sont pas touchés ici : ils ont été arrêtés à
-   * l'écran éditorial. Seule la version est datée, puis le lien préparé.
+   * l'écran éditorial. Seule la version est datée — son libellé se déduit du
+   * ticket — puis le lien est préparé.
    */
   const correction = new FormData();
   correction.set("ticketId", parsed.data);
@@ -442,7 +443,6 @@ export async function validateTicketCorrection(
   correction.set("itemId", "");
   correction.set("caption", "");
   correction.set("hashtags", "");
-  correction.set("summary", "Correction déposée par la production et validée en interne.");
   const prepared = await prepareCorrectionForClient(correction);
   if (!prepared.ok) return { ok: false, message: prepared.message };
 
