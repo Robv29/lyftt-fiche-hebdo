@@ -469,9 +469,103 @@
   .insights-client-row { grid-template-columns:minmax(76px,110px) minmax(0,1fr) 20px; gap:7px; }
 }
 
+/* ---------------------------------------------------------------------------
+   Mouvement
+   ---------------------------------------------------------------------------
+   Le mouvement sert à trois choses ici, jamais à décorer : dire d'où vient un
+   écran, donner une réponse au doigt qui appuie, et faire lire un chiffre en
+   le laissant se construire. Tout est en `transform` et `opacity` — les seules
+   propriétés que le navigateur anime sans repeindre — et tout se coupe d'un
+   bloc quand le système demande moins d'animation (fin de fichier).
+--------------------------------------------------------------------------- */
+
+@keyframes rise-in { from { opacity:0; transform:translate3d(0,12px,0); } }
+@keyframes bar-grow { from { transform:scaleX(0); } }
+@keyframes ring-in { from { opacity:0; transform:scale(.86) rotate(-6deg); } }
+@keyframes badge-pop { from { transform:scale(.4); opacity:0; } 70% { transform:scale(1.12); } }
+/*
+ * Écrans publics : ils n'ont pas de coquille interne, donc pas de cascade.
+ * Une seule arrivée, appliquée à la main là où c'est utile.
+ */
+.arrive { animation:rise-in 320ms var(--ease-out) both; }
+.arrive-late { animation:rise-in 320ms var(--ease-out) 90ms both; }
+
+@keyframes badge-halo { 0%,100% { box-shadow:0 0 0 0 rgba(229,72,77,.42); } 55% { box-shadow:0 0 0 7px rgba(229,72,77,0); } }
+
+/*
+ * Arrivée en cascade.
+ *
+ * Les blocs d'une page apparaissaient tous ensemble : l'œil n'avait aucun
+ * point d'entrée. Ils montent maintenant l'un après l'autre, 40 ms d'écart,
+ * et la cascade s'arrête au huitième — au-delà, on attend l'écran au lieu de
+ * le lire.
+ */
+.main-content>div>* { animation:rise-in var(--motion-ui) var(--ease-out) both; }
+.main-content>div>*:nth-child(1) { animation-delay:30ms; }
+.main-content>div>*:nth-child(2) { animation-delay:70ms; }
+.main-content>div>*:nth-child(3) { animation-delay:110ms; }
+.main-content>div>*:nth-child(4) { animation-delay:150ms; }
+.main-content>div>*:nth-child(5) { animation-delay:190ms; }
+.main-content>div>*:nth-child(6) { animation-delay:230ms; }
+.main-content>div>*:nth-child(n+7) { animation-delay:260ms; }
+
+/* Les cartes d'un même bloc suivent la même cascade, en plus serré. */
+.insights-overview-top>*,.insights-overview-bottom>*,.insights-health-grid>*,.insights-kpi-row>* {
+  animation:rise-in var(--motion-ui) var(--ease-out) both;
+}
+.insights-overview-top>*:nth-child(2),.insights-overview-bottom>*:nth-child(2),.insights-health-grid>*:nth-child(2),.insights-kpi-row>*:nth-child(2) { animation-delay:60ms; }
+.insights-overview-top>*:nth-child(3),.insights-overview-bottom>*:nth-child(3),.insights-health-grid>*:nth-child(3),.insights-kpi-row>*:nth-child(3) { animation-delay:120ms; }
+.insights-kpi-row>*:nth-child(4) { animation-delay:180ms; }
+
+/*
+ * Les jauges se remplissent au lieu d'apparaître pleines.
+ *
+ * Une seule image-clé de départ : l'animation rejoint la valeur posée en
+ * ligne, donc le chiffre affiché reste le chiffre mesuré.
+ */
+.insights-funnel-row>div:last-child span,.insights-health-bar i,.insights-client-row i,.progress-fill {
+  animation:bar-grow 640ms var(--ease-out) 120ms both;
+}
+.insights-ring,.insights-donut { animation:ring-in 520ms cubic-bezier(.22,1.15,.36,1) both; }
+
+/* Une pastille de retard qui apparaît doit se voir : elle éclot, puis respire. */
+.topbar-icon b { animation:badge-pop 320ms cubic-bezier(.22,1.15,.36,1) both, badge-halo 2.6s var(--ease-out) 600ms infinite; }
+.nav-item b,.mobile-nav b { animation:badge-pop 320ms cubic-bezier(.22,1.15,.36,1) both; }
+
+/* Réponse au geste : rien ne bouge tant qu'on ne touche pas. */
+.card,.content-card,.insights-card,.insights-kpi {
+  transition:transform var(--motion-ui) var(--ease-out), box-shadow var(--motion-ui) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
+}
+.btn svg { transition:transform var(--motion-fast) var(--ease-out); }
+tbody tr { transition:background-color var(--motion-fast) var(--ease-out); }
+
+@media (hover: hover) and (pointer: fine) {
+  .insights-card:hover,.insights-kpi:hover { transform:translate3d(0,-2px,0); box-shadow:0 18px 44px rgba(43,82,116,.13); }
+  .btn:hover { transform:translate3d(0,-1px,0); }
+  .btn:hover svg { transform:translate3d(2px,0,0); }
+  .btn:active { transform:translate3d(0,0,0) scale(.98); }
+  .insights-menu a:hover { transform:translate3d(0,-1px,0); }
+  .insights-advice-list>li { transition:transform var(--motion-fast) var(--ease-out), box-shadow var(--motion-ui) var(--ease-out); }
+  .insights-advice-list>li:hover { transform:translate3d(3px,0,0); box-shadow:0 10px 24px rgba(43,82,116,.1); }
+  tbody tr:hover { background:#f7fafe; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,*::before,*::after { scroll-behavior:auto!important; transition-duration:.01ms!important; animation-duration:.01ms!important; animation-iteration-count:1!important; }
   .main-content>div,.lift-card,.nav-item,.reveal-on-card-hover,.reveal-panel,.side-sheet { transform:none!important; }
+  /* Aucune cascade, aucune pulsation : l'écran s'affiche d'un coup, complet. */
+  .main-content>div>*,.insights-overview-top>*,.insights-overview-bottom>*,.insights-health-grid>*,.insights-kpi-row>*,
+  .insights-ring,.insights-donut,.topbar-icon b,.nav-item b,.mobile-nav b {
+    animation:none!important; transform:none!important; opacity:1!important;
+  }
+  /*
+   * Les jauges gardent leur `transform` : il porte la valeur mesurée, posée en
+   * ligne. L'annuler afficherait toutes les barres pleines — un écran faux
+   * plutôt qu'un écran calme.
+   */
+  .insights-funnel-row>div:last-child span,.insights-health-bar i,.insights-client-row i,.progress-fill {
+    animation:none!important;
+  }
 }
 @media (prefers-reduced-transparency: reduce) { .topbar,.mobile-nav { background:#fff; backdrop-filter:none; } }
 @media (prefers-contrast: more) {

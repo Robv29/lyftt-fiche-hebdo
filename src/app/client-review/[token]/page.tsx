@@ -57,7 +57,7 @@ export default async function ClientReviewPage({
 
   return (
     <main className="min-h-screen bg-[#edf3f9] px-3 py-3 sm:px-6 sm:py-6">
-      <div className="mx-auto max-w-5xl overflow-hidden rounded-[26px] border border-white bg-[#f7fafe] shadow-[0_28px_80px_rgba(38,76,112,.13)]">
+      <div className="arrive mx-auto max-w-5xl overflow-hidden rounded-[26px] border border-white bg-[#f7fafe] shadow-[0_28px_80px_rgba(38,76,112,.13)]">
       <header className="border-b border-line bg-white px-5 py-5 sm:px-8">
         <div className="flex items-center justify-between gap-4">
           <BrandLogo variant="ink" className="w-[96px]" priority />

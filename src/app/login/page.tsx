@@ -24,7 +24,7 @@ export default async function LoginPage({
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#edf3f9] px-4 py-10 sm:px-6">
-      <section className="w-full max-w-[420px] rounded-[26px] border border-white bg-white p-6 shadow-[0_28px_70px_rgba(36,76,116,.13)] sm:p-8" aria-labelledby="login-title">
+      <section className="arrive w-full max-w-[420px] rounded-[26px] border border-white bg-white p-6 shadow-[0_28px_70px_rgba(36,76,116,.13)] sm:p-8" aria-labelledby="login-title">
       <BrandLogo variant="ink" className="w-[112px]" priority />
       <p className="mt-8 text-[11px] font-bold uppercase tracking-[.14em] text-ink-faint">Espace équipe</p>
       <h1 id="login-title" className="mt-1 text-2xl font-semibold tracking-[-.03em]">Heureux de vous revoir</h1>

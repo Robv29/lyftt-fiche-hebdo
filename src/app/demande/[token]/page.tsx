@@ -41,7 +41,7 @@ export default async function ClientRequestPage({
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-10">
-      <header className="text-center">
+      <header className="arrive text-center">
         <BrandLogo className="mx-auto w-[110px]"/>
         <p className="eyebrow mt-6">{context.clientName}</p>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight">Une demande ?</h1>
@@ -51,7 +51,7 @@ export default async function ClientRequestPage({
         </p>
       </header>
 
-      <section className="card mt-8 p-5 sm:p-7">
+      <section className="arrive-late card mt-8 p-5 sm:p-7">
         <RequestBox token={token} clientName={context.clientName}/>
       </section>
 
