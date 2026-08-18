@@ -81,20 +81,52 @@ export async function generateReviewLink(
     versionId = data as string;
   }
 
-  // Un seul lien actif par fiche : l'ancien est révoqué (§2, §14).
-  await admin
-    .from("client_review_links")
-    .update({ revoked_at: new Date().toISOString(), revoked_reason: "Nouveau lien généré" })
-    .eq("weekly_sheet_id", sheetId)
-    .is("revoked_at", null);
-
-  const { token, tokenHash, tokenPrefix } = generateReviewToken();
   const expiresAt = new Date();
   expiresAt.setDate(expiresAt.getDate() + env.reviewLinkTtlDays);
+
+  /*
+   * On réutilise le lien déjà actif au lieu d'en fabriquer un nouveau.
+   * Regénérer révoquait l'adresse que le client avait déjà reçue : elle
+   * mourait au bout de quelques heures alors qu'elle devait tenir la semaine.
+   * On se contente donc de le rattacher à la version courante et de repousser
+   * son échéance — le client garde la même adresse.
+   */
+  const { data: active } = await admin
+    .from("client_review_links")
+    .select("id, token")
+    .eq("weekly_sheet_id", sheetId)
+    .is("revoked_at", null)
+    .maybeSingle();
+
+  if (active?.token) {
+    const { error: refreshError } = await admin
+      .from("client_review_links")
+      .update({
+        sheet_version_id: versionId,
+        expires_at: expiresAt.toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", active.id);
+    if (refreshError) return { ok: false, message: "Le lien n'a pas pu être prolongé." };
+
+    revalidatePath(`/fiches/${sheetId}`);
+    return { ok: true, reviewUrl: `${env.appUrl}/client-review/${active.token}` };
+  }
+
+  // Lien d'avant cette bascule (token non conservé) : on le remplace une fois.
+  if (active) {
+    await admin
+      .from("client_review_links")
+      .update({ revoked_at: new Date().toISOString(), revoked_reason: "Nouveau lien généré" })
+      .eq("id", active.id);
+  }
+
+  const { token, tokenHash, tokenPrefix } = generateReviewToken();
 
   const { error } = await admin.from("client_review_links").insert({
     weekly_sheet_id: sheetId,
     sheet_version_id: versionId,
+    token,
     token_hash: tokenHash,
     token_prefix: tokenPrefix,
     expires_at: expiresAt.toISOString(),

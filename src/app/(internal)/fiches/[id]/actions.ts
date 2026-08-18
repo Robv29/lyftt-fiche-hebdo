@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { env } from "@/lib/supabase/env";
 import {
   ACCESS_DENIED_MESSAGE,
   requireEditorialProfile,
@@ -168,12 +169,20 @@ export async function saveSheetContent(formData: FormData): Promise<SheetContent
       return { ok: false, message: "La fiche a été modifiée, mais la nouvelle version n’a pas pu être créée." };
     }
 
-    // L'ancien lien pointait vers la version précédemment validée.
+    /*
+     * Le lien pointait vers la version précédente : on le rattache à la
+     * nouvelle plutôt que de le révoquer. Couper l'adresse déjà envoyée
+     * laissait le client devant un lien mort ; là il retrouve le planning à
+     * jour, avec toutes les validations remises à zéro juste au-dessus.
+     */
+    const refreshedExpiry = new Date();
+    refreshedExpiry.setDate(refreshedExpiry.getDate() + env.reviewLinkTtlDays);
     await admin
       .from("client_review_links")
       .update({
-        revoked_at: new Date().toISOString(),
-        revoked_reason: "Planning modifié après envoi ou validation",
+        sheet_version_id: versionId,
+        expires_at: refreshedExpiry.toISOString(),
+        updated_at: new Date().toISOString(),
       })
       .eq("weekly_sheet_id", sheet.id)
       .is("revoked_at", null);

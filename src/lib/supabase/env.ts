@@ -36,8 +36,14 @@ export const env = {
   get appUrl() {
     return process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
   },
-  /** Durée de validité par défaut d'un lien client, en jours. */
+  /**
+   * Durée de validité d'un lien client, en jours.
+   *
+   * Plancher à 7 jours : un lien envoyé au client doit rester ouvrable une
+   * semaine entière, quelle que soit la configuration du déploiement.
+   */
   get reviewLinkTtlDays() {
-    return Number.parseInt(process.env.REVIEW_LINK_TTL_DAYS ?? "21", 10);
+    const configured = Number.parseInt(process.env.REVIEW_LINK_TTL_DAYS ?? "21", 10);
+    return Number.isFinite(configured) ? Math.max(configured, 7) : 21;
   },
 };
