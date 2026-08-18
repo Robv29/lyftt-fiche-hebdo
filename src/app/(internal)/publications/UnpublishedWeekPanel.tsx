@@ -13,21 +13,17 @@ export interface UnpublishedItem {
   formatLabel: string;
 }
 
-function todayInParis(): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-}
-
 function dayLabel(day: string): string {
   return format(new Date(`${day}T12:00:00`), "EEEE d MMMM", { locale: fr });
 }
 
 /**
- * Ce qui n'est pas encore parti — retard compris.
+ * Retard de la semaine en cours.
  *
- * La checklist quotidienne ne montre qu'un jour à la fois : un retard pris la
- * semaine dernière disparaissait purement et simplement une fois la semaine
- * tournée. Ce panneau regroupe tout ce qui reste à publier, jours passés en
- * tête et marqués comme tels.
+ * `items` ne contient que des jours déjà passés dans la semaine du calendrier
+ * réel — la sélection se fait côté serveur (`page.tsx`), pas ici. Tout ce qui
+ * arrive dans ce composant est donc en retard, par construction : pas besoin
+ * de le redire ligne par ligne.
  */
 export function UnpublishedWeekPanel({ items }: { items: UnpublishedItem[] }) {
   const [open, setOpen] = useState(false);
@@ -59,8 +55,6 @@ export function UnpublishedWeekPanel({ items }: { items: UnpublishedItem[] }) {
     };
   }, [open]);
 
-  const today = todayInParis();
-  const lateCount = items.filter((item) => item.scheduledDate < today).length;
   const groups = Object.entries(
     items.reduce<Record<string, UnpublishedItem[]>>((result, item) => {
       (result[item.scheduledDate] ??= []).push(item);
@@ -78,7 +72,7 @@ export function UnpublishedWeekPanel({ items }: { items: UnpublishedItem[] }) {
       >
         <Icon name="warning" className="h-4 w-4"/>Non publié
         {items.length > 0 && (
-          <span className={`badge text-white ${lateCount > 0 ? "bg-state-changes" : "bg-state-progress"}`}>{items.length}</span>
+          <span className="badge bg-state-changes text-white">{items.length}</span>
         )}
       </button>
 
@@ -99,15 +93,10 @@ export function UnpublishedWeekPanel({ items }: { items: UnpublishedItem[] }) {
           >
             <header className="flex shrink-0 items-center justify-between gap-4 border-b bg-white/90 px-4 py-4 backdrop-blur-xl sm:px-7">
               <div className="min-w-0">
-                <p className="eyebrow">À publier</p>
+                <p className="eyebrow">Cette semaine, en retard</p>
                 <h2 id="unpublished-week-title" className="mt-1 truncate text-lg font-semibold">
                   {items.length} publication{items.length > 1 ? "s" : ""} non publiée{items.length > 1 ? "s" : ""}
                 </h2>
-                {lateCount > 0 && (
-                  <p className="mt-0.5 text-xs font-semibold text-state-changes">
-                    dont {lateCount} en retard
-                  </p>
-                )}
               </div>
               <button
                 type="button"
@@ -119,16 +108,11 @@ export function UnpublishedWeekPanel({ items }: { items: UnpublishedItem[] }) {
 
             <div className="flex-1 space-y-6 overflow-y-auto p-4 sm:p-7">
               {groups.length === 0 && (
-                <p className="text-center text-sm text-ink-faint">Tout est publié.</p>
+                <p className="text-center text-sm text-ink-faint">Rien en retard cette semaine.</p>
               )}
-              {groups.map(([day, dayItems]) => {
-                const late = day < today;
-                return (
+              {groups.map(([day, dayItems]) => (
                 <section key={day} className="space-y-2">
-                  <h3 className="flex items-center gap-2 px-1 text-sm font-semibold capitalize">
-                    {dayLabel(day)}
-                    {late && <span className="badge bg-state-changes text-white">en retard</span>}
-                  </h3>
+                  <h3 className="px-1 text-sm font-semibold capitalize">{dayLabel(day)}</h3>
                   <ul className="space-y-2">
                     {dayItems.map((item) => (
                       <li key={item.id}>
@@ -148,8 +132,7 @@ export function UnpublishedWeekPanel({ items }: { items: UnpublishedItem[] }) {
                     ))}
                   </ul>
                 </section>
-                );
-              })}
+              ))}
             </div>
           </div>
         </div>

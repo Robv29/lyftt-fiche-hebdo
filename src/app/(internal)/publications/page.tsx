@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { resolveMediaUrl } from "@/lib/media/signed-url";
-import { addDays, endOfISOWeek, format } from "date-fns";
+import { addDays, format, startOfISOWeek } from "date-fns";
 import { fr } from "date-fns/locale";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -80,17 +80,19 @@ export default async function PublicationsPage({ searchParams }:{ searchParams:P
   const selectedDayLabel=format(day,"EEEE d MMMM yyyy",{locale:fr});
 
   /*
-   * Tout ce qui n'est pas publié, pas seulement le jour affiché ni la semaine
-   * en cours : la checklist quotidienne ne montre qu'une journée, et un
-   * retard pris la semaine dernière disparaissait purement et simplement une
-   * fois la semaine tournée. La borne haute reste la fin de la semaine
-   * affichée — inutile d'annoncer ce qui n'est pas encore dû.
+   * Alerte de retard, pas inventaire général : seuls les jours de la semaine
+   * en cours qui sont déjà passés comptent. Le jour affiché peut être
+   * n'importe quelle date parcourue dans la checklist ; la semaine et
+   * « aujourd'hui » restent celles du calendrier réel, sans quoi naviguer
+   * changerait ce que l'alerte considère comme en retard.
    */
-  const weekEnd=format(endOfISOWeek(day),"yyyy-MM-dd");
+  const realToday=todayInParis();
+  const currentWeekStart=format(startOfISOWeek(new Date(`${realToday}T12:00:00`)),"yyyy-MM-dd");
   const { data:unpublishedRows }=await supabase
     .from("weekly_sheet_items")
     .select("id, scheduled_date, scheduled_time, format, weekly_sheets!inner ( clients ( name ) )")
-    .lte("scheduled_date",weekEnd)
+    .gte("scheduled_date",currentWeekStart)
+    .lt("scheduled_date",realToday)
     .eq("is_cancelled",false)
     .is("published_at",null)
     .order("scheduled_date",{ascending:true})
