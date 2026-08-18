@@ -375,6 +375,20 @@ function OverviewView({ data }: { data:MetricsData }) {
               : data.satisfaction.unhappy > 0 ? "danger" : rateTone(data.satisfaction.percentage)}
             progress={data.satisfaction.percentage ?? undefined}
           />
+          {/*
+            Production interne : le délai tenu se lit avec le reste, pas dans un
+            onglet secondaire. C'est lui qui décale la semaine quand il glisse.
+          */}
+          <KpiCard
+            icon="layers"
+            label="Production interne dans les temps"
+            value={data.punctuality.percentage === null ? "—" : percentValue(data.punctuality.percentage)}
+            detail={data.punctuality.delivered === 0
+              ? "aucune commande livrée sur la période"
+              : `${data.punctuality.onTime}/${data.punctuality.delivered} livrées dans les temps${data.punctuality.averageDelayDays === null ? "" : ` · ${data.punctuality.averageDelayDays} j de retard moyen`}`}
+            tone={data.punctuality.percentage === null ? "info" : rateTone(data.punctuality.percentage, 90, 70)}
+            progress={data.punctuality.percentage ?? undefined}
+          />
         </div>
       </section>
 
