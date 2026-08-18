@@ -234,6 +234,7 @@ export default async function MetricsPage({
     deadlineRate,
     overallScore,
     relationScore,
+    periodLabel: periodLabel(since),
     penalty,
     budgetIssues: budget.withIssue,
     budgetTotal: budget.total,
@@ -270,6 +271,8 @@ type MetricsData = {
   overdue:number; averageResponse:number; averageCorrection:number; averageVersions:number; outOfScope:number;
   ticketsPerSheet:number; viewRate:number; noCorrectionRate:number; deadlineRate:number; overallScore:number;
   relationScore:number; penalty:number; budgetIssues:number; budgetTotal:number;
+  /** Fenêtre analysée, telle qu'elle est écrite sur le sélecteur. */
+  periodLabel:string;
   ticketTotal:number; typeEntries:[TicketType,number][]; clientEntries:[string,number][]; donutGradient:string;
   signals:{tone:Tone;icon:string;title:string;body:string}[];
 };
@@ -306,7 +309,7 @@ function OverviewView({ data }: { data:MetricsData }) {
               </p>
             )}
           </div>
-          <Ring value={data.overallScore} label="score global" light/>
+          <Ring value={data.overallScore} label={`score global · ${data.periodLabel}`} light/>
         </article>
 
         <div className="insights-overview-kpis">
@@ -454,5 +457,20 @@ function percentValue(value:number):string { return Number.isFinite(value) ? `${
 function hours(value:number):string { return value ? value<24?`${value.toFixed(1)} h`:`${(value/24).toFixed(1)} j` : "—"; }
 function rateTone(value:number, good=80, warning=50):Tone { return value>=good?"success":value>=warning?"warning":"danger"; }
 function delayTone(value:number):Tone { return !value?"info":value<=24?"success":value<=48?"warning":"danger"; }
+/**
+ * Nom de la fenêtre analysée.
+ *
+ * Le score se calcule bien sur la période choisie, mais rien ne le disait :
+ * quand deux fenêtres donnent le même chiffre — ce qui arrive dès que les
+ * taux bougent peu — on croit l'écran figé.
+ */
+function periodLabel(since:string):string {
+  const days = Math.round((Date.now() - new Date(`${since}T00:00:00Z`).getTime()) / 86_400_000);
+  if (days <= 10) return "7 jours";
+  if (days <= 45) return "30 jours";
+  if (days <= 120) return "90 jours";
+  return "6 mois";
+}
+
 function dateDaysAgo(days:number):string { return new Date(Date.now()-days*24*3600*1000).toISOString().slice(0,10); }
 function formatDate(value:string):string { return new Intl.DateTimeFormat("fr-FR",{day:"numeric",month:"long",year:"numeric",timeZone:"UTC"}).format(new Date(`${value}T00:00:00Z`)); }
