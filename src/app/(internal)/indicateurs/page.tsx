@@ -81,38 +81,95 @@ export default async function MetricsPage({
   searchParams: Promise<{ depuis?: string; vue?: string }>;
 }) {
   const filters = await searchParams;
-  const since = filters.depuis ?? dateDaysAgo(90);
+  /*
+   * Une borne illisible dans l'adresse ferait échouer les requêtes, et l'écran
+   * afficherait des zéros comme s'il n'y avait rien eu. On retombe sur la
+   * période par défaut plutôt que de mentir.
+   */
+  const since = /^\d{4}-\d{2}-\d{2}$/.test(filters.depuis ?? "")
+    ? filters.depuis!
+    : dateDaysAgo(90);
   const view: MetricsView = METRICS_VIEWS.includes(filters.vue as MetricsView)
     ? filters.vue as MetricsView
     : "overview";
   const profile = await getCurrentProfile();
   const supabase = await createSupabaseServerClient();
 
-  const [{ data: sheets }, { data: tickets }, { data: versions }] = await Promise.all([
-    supabase.from("weekly_sheets").select("id, status, sent_to_client_at, first_viewed_at, approved_at, validation_deadline_at, clients ( name )").gte("period_start", since),
-    supabase.from("client_tickets").select("id, weekly_sheet_id, ticket_type, status, submitted_at, resolved_at, clients ( name )").gte("submitted_at", `${since}T00:00:00Z`),
+  /*
+   * La fenêtre porte sur les **événements**, pas sur la semaine des fiches.
+   *
+   * Le filtre s'appliquait à `period_start`, le lundi de la semaine produite.
+   * Deux erreurs en découlaient : une fiche préparée pour la semaine prochaine
+   * a un lundi dans le futur, donc postérieur à la borne, et entrait dans « les
+   * 7 derniers jours » ; à l'inverse, une fiche envoyée hier pour une semaine
+   * ancienne en était écartée. Chaque mesure se compte désormais à la date de
+   * ce qu'elle mesure — envoi, validation, retour.
+   */
+  const sinceDate = new Date(`${since}T00:00:00Z`);
+  const sinceTs = sinceDate.toISOString();
+  const inWindow = (value: string | null | undefined) => Boolean(value) && new Date(value!) >= sinceDate;
+
+  /*
+   * Deux requêtes par famille plutôt qu'un `or` : un filtre composé mal
+   * interprété ne lève pas d'erreur visible, il renvoie une liste vide — et
+   * l'écran afficherait des zéros comme s'il ne s'était rien passé. Ici, chaque
+   * requête ne dit qu'une chose, et les résultats se rejoignent en mémoire.
+   */
+  const SHEET_FIELDS = "id, status, sent_to_client_at, first_viewed_at, approved_at, validation_deadline_at, clients ( name )";
+  const TICKET_FIELDS = "id, weekly_sheet_id, ticket_type, status, submitted_at, resolved_at, clients ( name )";
+
+  const [
+    { data: sentSheets }, { data: approvedSheets },
+    { data: receivedTickets }, { data: resolvedTickets },
+    { data: versions }, { count: overdueCount },
+  ] = await Promise.all([
+    supabase.from("weekly_sheets").select(SHEET_FIELDS).gte("sent_to_client_at", sinceTs),
+    supabase.from("weekly_sheets").select(SHEET_FIELDS).gte("approved_at", sinceTs),
+    supabase.from("client_tickets").select(TICKET_FIELDS).gte("submitted_at", sinceTs),
+    supabase.from("client_tickets").select(TICKET_FIELDS).gte("resolved_at", sinceTs),
     supabase.from("weekly_sheet_versions").select("weekly_sheet_id, version_number"),
+    /*
+     * Le retard n'est pas un événement de la période : c'est l'état du jour.
+     * Le borner à la fenêtre revenait à oublier les fiches en souffrance depuis
+     * plus longtemps — précisément celles qu'il faut voir.
+     */
+    supabase.from("weekly_sheets")
+      .select("id", { count: "exact", head: true })
+      .lt("validation_deadline_at", new Date().toISOString())
+      // `archived` n'existe pas dans l'énumération : la base refuse la requête
+      // et le compte revient vide, c'est-à-dire zéro retard affiché à tort.
+      .not("status", "in", "(approved_by_client,tacitly_approved,rejected,expired)"),
   ]);
 
-  const sheetList = sheets ?? [];
-  const ticketList = tickets ?? [];
-  const sent = sheetList.filter((sheet) => sheet.sent_to_client_at);
+  // Une fiche envoyée puis validée dans la période ne doit compter qu'une fois.
+  const sheetList = [...new Map(
+    [...(sentSheets ?? []), ...(approvedSheets ?? [])].map((sheet) => [sheet.id as string, sheet]),
+  ).values()];
+  const ticketList = [...new Map(
+    [...(receivedTickets ?? []), ...(resolvedTickets ?? [])].map((ticket) => [ticket.id as string, ticket]),
+  ).values()];
+  const sent = sheetList.filter((sheet) => inWindow(sheet.sent_to_client_at));
   const viewed = sent.filter((sheet) => sheet.first_viewed_at);
-  const approved = sheetList.filter((sheet) => ["approved_by_client", "tacitly_approved"].includes(sheet.status));
+  const approved = sheetList.filter((sheet) =>
+    inWindow(sheet.approved_at) && ["approved_by_client", "tacitly_approved"].includes(sheet.status));
   const sheetIds = new Set(sheetList.map((sheet) => sheet.id));
+  // Retours reçus pendant la période : c'est eux que comptent les répartitions.
+  const received = ticketList.filter((ticket) => inWindow(ticket.submitted_at));
   const sheetsWithTickets = new Set(ticketList.map((ticket) => ticket.weekly_sheet_id).filter(Boolean));
   const approvedWithoutCorrection = sent.filter((sheet) => !sheetsWithTickets.has(sheet.id) && sheet.status === "approved_by_client");
   const beforeDeadline = approved.filter((sheet) => sheet.approved_at && sheet.validation_deadline_at && new Date(sheet.approved_at) <= new Date(sheet.validation_deadline_at));
-  const overdue = sheetList.filter((sheet) => sheet.validation_deadline_at && new Date(sheet.validation_deadline_at) < new Date() && !["approved_by_client", "tacitly_approved", "archived"].includes(sheet.status)).length;
+  const overdue = overdueCount ?? 0;
 
   const responseDelays = sent.filter((sheet) => sheet.first_viewed_at && sheet.sent_to_client_at).map((sheet) => (new Date(sheet.first_viewed_at!).getTime() - new Date(sheet.sent_to_client_at!).getTime()) / 3_600_000);
-  const correctionDelays = ticketList.filter((ticket) => ticket.resolved_at).map((ticket) => (new Date(ticket.resolved_at!).getTime() - new Date(ticket.submitted_at).getTime()) / 3_600_000);
+  // Délai de correction : les retours clos pendant la période, quelle que soit
+  // leur date d'arrivée — sans quoi une correction longue n'est jamais comptée.
+  const correctionDelays = ticketList.filter((ticket) => inWindow(ticket.resolved_at)).map((ticket) => (new Date(ticket.resolved_at!).getTime() - new Date(ticket.submitted_at).getTime()) / 3_600_000);
   const averageResponse = average(responseDelays);
   const averageCorrection = average(correctionDelays);
 
   const byType = new Map<TicketType, number>();
   const byClient = new Map<string, number>();
-  for (const ticket of ticketList) {
+  for (const ticket of received) {
     byType.set(ticket.ticket_type, (byType.get(ticket.ticket_type) ?? 0) + 1);
     const name = (ticket.clients as unknown as { name: string } | null)?.name ?? "—";
     byClient.set(name, (byClient.get(name) ?? 0) + 1);
@@ -125,8 +182,8 @@ export default async function MetricsPage({
   }
 
   const averageVersions = average([...versionCounts.values()]);
-  const outOfScope = ticketList.filter((ticket) => ticket.status === "out_of_scope").length;
-  const ticketsPerSheet = sent.length ? ticketList.length / sent.length : 0;
+  const outOfScope = received.filter((ticket) => ticket.status === "out_of_scope").length;
+  const ticketsPerSheet = sent.length ? received.length / sent.length : 0;
   const viewRate = ratio(viewed.length, sent.length);
   const noCorrectionRate = ratio(approvedWithoutCorrection.length, sent.length);
   const deadlineRate = ratio(beforeDeadline.length, approved.length);
