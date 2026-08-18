@@ -9,6 +9,7 @@ import {
   type TicketStatus
 } from "@/lib/domain/types";
 import { ClientAvatar, EmptyState, PageHeader } from "@/components/ui";
+import { RequestLinkButton } from "./RequestLinkButton";
 import { Icon } from "@/components/Icon";
 
 /** §9 — Écran interne « Retours clients ». */
@@ -66,8 +67,16 @@ export default async function TicketsPage({
 
   const { data: tickets } = await query;
 
+  const { data: linkClients } = await supabase
+    .from("clients")
+    .select("id, name")
+    .eq("is_active", true)
+    .order("name");
+
   return (
     <div className="space-y-7">
+      <RequestLinkButton clients={(linkClients ?? []).map((client) => ({ id: client.id as string, name: client.name as string }))}/>
+
       <PageHeader eyebrow="File d’intervention" title="Tickets clients" description="Qualifiez les demandes, corrigez le contenu concerné et renvoyez la nouvelle version au client." actions={<span className="badge bg-[#e8f2ff] text-[#0b5e9f]">{tickets?.length ?? 0} ticket{(tickets?.length ?? 0) > 1 ? "s" : ""}</span>} />
 
       <nav className="filter-bar" aria-label="Filtrer les tickets par statut">

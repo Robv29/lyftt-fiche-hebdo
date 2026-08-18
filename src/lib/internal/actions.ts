@@ -5,6 +5,7 @@ import { z } from "zod";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { env } from "@/lib/supabase/env";
+import { ensureRequestLink } from "@/lib/review/request-link";
 import { generateReviewToken } from "@/lib/domain/tokens";
 import { canTransition } from "@/lib/domain/workflow";
 import { checkExportBeforeSend } from "@/lib/domain/edge-cases";
@@ -654,4 +655,35 @@ export async function assignTicketContributor(
   revalidatePath("/retours");
   revalidatePath("/production");
   return { ok: true, message: `Confié à ${target.full_name}.` };
+}
+
+/**
+ * Lien de demande d'un client, à lui donner une fois pour toutes.
+ *
+ * Un seul lien par client, créé au premier besoin et réutilisé ensuite : en
+ * émettre un nouveau à chaque clic ferait mourir celui que le client a déjà
+ * enregistré dans ses contacts.
+ */
+export async function clientRequestLink(clientId: string): Promise<InternalActionResult> {
+  const profile = await requireProfile();
+  if (!["super_admin", "production_manager", "community_manager"].includes(profile.role)) {
+    return { ok: false, message: "Action non autorisée." };
+  }
+
+  const parsed = z.string().uuid().safeParse(clientId);
+  if (!parsed.success) return { ok: false, message: "Client invalide." };
+
+  // Le périmètre est vérifié par RLS avant toute écriture par la clé service.
+  const scoped = await createSupabaseServerClient();
+  const { data: client } = await scoped
+    .from("clients")
+    .select("id")
+    .eq("id", parsed.data)
+    .maybeSingle();
+  if (!client) return { ok: false, message: "Client introuvable ou accès refusé." };
+
+  const link = await ensureRequestLink(parsed.data, profile.id);
+  if ("error" in link) return { ok: false, message: `Lien indisponible : ${link.error}` };
+
+  return { ok: true, reviewUrl: `${env.appUrl}/demande/${link.token}` };
 }
