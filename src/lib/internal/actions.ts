@@ -581,3 +581,77 @@ export async function resolveServiceRequest(ticketId: string): Promise<InternalA
   revalidatePath(`/retours/${ticketId}`);
   return { ok: true, message: "Demande marquée comme traitée." };
 }
+
+// ---------------------------------------------------------------------------
+// Qui s'occupe d'une correction
+// ---------------------------------------------------------------------------
+
+/**
+ * Désignation de la personne qui produit la correction.
+ *
+ * À la réception d'un ticket, l'application classe la demande — visuel et
+ * vidéo partent en production, le reste reste éditorial — puis retient le
+ * premier graphiste ou vidéaste actif qu'elle trouve, sans autre critère. Ce
+ * choix était définitif : la personne désignée était la seule à voir le ticket
+ * dans son écran de production, et un départ en congés suffisait à le rendre
+ * invisible pour tout le monde.
+ *
+ * Le community manager reste `owner` quoi qu'il arrive : on ne remplace ici que
+ * le `contributor`, celui qui tient le fichier.
+ */
+export async function assignTicketContributor(
+  ticketId: string,
+  profileId: string,
+): Promise<InternalActionResult> {
+  const profile = await requireProfile();
+  if (!["super_admin", "production_manager", "community_manager"].includes(profile.role)) {
+    return { ok: false, message: "Seul l'encadrement peut changer l'affectation." };
+  }
+
+  const ids = z.object({ ticketId: z.string().uuid(), profileId: z.string().uuid() })
+    .safeParse({ ticketId, profileId });
+  if (!ids.success) return { ok: false, message: "Affectation invalide." };
+
+  const supabase = await createSupabaseServerClient();
+  const { data: ticket } = await supabase
+    .from("client_tickets")
+    .select("id, title")
+    .eq("id", ids.data.ticketId)
+    .maybeSingle();
+  if (!ticket) return { ok: false, message: "Ticket introuvable ou accès refusé." };
+
+  const admin = createSupabaseAdminClient();
+  const { data: target } = await admin
+    .from("profiles")
+    .select("id, full_name, is_active")
+    .eq("id", ids.data.profileId)
+    .maybeSingle();
+  if (!target?.is_active) return { ok: false, message: "Cette personne n'est plus active." };
+
+  // Un seul contributeur à la fois : sinon le ticket s'affiche sur deux écrans
+  // et chacun attend que l'autre s'en occupe.
+  await admin
+    .from("client_ticket_assignments")
+    .delete()
+    .eq("ticket_id", ids.data.ticketId)
+    .eq("assignment_role", "contributor");
+
+  const { error } = await admin.from("client_ticket_assignments").insert({
+    ticket_id: ids.data.ticketId,
+    profile_id: ids.data.profileId,
+    assignment_role: "contributor",
+  });
+  if (error) return { ok: false, message: `Affectation impossible : ${error.message}` };
+
+  await admin.from("internal_notifications").insert({
+    profile_id: ids.data.profileId,
+    ticket_id: ids.data.ticketId,
+    title: "Correction à produire",
+    body: `${profile.full_name} vous confie : ${ticket.title}`,
+  });
+
+  revalidatePath(`/retours/${ids.data.ticketId}`);
+  revalidatePath("/retours");
+  revalidatePath("/production");
+  return { ok: true, message: `Confié à ${target.full_name}.` };
+}

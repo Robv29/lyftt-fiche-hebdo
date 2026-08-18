@@ -5,6 +5,7 @@ import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
 import { availableTransitions } from "@/lib/domain/workflow";
 import { diffWords, summarizeDiff } from "@/lib/domain/text-diff";
 import {
+  appRoleLabel,
   ticketPriorityLabel,
   ticketStatusLabel,
   itemApprovalStatusLabel
@@ -12,6 +13,8 @@ import {
 import { TicketActions } from "./TicketActions";
 import { isServiceRequest } from "@/lib/domain/ticket-types";
 import { resolveMediaUrl } from "@/lib/media/signed-url";
+import { requiresProduction } from "@/lib/domain/routing";
+import { AssignContributor } from "./AssignContributor";
 
 /** §9 / §12 — Vue détail d'un ticket, avec comparatif du texte. */
 export default async function TicketDetailPage({
@@ -33,7 +36,7 @@ export default async function TicketDetailPage({
        weekly_sheets ( iso_week, iso_year ),
        weekly_sheet_items ( id, caption, hashtags, scheduled_date, approval_status,
          media_assets:media_asset_id ( kind, file_name, storage_path, preview_path, purged_at, preview_purged_at ) ),
-       client_ticket_assignments ( assignment_role, accepted_at, completed_at, profiles ( full_name, role ) ),
+       client_ticket_assignments ( assignment_role, accepted_at, completed_at, profile_id, profiles ( full_name, role ) ),
        client_ticket_comments ( id, body, visibility, author_name, author_type, created_at ),
        client_ticket_attachments ( id, media_assets ( file_name, storage_path, kind ) )`,
     )
@@ -71,6 +74,7 @@ export default async function TicketDetailPage({
     : null;
 
   const assignments = (ticket.client_ticket_assignments ?? []) as unknown as {
+    profile_id: string;
     assignment_role: string;
     profiles: { full_name: string; role: string } | null;
   }[];
@@ -91,6 +95,21 @@ export default async function TicketDetailPage({
   const details = (ticket.details ?? {}) as Record<string, string>;
 
   // §12 — comparatif entre le texte actuel et la proposition du client.
+  /*
+   * Candidats à la production. Une demande éditoriale n'en a pas besoin : elle
+   * ne passe pas par l'écran de production.
+   */
+  const needsProduction = requiresProduction(ticket.ticket_type);
+  const { data: producers } = needsProduction
+    ? await supabase
+        .from("profiles")
+        .select("id, full_name, role")
+        .in("role", ["graphic_designer", "video_editor", "production_manager"])
+        .eq("is_active", true)
+        .order("full_name")
+    : { data: [] };
+  const contributor = assignments.find((assignment) => assignment.assignment_role === "contributor");
+
   const showDiff = Boolean(item && ticket.client_suggestion);
   const segments = showDiff ? diffWords(item!.caption, ticket.client_suggestion!) : [];
   const summary = showDiff ? summarizeDiff(segments) : null;
@@ -165,6 +184,17 @@ export default async function TicketDetailPage({
                   </li>
                 ))}
               </ul>
+            )}
+            {needsProduction && (
+              <AssignContributor
+                ticketId={ticket.id}
+                currentProfileId={contributor?.profile_id ?? null}
+                candidates={(producers ?? []).map((producer) => ({
+                  id: producer.id as string,
+                  name: producer.full_name as string,
+                  roleLabel: appRoleLabel(producer.role as never),
+                }))}
+              />
             )}
           </section>
 
