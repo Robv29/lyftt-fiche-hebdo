@@ -11,6 +11,7 @@ import {
   reconcileManagementMonths,
   cadenceMonthlyCostCents,
   findService,
+  isShootingLine,
   envelopeLines,
   lineTotalCents,
   isManagementMonth,
@@ -567,6 +568,39 @@ describe("forfait shooting", () => {
       today: "2026-07-01",
     });
     expect(schedule?.dueOn).toBe("2026-07-15");
+  });
+
+  /*
+   * Cas remonté par la direction : un forfait mensuel était en alerte
+   * permanente, le rappel s'ouvrant un mois avant une échéance mensuelle,
+   * c'est-à-dire le jour même du shooting précédent.
+   */
+  it("ne prévient pas un mois avant sur un forfait mensuel", () => {
+    const mensuel = { serviceKey: "shooting_demi", everyMonths: 1 } as const;
+    const base = { plan: mensuel, lastDoneOn: "2026-08-07", contractStartDate: "2026-06-23" };
+
+    expect(shootingSchedule({ ...base, today: "2026-08-18" })).toMatchObject({
+      dueOn: "2026-09-07",
+      remindFrom: "2026-08-23",
+      remindNow: false,
+      overdue: false,
+    });
+    // Quinze jours avant, soit la moitié de la période.
+    expect(shootingSchedule({ ...base, today: "2026-08-23" })?.remindNow).toBe(true);
+  });
+
+  /*
+   * Un shooting s'inscrit par le bouton « Date calée » ou depuis le catalogue
+   * de l'écran budget. Ne reconnaître que le premier réclamait un shooting à
+   * des clients qui en avaient déjà eu trois.
+   */
+  it("reconnaît un shooting quelle que soit la façon dont il a été inscrit", () => {
+    expect(isShootingLine("shooting_forfait")).toBe(true);
+    expect(isShootingLine("shooting_demi")).toBe(true);
+    expect(isShootingLine("shooting_express")).toBe(true);
+    expect(isShootingLine("shooting_jour")).toBe(true);
+    expect(isShootingLine("production_mensuelle")).toBe(false);
+    expect(isShootingLine("site_one_page")).toBe(false);
   });
 
   it("ne planifie rien sans forfait", () => {

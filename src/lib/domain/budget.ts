@@ -273,6 +273,12 @@ export function billableLines(lines: BudgetLine[], mode: BillingMode): BudgetLin
   return lines.filter((line) => line.billedDirectly);
 }
 
+function addDays(date: string, days: number): string {
+  const result = new Date(`${date}T00:00:00Z`);
+  result.setUTCDate(result.getUTCDate() + days);
+  return result.toISOString().slice(0, 10);
+}
+
 /** Même jour, n mois plus tard. Un 31 tombe sur le dernier jour du mois visé. */
 export function addMonths(date: string, months: number): string {
   const origin = new Date(`${date}T00:00:00Z`);
@@ -403,6 +409,26 @@ export const SHOOTING_PLAN_SERVICES = [
 /** Clé des lignes posées quand un shooting du forfait est réalisé. */
 export const SHOOTING_FORFAIT_KEY = "shooting_forfait";
 
+/**
+ * Toute ligne qui atteste d'un shooting, quelle que soit sa provenance.
+ *
+ * Un shooting s'inscrit de deux façons : par le bouton « Date calée », qui pose
+ * une ligne `shooting_forfait`, ou depuis l'écran budget, en choisissant la
+ * prestation dans le catalogue. Le rappel ne regardait que la première, et
+ * réclamait donc un shooting à des clients qui en avaient déjà eu trois —
+ * inscrits, mais sous l'autre nom.
+ */
+export function isShootingLine(serviceKey: string): boolean {
+  return serviceKey === SHOOTING_FORFAIT_KEY
+    || (SHOOTING_PLAN_SERVICES as readonly string[]).includes(serviceKey);
+}
+
+/** Clés reconnues comme un shooting réalisé, pour les requêtes. */
+export const SHOOTING_LINE_KEYS: readonly string[] = [
+  SHOOTING_FORFAIT_KEY,
+  ...SHOOTING_PLAN_SERVICES,
+];
+
 export function shootingMonthlyCostCents(plan: ShootingPlan | null): number {
   if (!plan || !Number.isInteger(plan.everyMonths) || plan.everyMonths < 1) return 0;
   const price = findService(plan.serviceKey)?.unitPriceCents ?? 0;
@@ -469,7 +495,14 @@ export function shootingSchedule(input: {
   if (!anchor) return null;
 
   const dueOn = addMonths(anchor, input.plan.everyMonths);
-  const remindFrom = addMonths(dueOn, -1);
+  /*
+   * Un mois d'avance sur un forfait mensuel, c'est un rappel permanent : il
+   * s'ouvrirait le jour même du shooting précédent. Le délai ne dépasse donc
+   * jamais la moitié de la période.
+   */
+  const remindFrom = input.plan.everyMonths >= 2
+    ? addMonths(dueOn, -1)
+    : addDays(dueOn, -15);
   return {
     dueOn,
     remindFrom,

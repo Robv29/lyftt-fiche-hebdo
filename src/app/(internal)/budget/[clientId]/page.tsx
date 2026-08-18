@@ -8,7 +8,7 @@ import { BudgetEditor } from "./BudgetEditor";
 import { cadenceFromNotes, shootingPlanFromNotes, syncManagementMonths } from "@/lib/budget/management-months";
 import { invoiceMonths, type InvoiceStatus } from "@/lib/domain/invoicing";
 import { resolveMediaUrl } from "@/lib/media/signed-url";
-import { SHOOTING_FORFAIT_KEY, shootingSchedule } from "@/lib/domain/budget";
+import { isShootingLine, shootingSchedule } from "@/lib/domain/budget";
 
 export const dynamic = "force-dynamic";
 
@@ -127,7 +127,7 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
    * l'addition, à zéro euro — le forfait est déjà réglé par le lissage mensuel.
    */
   const shootingDates = lines
-    .filter((line) => line.serviceKey === SHOOTING_FORFAIT_KEY)
+    .filter((line) => isShootingLine(line.serviceKey))
     .map((line) => line.performedOn)
     .sort();
   const schedule = shootingSchedule({

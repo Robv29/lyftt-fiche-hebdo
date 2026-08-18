@@ -7,7 +7,7 @@ import { requiresProduction } from "@/lib/domain/routing";
 import { Icon } from "@/components/Icon";
 import { planningWeekRange, sheetCompletion } from "@/lib/domain/planning";
 import {
-  SHOOTING_FORFAIT_KEY,
+  SHOOTING_LINE_KEYS,
   budgetSummary,
   parseShootingPlan,
   shootingPlanSummary,
@@ -120,7 +120,7 @@ export default async function DashboardPage() {
     const { data: shootingLines } = await createSupabaseAdminClient()
       .from("client_budget_lines")
       .select("client_id, performed_on")
-      .eq("service_key", SHOOTING_FORFAIT_KEY)
+      .in("service_key", SHOOTING_LINE_KEYS)
       .in("client_id", shootingClients.map((entry) => entry.client.id));
 
     const datesByClient = new Map<string, string[]>();
