@@ -94,7 +94,7 @@ export interface HealthInputs {
   budgetsComplete: number | null;
   /** Shootings dont on sait s'ils sont compris au forfait ou vendus en plus. */
   shootingsCategorised: number | null;
-  /** Retours renvoyés au client dans les vingt heures suivant leur arrivée. */
+  /** Retours renvoyés au client dans les vingt heures ouvrées suivant leur arrivée. */
   ticketsOnTime: number | null;
 }
 
@@ -184,9 +184,9 @@ export function healthScore(input: HealthInputs): HealthScore {
         },
         {
           key: "tickets",
-          label: "Retours corrigés en 20 h",
+          label: "Retours corrigés en 20 h ouvrées",
           percentage: input.ticketsOnTime,
-          advice: "Renvoyez le lien corrigé dans les vingt heures qui suivent l'arrivée du retour : un ticket ouvert au-delà est déjà compté en faute.",
+          advice: "Renvoyez le lien corrigé dans les vingt heures ouvrées qui suivent l'arrivée du retour : un ticket ouvert au-delà est déjà compté en faute.",
           missingAdvice: "Aucun retour jugeable : les compteurs en cours ne sont pas notés.",
         },
       ],

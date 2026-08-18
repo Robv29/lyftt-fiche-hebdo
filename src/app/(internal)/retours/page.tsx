@@ -3,7 +3,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isServiceRequest, isServiceRequestOverdue, serviceRequestAgeInDays } from "@/lib/domain/ticket-types";
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
 import { deadlineState } from "@/lib/domain/deadline";
-import { ticketDeadline, TICKET_SLA_HOURS } from "@/lib/domain/ticket-sla";
+import { ticketDeadline, ticketSlaState } from "@/lib/domain/ticket-sla";
 import {
   ticketPriorityLabel,
   ticketStatusLabel,
@@ -57,14 +57,11 @@ export default async function TicketsPage({
     query = query.not("status", "in", "(closed,cancelled,rejected,approved_by_client)");
   } else if (statusFilter === "overdue") {
     /*
-     * Le retard se compte depuis l'arrivée du retour, pas depuis l'échéance de
-     * la fiche : un ticket reçu lundi pour une semaine validée vendredi
-     * passait « dans les temps » pendant quatre jours. Vingt heures après son
-     * arrivée, il est en faute.
+     * Le retard ne s'exprime plus en SQL : l'échéance dépend des heures
+     * ouvrées, des week-ends et des fériés. On ramène donc les tickets ouverts
+     * et le tri se fait plus bas, une fois la réponse au client connue.
      */
-    query = query
-      .lt("submitted_at", new Date(Date.now() - TICKET_SLA_HOURS * 3_600_000).toISOString())
-      .not("status", "in", "(closed,cancelled,rejected,approved_by_client)");
+    query = query.not("status", "in", "(closed,cancelled,rejected,approved_by_client)");
   } else if (statusFilter !== "all") {
     query = query.eq("status", statusFilter as TicketStatus);
   }
@@ -98,7 +95,10 @@ export default async function TicketsPage({
    * lien entre un ticket et la version envoyée — alors il se fait ici.
    */
   const visibleTickets = statusFilter === "overdue"
-    ? (tickets ?? []).filter((ticket) => !(answeredAt.get(ticket.id) ?? ticket.resolved_at))
+    ? (tickets ?? []).filter((ticket) => ticketSlaState({
+        submittedAt: ticket.submitted_at,
+        respondedAt: answeredAt.get(ticket.id) ?? ticket.resolved_at ?? null,
+      }) === "depasse")
     : tickets ?? [];
 
   const { data: linkClients } = await supabase

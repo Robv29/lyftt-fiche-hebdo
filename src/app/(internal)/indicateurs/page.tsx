@@ -178,8 +178,8 @@ export default async function MetricsPage({
     /*
      * Tickets encore ouverts. Comme le retard des fiches, c'est un état du
      * jour : le borner à la fenêtre masquerait les plus anciens. L'échéance ne
-     * vient plus de la base mais de l'heure d'arrivée — vingt heures pour
-     * renvoyer la correction.
+     * vient plus de la base mais de l'heure d'arrivée — vingt heures ouvrées
+     * pour renvoyer la correction.
      */
     supabase.from("client_tickets")
       .select("id, submitted_at, resolved_at")
@@ -337,9 +337,9 @@ export default async function MetricsPage({
         ? { tone:"warning" as const, icon:"clock", title:"Délai à surveiller", body:`Moyenne actuelle : ${hours(averageCorrection)}.` }
         : { tone:"success" as const, icon:"layers", title:"Corrections fluides", body:averageCorrection ? `Moyenne : ${hours(averageCorrection)}.` : "Pas encore assez de données." },
     sla.late > 0
-      ? { tone:"danger" as const, icon:"clock", title:`${sla.late} retour${sla.late > 1 ? "s" : ""} hors délai`, body:`Promesse de ${TICKET_SLA_HOURS} h${sla.worstLateHours === null ? "" : ` · pire retard ${hours(sla.worstLateHours)}`}.` }
+      ? { tone:"danger" as const, icon:"clock", title:`${sla.late} retour${sla.late > 1 ? "s" : ""} hors délai`, body:`Promesse de ${TICKET_SLA_HOURS} h ouvrées${sla.worstLateHours === null ? "" : ` · pire retard ${hours(sla.worstLateHours)} ouvrées`}.` }
       : sla.measured > 0
-        ? { tone:"success" as const, icon:"clock", title:`Délai de ${TICKET_SLA_HOURS} h tenu`, body:`${sla.onTime}/${sla.measured} retours corrigés dans les temps.` }
+        ? { tone:"success" as const, icon:"clock", title:`Délai de ${TICKET_SLA_HOURS} h ouvrées tenu`, body:`${sla.onTime}/${sla.measured} retours corrigés dans les temps.` }
         : { tone:"info" as const, icon:"message", title:"Retours stables", body:sent.length ? `${ticketsPerSheet.toFixed(1)} ticket par fiche.` : "Pas encore de fiche envoyée." },
   ];
 
@@ -539,7 +539,7 @@ function ReturnsView({ data }: { data:MetricsData }) {
         */}
         <KpiCard
           icon="check"
-          label={`Retours corrigés en ${TICKET_SLA_HOURS} h`}
+          label={`Retours corrigés en ${TICKET_SLA_HOURS} h ouvrées`}
           value={data.sla.percentage === null ? "—" : percentValue(data.sla.percentage)}
           detail={data.sla.measured === 0
             ? `aucun retour jugeable · ${data.sla.running} en cours`
