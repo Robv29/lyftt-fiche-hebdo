@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
-import { budgetPenalty, budgetSummary, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
+import { budgetPenalty, budgetSummary, shootingTally, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
+import { healthScore, type HealthPillar } from "@/lib/domain/health-score";
 import { clientLifecycle, todayInParis } from "@/lib/domain/client-lifecycle";
 import type { MonthlyCadence } from "@/lib/domain/planning";
 import { satisfactionSummary } from "@/lib/domain/planning";
@@ -10,6 +11,14 @@ import type { TicketType } from "@/lib/domain/ticket-types";
 import { Icon } from "@/components/Icon";
 
 const CHART_COLORS = ["#1b87dd", "#34c5bb", "#78d6a3", "#ef9c50", "#e65b67", "#7768e8"];
+/**
+ * Statuts d'un ticket encore à traiter.
+ *
+ * Le suivi interne se juge sur ce qui reste ouvert : un ticket clos, refusé ou
+ * hors périmètre n'attend plus personne, et le compter en retard salirait la
+ * note sans rien dire d'utile.
+ */
+const OPEN_TICKET_STATUSES = "(approved_by_client,closed,rejected,out_of_scope,cancelled)";
 const METRICS_VIEWS = ["overview", "validation", "returns", "clients"] as const;
 type MetricsView = typeof METRICS_VIEWS[number];
 type Tone = "info" | "success" | "warning" | "danger" | "violet";
@@ -24,14 +33,14 @@ type Tone = "info" | "success" | "warning" | "danger" | "violet";
 async function budgetHealth(
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
   isAdmin: boolean,
-): Promise<{ withIssue: number; total: number }> {
-  if (!isAdmin) return { withIssue: 0, total: 0 };
+): Promise<{ withIssue: number; total: number; shootingsCategorised: number; shootingsTotal: number }> {
+  if (!isAdmin) return { withIssue: 0, total: 0, shootingsCategorised: 0, shootingsTotal: 0 };
 
   const today = todayInParis();
   const [{ data: clients }, { data: budgets }, { data: lines }] = await Promise.all([
     supabase.from("clients").select("id, notes, is_active, contract_start_date, contract_end_date, pause_start_date, pause_end_date").eq("is_active", true),
     supabase.from("client_budgets").select("client_id, billing_mode, budget_cents"),
-    supabase.from("client_budget_lines").select("client_id, service_key, label, billing, unit_price_cents, quantity, months, performed_on, billed_directly"),
+    supabase.from("client_budget_lines").select("client_id, service_key, label, billing, unit_price_cents, quantity, months, performed_on, billed_directly, forfait_included"),
   ]);
 
   const managed = (clients ?? []).filter((client) => clientLifecycle({
@@ -42,7 +51,7 @@ async function budgetHealth(
   }, today).canProduce);
 
   const budgetByClient = new Map((budgets ?? []).map((row) => [row.client_id as string, row]));
-  const linesByClient = new Map<string, BudgetLine[]>();
+  const linesByClient = new Map<string, (BudgetLine & { forfaitIncluded: boolean | null })[]>();
   for (const row of lines ?? []) {
     const list = linesByClient.get(row.client_id as string) ?? [];
     list.push({
@@ -53,6 +62,7 @@ async function budgetHealth(
       months: row.months as number | null,
       performedOn: row.performed_on as string,
       billedDirectly: Boolean(row.billed_directly),
+      forfaitIncluded: row.forfait_included as boolean | null,
     });
     linesByClient.set(row.client_id as string, list);
   }
@@ -74,7 +84,20 @@ async function budgetHealth(
     return summary.alerts.some((alert) => alert.level === "critique" || alert.level === "attention");
   }).length;
 
-  return { withIssue, total: managed.length };
+  /*
+   * Shootings en attente de tri. Tant qu'on ne sait pas si un shooting est
+   * compris au forfait ou vendu en plus, il n'est ni facturé ni écarté : c'est
+   * exactement le trou par lequel une prestation part sans facture.
+   */
+  const tally = shootingTally([...linesByClient.values()].flat());
+  const shootingsTotal = tally.included + tally.extra + tally.pending;
+
+  return {
+    withIssue,
+    total: managed.length,
+    shootingsCategorised: tally.included + tally.extra,
+    shootingsTotal,
+  };
 }
 
 export default async function MetricsPage({
@@ -123,7 +146,7 @@ export default async function MetricsPage({
   const [
     { data: sentSheets }, { data: approvedSheets },
     { data: receivedTickets }, { data: resolvedTickets },
-    { data: versions }, { data: ratings }, { data: deliveries }, { count: overdueCount },
+    { data: versions }, { data: ratings }, { data: deliveries }, { data: openTickets }, { count: overdueCount },
   ] = await Promise.all([
     supabase.from("weekly_sheets").select(SHEET_FIELDS).gte("sent_to_client_at", sinceTs),
     supabase.from("weekly_sheets").select(SHEET_FIELDS).gte("approved_at", sinceTs),
@@ -151,6 +174,14 @@ export default async function MetricsPage({
      * Le borner à la fenêtre revenait à oublier les fiches en souffrance depuis
      * plus longtemps — précisément celles qu'il faut voir.
      */
+    /*
+     * Tickets encore ouverts et datés. Comme le retard des fiches, c'est un
+     * état du jour : le borner à la fenêtre masquerait les plus anciens.
+     */
+    supabase.from("client_tickets")
+      .select("due_at")
+      .not("status", "in", OPEN_TICKET_STATUSES)
+      .not("due_at", "is", null),
     supabase.from("weekly_sheets")
       .select("id", { count: "exact", head: true })
       .lt("validation_deadline_at", new Date().toISOString())
@@ -236,7 +267,32 @@ export default async function MetricsPage({
   const budget = await budgetHealth(supabase, profile?.role === "super_admin");
   const relationScore = average([viewRate, noCorrectionRate, deadlineRate].filter((value) => Number.isFinite(value)));
   const penalty = budgetPenalty({ clientsWithIssue: budget.withIssue, clientsTotal: budget.total });
-  const overallScore = Math.max(0, relationScore - penalty);
+
+  /*
+   * Score de santé, en trois piliers.
+   *
+   * Une mesure sans donnée vaut `null` et non zéro : sur sept jours, une
+   * semaine sans commande interne ou sans note client ne doit pas faire
+   * plonger l'agence. C'est le module qui écarte ces mesures et redistribue
+   * les poids ; ici on se contente de dire ce qu'on sait vraiment.
+   */
+  const ticketsWithDue = (openTickets ?? []).filter((ticket) => ticket.due_at);
+  const ticketsNotLate = ticketsWithDue.filter((ticket) => new Date(ticket.due_at as string) >= new Date());
+  const health = healthScore({
+    satisfactionPercentage: satisfaction.percentage,
+    satisfactionAnswers: satisfaction.answers,
+    viewRate: sent.length ? viewRate : null,
+    noCorrectionRate: sent.length ? noCorrectionRate : null,
+    sentBeforeDeadlineRate: approved.length ? deadlineRate : null,
+    correctionHours: correctionDelays.length ? averageCorrection : null,
+    productionPunctuality: punctuality.percentage,
+    budgetsComplete: budget.total ? ratio(budget.total - budget.withIssue, budget.total) : null,
+    shootingsCategorised: budget.shootingsTotal
+      ? ratio(budget.shootingsCategorised, budget.shootingsTotal)
+      : null,
+    ticketsOnTime: ticketsWithDue.length ? ratio(ticketsNotLate.length, ticketsWithDue.length) : null,
+  });
+  const overallScore = health.score ?? Math.max(0, relationScore - penalty);
   const typeEntries = [...byType.entries()].sort((a, b) => b[1] - a[1]);
   const clientEntries = [...byClient.entries()].sort((a, b) => b[1] - a[1]).slice(0, 7);
   const ticketTotal = typeEntries.reduce((total, entry) => total + entry[1], 0);
@@ -271,14 +327,12 @@ export default async function MetricsPage({
     noCorrectionRate,
     deadlineRate,
     overallScore,
-    relationScore,
+    health,
+    openTicketsLate: ticketsWithDue.length - ticketsNotLate.length,
     periodLabel: periodLabel(since),
     satisfaction,
     unhappyComments,
     punctuality,
-    penalty,
-    budgetIssues: budget.withIssue,
-    budgetTotal: budget.total,
     ticketTotal,
     typeEntries,
     clientEntries,
@@ -311,7 +365,7 @@ type MetricsData = {
   sent:number; viewed:number; approved:number; approvedWithoutCorrection:number; beforeDeadline:number;
   overdue:number; averageResponse:number; averageCorrection:number; averageVersions:number; outOfScope:number;
   ticketsPerSheet:number; viewRate:number; noCorrectionRate:number; deadlineRate:number; overallScore:number;
-  relationScore:number; penalty:number; budgetIssues:number; budgetTotal:number;
+  health:ReturnType<typeof healthScore>; openTicketsLate:number;
   /** Fenêtre analysée, telle qu'elle est écrite sur le sélecteur. */
   periodLabel:string;
   satisfaction:ReturnType<typeof satisfactionSummary>;
@@ -329,9 +383,9 @@ function OverviewView({ data }: { data:MetricsData }) {
           <span aria-hidden="true" className="insights-orb insights-orb-one"/>
           <span aria-hidden="true" className="insights-orb insights-orb-two"/>
           <div className="relative z-10 min-w-0 flex-1">
-            <p className="text-[11px] font-bold uppercase tracking-[.14em] text-white/65">Santé éditoriale</p>
+            <p className="text-[11px] font-bold uppercase tracking-[.14em] text-white/65">Score de santé</p>
             <h2 className="mt-2 max-w-md text-2xl font-semibold tracking-[-.04em] sm:text-3xl">La production en un regard</h2>
-            <p className="mt-2 max-w-lg text-xs leading-relaxed text-white/70">Synthèse des consultations, validations au premier envoi et respect des échéances.</p>
+            <p className="mt-2 max-w-lg text-xs leading-relaxed text-white/70">Satisfaction client, rapidité de production et rigueur du suivi interne, pondérées 40 / 30 / 30.</p>
             <div className="mt-5 flex flex-wrap gap-2">
               <HeroPill label="Fiches envoyées" value={String(data.sent)}/>
               <HeroPill label="Tickets reçus" value={String(data.ticketTotal)}/>
@@ -339,21 +393,22 @@ function OverviewView({ data }: { data:MetricsData }) {
             </div>
 
             {/*
-              Un score amputé sans explication passe pour une erreur : le malus
-              dit d'où viennent les points perdus, et combien.
+              Un score nu ne se conteste pas et ne se corrige pas. Les trois
+              piliers disent d'où il vient ; le détail est juste en dessous.
             */}
-            {data.penalty > 0 && (
-              <p className="mt-4 flex max-w-lg items-start gap-2 rounded-xl bg-white/10 px-3 py-2 text-[11px] leading-snug text-white/85">
-                <Icon name="euro" className="mt-px h-3.5 w-3.5 shrink-0"/>
-                <span className="min-w-0">
-                  <strong>−{data.penalty} pts</strong> de malus budgétaire ·{" "}
-                  {data.budgetIssues}/{data.budgetTotal} client{data.budgetIssues > 1 ? "s" : ""} à régulariser ·
-                  {" "}relation client {Math.round(data.relationScore)} %
+            <div className="mt-4 flex flex-wrap gap-2">
+              {data.health.pillars.map((pillar) => (
+                <span
+                  key={pillar.key}
+                  className="rounded-xl bg-white/10 px-3 py-2 text-[11px] leading-snug text-white/85"
+                >
+                  {pillar.label} ·{" "}
+                  <strong>{pillar.percentage === null ? "non mesuré" : `${pillar.percentage} %`}</strong>
                 </span>
-              </p>
-            )}
+              ))}
+            </div>
           </div>
-          <Ring value={data.overallScore} label={`score global · ${data.periodLabel}`} light/>
+          <Ring value={data.overallScore} label={`santé · ${data.periodLabel}`} light/>
         </article>
 
         <div className="insights-overview-kpis">
@@ -391,6 +446,8 @@ function OverviewView({ data }: { data:MetricsData }) {
           />
         </div>
       </section>
+
+      <HealthPanel health={data.health}/>
 
       <section className="insights-overview-bottom">
         <SignalPanel signals={data.signals}/>
@@ -500,6 +557,51 @@ function HeroPill({ label, value }: { label:string;value:string }) {
 function Ring({ value, label, light=false }: { value:number;label:string;light?:boolean }) {
   const safe=Math.round(Math.min(100,Math.max(0,value||0)));
   return <div className={`insights-ring ${light?"light":""}`} style={{background:`conic-gradient(${light?"#fff":"#1b87dd"} 0 ${safe}%,${light?"rgba(255,255,255,.16)":"#e8eef5"} ${safe}% 100%)`}} role="img" aria-label={`${label} : ${safe} %`}><span><strong>{safe}%</strong><small>{label}</small></span></div>;
+}
+
+/**
+ * Détail du score de santé.
+ *
+ * Chaque pilier montre ses mesures, y compris celles qui manquent : « non
+ * mesuré » se corrige (il suffit d'alimenter la donnée), un zéro affiché à
+ * tort se conteste — et à force, on cesse de regarder l'écran.
+ */
+function HealthPanel({ health }: { health:MetricsData["health"] }) {
+  return (
+    <section className="insights-health-grid">
+      {health.pillars.map((pillar) => <HealthCard key={pillar.key} pillar={pillar}/>)}
+    </section>
+  );
+}
+
+function HealthCard({ pillar }: { pillar:HealthPillar }) {
+  return (
+    <article className="insights-card insights-health-card">
+      <div className="insights-panel-heading">
+        <div>
+          <p className="eyebrow">{pillar.weight} % du score</p>
+          <h2 className="mt-1 font-semibold">{pillar.label}</h2>
+        </div>
+        <span className={`insights-health-note insights-tone-${pillar.percentage === null ? "info" : rateTone(pillar.percentage, 80, 55)}`}>
+          {pillar.percentage === null ? "—" : `${pillar.percentage} %`}
+        </span>
+      </div>
+      <ul className="insights-health-list">
+        {pillar.parts.map((part) => (
+          <li key={part.label}>
+            <div>
+              <span>{part.label}</span>
+              <strong>{part.percentage === null ? "non mesuré" : `${Math.round(part.percentage)} %`}</strong>
+            </div>
+            <div className="insights-health-bar" role="presentation">
+              <i style={{ transform:`scaleX(${(part.percentage ?? 0) / 100})` }}/>
+            </div>
+            {part.detail ? <small>{part.detail}</small> : null}
+          </li>
+        ))}
+      </ul>
+    </article>
+  );
 }
 
 function SignalPanel({ signals, roomy=false }: { signals:MetricsData["signals"];roomy?:boolean }) {

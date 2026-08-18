@@ -229,6 +229,15 @@
 .insights-tone-danger { --kpi-accent:#df4f5b; --kpi-soft:#fff0f1; --kpi-icon:#ffe9ec; }
 .insights-tone-violet { --kpi-accent:#7768e8; --kpi-soft:#f0edff; --kpi-icon:#eeebff; }
 .insights-overview-bottom { min-height:0; display:grid; gap:14px; }
+/* Détail du score de santé : un pilier par carte, ses mesures en dessous. */
+.insights-health-grid { min-height:0; display:grid; gap:14px; margin-top:14px; }
+.insights-health-note { padding:5px 10px; border-radius:99px; color:var(--kpi-accent); background:var(--kpi-soft); font-size:12px; font-weight:700; }
+.insights-health-list { display:grid; gap:11px; padding:1px 18px 18px; }
+.insights-health-list>li>div:first-child { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:5px; color:#668096; font-size:10px; }
+.insights-health-list>li>div:first-child strong { color:#29445d; }
+.insights-health-list small { display:block; margin-top:4px; color:#8ca0b0; font-size:9px; }
+.insights-health-bar { height:7px; overflow:hidden; border-radius:99px; background:#edf2f6; }
+.insights-health-bar i { display:block; width:100%; height:100%; transform-origin:left; border-radius:inherit; background:linear-gradient(90deg,#176fc0,#34c5bb); }
 .insights-signal-list { display:grid; gap:9px; padding:0 14px 14px; }
 .insights-signal { min-width:0; display:flex; align-items:center; gap:10px; padding:10px; border-radius:15px; background:linear-gradient(120deg,var(--kpi-icon),rgba(255,255,255,.86)); }
 .insights-signal>span { width:33px; height:33px; flex:0 0 auto; display:grid; place-items:center; border-radius:11px; color:var(--kpi-accent); background:#fff; box-shadow:0 5px 13px color-mix(in srgb,var(--kpi-accent) 14%,transparent); }
@@ -341,6 +350,7 @@
   .insights-kpi>small { margin-top:5px; }
   .insights-kpi-progress { margin-top:8px; }
   .insights-overview-bottom { grid-template-columns:1fr 1.05fr .95fr; }
+  .insights-health-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
   .insights-overview-bottom>.insights-card { height:100%; }
   .insights-panel-heading { padding:13px 15px 10px; }
   .insights-signal-list { gap:6px; padding:0 10px 10px; }
