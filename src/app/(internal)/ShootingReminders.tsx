@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
-import { markShootingReminder, scheduleShooting } from "./shooting-actions";
+import { cancelShooting, markShootingReminder, scheduleShooting } from "./shooting-actions";
 
 export interface ShootingReminderRow {
   clientId: string;
@@ -124,9 +124,30 @@ function ShootingRow({ row }: { row: ShootingReminderRow }) {
           <p className="mt-0.5 text-xs text-ink-faint">{row.planLabel}</p>
         </div>
         {row.plannedOn ? (
-          <span className="badge bg-[#e8f8f1] text-state-approved">
-            Calé le {formatShortDay(row.plannedOn)}
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="badge bg-[#e8f8f1] text-state-approved">
+              Calé le {formatShortDay(row.plannedOn)}
+            </span>
+            <button type="button" className="text-[11px] font-semibold text-[#0b63ad] hover:underline" onClick={() => setOpen((value) => !value)}>
+              {open ? "Fermer" : "Modifier"}
+            </button>
+            <button
+              type="button"
+              className="text-[11px] text-state-changes hover:underline"
+              disabled={pending}
+              onClick={() => {
+                if (!window.confirm("Annuler la date calée ? Le rappel se rouvrira.")) return;
+                setError(null);
+                startTransition(async () => {
+                  const result = await cancelShooting(row.clientId);
+                  if (result.ok) router.refresh();
+                  else setError(result.message ?? "Annulation impossible.");
+                });
+              }}
+            >
+              Annuler
+            </button>
+          </div>
         ) : (
           <span className={`badge ${row.overdue ? "bg-state-changes/10 text-state-changes" : "bg-[#fff4e5] text-[#8a5700]"}`}>
             {row.overdue ? "En retard" : "À caler"} · {formatShortDay(row.dueOn)}
@@ -171,44 +192,46 @@ function ShootingRow({ row }: { row: ShootingReminderRow }) {
             />
           )}
 
-          {open && (
-            <form
-              className="mt-3 flex flex-wrap items-end gap-2 rounded-xl bg-canvas p-3"
-              onSubmit={(event) => {
-                event.preventDefault();
-                const formData = new FormData(event.currentTarget);
-                setError(null);
-                startTransition(async () => {
-                  const result = await scheduleShooting(formData);
-                  if (result.ok) {
-                    setOpen(false);
-                    router.refresh();
-                  } else {
-                    setError(result.message ?? "Enregistrement impossible.");
-                  }
-                });
-              }}
-            >
-              <input type="hidden" name="clientId" value={row.clientId}/>
-              <div>
-                <label className="label" htmlFor={`shooting-date-${row.clientId}`}>
-                  Date convenue
-                </label>
-                <input
-                  id={`shooting-date-${row.clientId}`}
-                  name="shootingOn"
-                  type="date"
-                  required
-                  className="field bg-white"
-                  defaultValue={row.dueOn}
-                />
-              </div>
-              <button type="submit" className="btn-primary" disabled={pending}>
-                {pending ? "Enregistrement…" : "Inscrire au budget"}
-              </button>
-            </form>
-          )}
         </>
+      )}
+
+      {/* Une date calée se corrige : le même formulaire sert à l'inscrire et à la déplacer. */}
+      {open && (
+        <form
+          className="mt-3 flex flex-wrap items-end gap-2 rounded-xl bg-canvas p-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const formData = new FormData(event.currentTarget);
+            setError(null);
+            startTransition(async () => {
+              const result = await scheduleShooting(formData);
+              if (result.ok) {
+                setOpen(false);
+                router.refresh();
+              } else {
+                setError(result.message ?? "Enregistrement impossible.");
+              }
+            });
+          }}
+        >
+          <input type="hidden" name="clientId" value={row.clientId}/>
+          <div>
+            <label className="label" htmlFor={`shooting-date-${row.clientId}`}>
+              Date convenue
+            </label>
+            <input
+              id={`shooting-date-${row.clientId}`}
+              name="shootingOn"
+              type="date"
+              required
+              className="field bg-white"
+              defaultValue={row.plannedOn ?? row.dueOn}
+            />
+          </div>
+          <button type="submit" className="btn-primary" disabled={pending}>
+            {pending ? "Enregistrement…" : row.plannedOn ? "Déplacer le shooting" : "Inscrire au budget"}
+          </button>
+        </form>
       )}
 
       {error && <p className="mt-2 text-xs text-state-changes">{error}</p>}

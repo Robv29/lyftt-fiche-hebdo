@@ -71,6 +71,19 @@ export async function scheduleShooting(formData: FormData): Promise<ShootingActi
   }
 
   const admin = createSupabaseAdminClient();
+
+  /*
+   * Une date déjà calée est remplacée, jamais doublée : deux lignes à venir
+   * pour le même shooting laisseraient l'écran choisir laquelle montrer, et le
+   * cycle suivant se calculerait sur la mauvaise.
+   */
+  await admin
+    .from("client_budget_lines")
+    .delete()
+    .eq("client_id", parsed.data.clientId)
+    .eq("service_key", SHOOTING_FORFAIT_KEY)
+    .gt("performed_on", todayInParis());
+
   const { error } = await admin.from("client_budget_lines").insert({
     client_id: parsed.data.clientId,
     service_key: SHOOTING_FORFAIT_KEY,
@@ -154,4 +167,38 @@ async function writeSettings(
     .update({ notes: JSON.stringify(settings) })
     .eq("id", clientId);
   return error?.message ?? null;
+}
+
+/**
+ * Retrait d'une date calée.
+ *
+ * Un rendez-vous se décale ou s'annule : la date inscrite n'est pas une
+ * décision définitive. La retirer rouvre le rappel, et l'échéance se recalcule
+ * depuis le dernier shooting réellement réalisé.
+ */
+export async function cancelShooting(clientId: string): Promise<ShootingActionResult> {
+  const parsed = z.string().uuid().safeParse(clientId);
+  if (!parsed.success) return { ok: false, message: "Client invalide." };
+
+  const access = await requireClientAccess(parsed.data);
+  if (!access) return { ok: false, message: "Client introuvable ou accès refusé." };
+
+  const admin = createSupabaseAdminClient();
+  const { error, count } = await admin
+    .from("client_budget_lines")
+    .delete({ count: "exact" })
+    .eq("client_id", parsed.data)
+    .eq("service_key", SHOOTING_FORFAIT_KEY)
+    // Seule une date à venir s'annule : un shooting déjà réalisé est un fait.
+    .gt("performed_on", todayInParis());
+
+  if (error) return { ok: false, message: `Annulation impossible : ${error.message}` };
+  if ((count ?? 0) === 0) {
+    return { ok: false, message: "Aucune date à venir à annuler pour ce client." };
+  }
+
+  revalidatePath("/");
+  revalidatePath("/budget");
+  revalidatePath(`/budget/${parsed.data}`);
+  return { ok: true, message: "Date annulée. Le rappel est rouvert." };
 }
