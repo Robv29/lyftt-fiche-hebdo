@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { resolveMediaUrl } from "@/lib/media/signed-url";
-import { addDays, format } from "date-fns";
+import { addDays, endOfISOWeek, format, startOfISOWeek } from "date-fns";
 import { fr } from "date-fns/locale";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { ITEM_APPROVAL_STATUS_LABELS, MEDIA_FORMAT_LABELS, SOCIAL_NETWORK_LABELS, SOCIAL_NETWORKS, type ItemApprovalStatus, type MediaFormat, type SocialNetwork } from "@/lib/domain/types";
 import { PublicationChecklist, type DailyPublication } from "./PublicationChecklist";
+import { UnpublishedWeekPanel, type UnpublishedItem } from "./UnpublishedWeekPanel";
 
 function todayInParis():string { return new Intl.DateTimeFormat("en-CA", { timeZone:"Europe/Paris", year:"numeric", month:"2-digit", day:"2-digit" }).format(new Date()); }
 
@@ -78,11 +79,41 @@ export default async function PublicationsPage({ searchParams }:{ searchParams:P
   const next=format(nextDay,"yyyy-MM-dd");
   const selectedDayLabel=format(day,"EEEE d MMMM yyyy",{locale:fr});
 
+  /*
+   * Ce qui traîne depuis le début de la semaine, pas seulement le jour
+   * affiché : la checklist quotidienne ne montre qu'une journée, et un retard
+   * pris lundi peut se noyer avant d'être vu vendredi.
+   */
+  const weekStart=format(startOfISOWeek(day),"yyyy-MM-dd");
+  const weekEnd=format(endOfISOWeek(day),"yyyy-MM-dd");
+  const { data:unpublishedRows }=await supabase
+    .from("weekly_sheet_items")
+    .select("id, scheduled_date, scheduled_time, format, weekly_sheets!inner ( clients ( name ) )")
+    .gte("scheduled_date",weekStart)
+    .lte("scheduled_date",weekEnd)
+    .eq("is_cancelled",false)
+    .is("published_at",null)
+    .order("scheduled_date",{ascending:true})
+    .order("scheduled_time",{ascending:true});
+  const unpublishedItems:UnpublishedItem[]=(unpublishedRows??[]).map((row)=>{
+    const sheet=row.weekly_sheets as unknown as { clients:{name:string}|null }|null;
+    return {
+      id:row.id,
+      scheduledDate:row.scheduled_date,
+      scheduledTime:row.scheduled_time,
+      clientName:sheet?.clients?.name??"Client",
+      formatLabel:MEDIA_FORMAT_LABELS[row.format as MediaFormat],
+    };
+  });
+
   return <div className="space-y-7">
     <header className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
       <div>
         <p className="eyebrow">Checklist quotidienne</p>
-        <h1 className="page-title mt-1">Publications</h1>
+        <div className="mt-1 flex flex-wrap items-center gap-3">
+          <h1 className="page-title">Publications</h1>
+          <UnpublishedWeekPanel items={unpublishedItems}/>
+        </div>
         <p className="mt-2 text-sm text-ink-soft">
           <time dateTime={date} className="capitalize">{selectedDayLabel}</time> · texte, hashtags et médias prêts à poster.
         </p>
