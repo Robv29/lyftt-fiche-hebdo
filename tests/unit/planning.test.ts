@@ -3,6 +3,8 @@ import {
   planningBucketForPeriod,
   planningWeekRange,
   selectHashtags,
+  satisfactionPercentage,
+  satisfactionSummary,
   sheetCompletion,
   weeklyFormatsForCadence,
   publicationDatesForWeek,
@@ -158,5 +160,46 @@ describe("visibilité d'une fiche hors gestion", () => {
 
   it("garde tout ce qui relève d'un client en gestion", () => {
     expect(estVisible("draft", true)).toBe(true);
+  });
+});
+
+/*
+ * Satisfaction client : trois niveaux lus en pourcentage, et un taux de réponse
+ * affiché aussi visiblement que la note. Un 100 % sur une réponse ne dit rien.
+ */
+describe("satisfaction client", () => {
+  it("traduit les trois niveaux en pourcentage", () => {
+    expect(satisfactionPercentage(1)).toBe(0);
+    expect(satisfactionPercentage(2)).toBe(50);
+    expect(satisfactionPercentage(3)).toBe(100);
+  });
+
+  it("borne une note hors échelle plutôt que de produire un taux absurde", () => {
+    expect(satisfactionPercentage(0)).toBe(0);
+    expect(satisfactionPercentage(9)).toBe(100);
+  });
+
+  it("moyenne les réponses et dit combien de fiches ont répondu", () => {
+    expect(satisfactionSummary({ scores: [3, 3, 2], eligible: 10 })).toEqual({
+      percentage: 83,
+      answers: 3,
+      eligible: 10,
+      responseRate: 30,
+      unhappy: 0,
+    });
+  });
+
+  it("compte les notes basses, qui appellent un geste", () => {
+    expect(satisfactionSummary({ scores: [1, 3], eligible: 2 }).unhappy).toBe(1);
+  });
+
+  it("n'invente aucun chiffre sans réponse", () => {
+    expect(satisfactionSummary({ scores: [], eligible: 4 })).toMatchObject({
+      percentage: null,
+      answers: 0,
+      responseRate: 0,
+    });
+    // Sans fiche validée, le taux de réponse n'a pas de dénominateur.
+    expect(satisfactionSummary({ scores: [], eligible: 0 }).responseRate).toBeNull();
   });
 });

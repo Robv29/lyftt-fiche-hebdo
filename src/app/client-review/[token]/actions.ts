@@ -769,3 +769,57 @@ export async function createServiceRequest(
     message: `Demande ${ticket.ticket_number} enregistrée. Nous revenons vers vous rapidement.`,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Satisfaction de la semaine
+// ---------------------------------------------------------------------------
+
+const ratingSchema = z.object({
+  score: z.coerce.number().int().min(1).max(3),
+  comment: z.string().trim().max(1000).optional(),
+});
+
+/**
+ * Note donnée par le client à la fiche qu'il vient de valider.
+ *
+ * Demandée sur place, à la validation : le client est devant l'écran et vient
+ * de regarder ses publications. Un questionnaire envoyé plus tard n'obtient que
+ * des réponses extrêmes, et trop peu pour en tirer quoi que ce soit.
+ *
+ * Une seule note par fiche : reposer la question à chaque passage transformerait
+ * la validation en sondage. Une réponse donnée deux fois écrase la précédente,
+ * ce qui laisse au client le droit de se corriger.
+ */
+export async function rateSheet(token: string, formData: FormData): Promise<ActionResult> {
+  const link = await requireLink(token);
+  if (!link.ok) return link.result;
+
+  if (!rateLimit("approval", link.context.linkId).allowed) {
+    return { ok: false, message: "Trop d'actions successives. Réessayez dans un instant." };
+  }
+
+  const parsed = ratingSchema.safeParse({
+    score: formData.get("score"),
+    comment: formData.get("comment") ?? undefined,
+  });
+  if (!parsed.success) return { ok: false, message: "Note invalide." };
+
+  const comment = parsed.data.comment && isMeaningful(parsed.data.comment)
+    ? sanitizeText(parsed.data.comment, 1000)
+    : null;
+
+  const admin = createSupabaseAdminClient();
+  const { error } = await admin.from("client_sheet_ratings").upsert({
+    weekly_sheet_id: link.context.sheetId,
+    client_id: link.context.clientId,
+    review_link_id: link.context.linkId,
+    score: parsed.data.score,
+    comment,
+    submitted_at: new Date().toISOString(),
+  }, { onConflict: "weekly_sheet_id" });
+
+  if (error) return { ok: false, message: "Merci — votre retour n'a pas pu être enregistré." };
+
+  revalidatePath(`/client-review/${token}`);
+  return { ok: true, message: "Merci pour votre retour." };
+}

@@ -215,3 +215,57 @@ export function publicationDatesForWeek(
     return civilDate(addDays(weekStart, weekday - 1));
   });
 }
+
+/**
+ * Satisfaction client, exprimée en pourcentage.
+ *
+ * Le client se situe sur trois niveaux — décevant, correct, très bien — parce
+ * qu'une échelle à cinq étoiles ne produit que des 4 et des 5. Ces niveaux se
+ * lisent en pourcentage : 0, 50, 100. La moyenne est donc directement un taux,
+ * comparable aux autres indicateurs de l'écran.
+ */
+export const SATISFACTION_LABELS: Record<number, string> = {
+  1: "Décevant",
+  2: "Correct",
+  3: "Très bien",
+};
+
+export function satisfactionPercentage(score: number): number {
+  const bounded = Math.min(3, Math.max(1, Math.round(score)));
+  return ((bounded - 1) / 2) * 100;
+}
+
+export interface SatisfactionSummary {
+  /** Moyenne des notes reçues, en pourcentage. Null tant que personne n'a répondu. */
+  percentage: number | null;
+  /** Nombre de notes reçues sur la période. */
+  answers: number;
+  /** Fiches validées sur la même période : le dénominateur du taux de réponse. */
+  eligible: number;
+  /**
+   * Part des fiches validées qui ont reçu une note.
+   *
+   * Affiché aussi visiblement que la moyenne : une satisfaction de 100 % sur
+   * une réponse ne dit rien, et l'oublier conduit à décider sur du vide.
+   */
+  responseRate: number | null;
+  /** Notes basses, à traiter : elles appellent un geste, pas une statistique. */
+  unhappy: number;
+}
+
+export function satisfactionSummary(input: {
+  scores: readonly number[];
+  eligible: number;
+}): SatisfactionSummary {
+  const answers = input.scores.length;
+  const percentage = answers === 0
+    ? null
+    : Math.round(input.scores.reduce((total, score) => total + satisfactionPercentage(score), 0) / answers);
+  return {
+    percentage,
+    answers,
+    eligible: input.eligible,
+    responseRate: input.eligible === 0 ? null : Math.round((answers / input.eligible) * 100),
+    unhappy: input.scores.filter((score) => score <= 1).length,
+  };
+}

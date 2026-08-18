@@ -3,6 +3,7 @@ import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/se
 import { budgetPenalty, budgetSummary, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
 import { clientLifecycle, todayInParis } from "@/lib/domain/client-lifecycle";
 import type { MonthlyCadence } from "@/lib/domain/planning";
+import { satisfactionSummary } from "@/lib/domain/planning";
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
 import type { TicketType } from "@/lib/domain/ticket-types";
 import { Icon } from "@/components/Icon";
@@ -121,13 +122,21 @@ export default async function MetricsPage({
   const [
     { data: sentSheets }, { data: approvedSheets },
     { data: receivedTickets }, { data: resolvedTickets },
-    { data: versions }, { count: overdueCount },
+    { data: versions }, { data: ratings }, { count: overdueCount },
   ] = await Promise.all([
     supabase.from("weekly_sheets").select(SHEET_FIELDS).gte("sent_to_client_at", sinceTs),
     supabase.from("weekly_sheets").select(SHEET_FIELDS).gte("approved_at", sinceTs),
     supabase.from("client_tickets").select(TICKET_FIELDS).gte("submitted_at", sinceTs),
     supabase.from("client_tickets").select(TICKET_FIELDS).gte("resolved_at", sinceTs),
     supabase.from("weekly_sheet_versions").select("weekly_sheet_id, version_number"),
+    /*
+     * Notes données par les clients sur la période. Une note par fiche validée,
+     * posée à l'écran de validation : c'est la voix du client, à côté des
+     * comportements que le reste de l'écran observe.
+     */
+    supabase.from("client_sheet_ratings")
+      .select("score, comment, submitted_at, weekly_sheet_id, clients ( name )")
+      .gte("submitted_at", sinceTs),
     /*
      * Le retard n'est pas un événement de la période : c'est l'état du jour.
      * Le borner à la fenêtre revenait à oublier les fiches en souffrance depuis
@@ -182,6 +191,21 @@ export default async function MetricsPage({
   }
 
   const averageVersions = average([...versionCounts.values()]);
+  /*
+   * Satisfaction : la moyenne des notes, en pourcentage, et surtout le taux de
+   * réponse à côté. Une satisfaction de 100 % sur une seule réponse ne dit
+   * rien, et l'oublier conduit à décider sur du vide.
+   */
+  const satisfaction = satisfactionSummary({
+    scores: (ratings ?? []).map((row) => row.score as number),
+    eligible: approved.length,
+  });
+  const unhappyComments = (ratings ?? [])
+    .filter((row) => (row.score as number) <= 2 && row.comment)
+    .map((row) => ({
+      client: (row.clients as unknown as { name: string } | null)?.name ?? "Client",
+      comment: row.comment as string,
+    }));
   const outOfScope = received.filter((ticket) => ticket.status === "out_of_scope").length;
   const ticketsPerSheet = sent.length ? received.length / sent.length : 0;
   const viewRate = ratio(viewed.length, sent.length);
@@ -235,6 +259,8 @@ export default async function MetricsPage({
     overallScore,
     relationScore,
     periodLabel: periodLabel(since),
+    satisfaction,
+    unhappyComments,
     penalty,
     budgetIssues: budget.withIssue,
     budgetTotal: budget.total,
@@ -273,6 +299,8 @@ type MetricsData = {
   relationScore:number; penalty:number; budgetIssues:number; budgetTotal:number;
   /** Fenêtre analysée, telle qu'elle est écrite sur le sélecteur. */
   periodLabel:string;
+  satisfaction:ReturnType<typeof satisfactionSummary>;
+  unhappyComments:{ client:string; comment:string }[];
   ticketTotal:number; typeEntries:[TicketType,number][]; clientEntries:[string,number][]; donutGradient:string;
   signals:{tone:Tone;icon:string;title:string;body:string}[];
 };
@@ -315,6 +343,22 @@ function OverviewView({ data }: { data:MetricsData }) {
         <div className="insights-overview-kpis">
           <KpiCard icon="users" label="Consultation" value={data.sent ? percentValue(data.viewRate) : "—"} detail={`${data.viewed} fiche${data.viewed > 1 ? "s" : ""} ouverte${data.viewed > 1 ? "s" : ""}`} tone={data.sent ? rateTone(data.viewRate) : "info"} progress={data.sent ? data.viewRate : undefined}/>
           <KpiCard icon="check" label="Sans correction" value={data.sent ? percentValue(data.noCorrectionRate) : "—"} detail="validées au premier envoi" tone={data.sent ? rateTone(data.noCorrectionRate,70,45) : "info"} progress={data.sent ? data.noCorrectionRate : undefined}/>
+          {/*
+            Satisfaction : le taux de réponse est dit avec la note, jamais après.
+            Un 100 % sur une réponse n'est pas un 100 %.
+          */}
+          <KpiCard
+            icon="message"
+            label="Satisfaction client"
+            value={data.satisfaction.percentage === null ? "—" : percentValue(data.satisfaction.percentage)}
+            detail={data.satisfaction.answers === 0
+              ? "aucune réponse sur la période"
+              : `${data.satisfaction.answers} réponse${data.satisfaction.answers > 1 ? "s" : ""} sur ${data.satisfaction.eligible} validation${data.satisfaction.eligible > 1 ? "s" : ""}${data.satisfaction.responseRate === null ? "" : ` · ${data.satisfaction.responseRate} %`}`}
+            tone={data.satisfaction.percentage === null
+              ? "info"
+              : data.satisfaction.unhappy > 0 ? "danger" : rateTone(data.satisfaction.percentage)}
+            progress={data.satisfaction.percentage ?? undefined}
+          />
         </div>
       </section>
 
