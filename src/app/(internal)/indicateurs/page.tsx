@@ -4,6 +4,7 @@ import { budgetPenalty, budgetSummary, type BillingMode, type BudgetLine } from 
 import { clientLifecycle, todayInParis } from "@/lib/domain/client-lifecycle";
 import type { MonthlyCadence } from "@/lib/domain/planning";
 import { satisfactionSummary } from "@/lib/domain/planning";
+import { productionPunctuality } from "@/lib/domain/production-requests";
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
 import type { TicketType } from "@/lib/domain/ticket-types";
 import { Icon } from "@/components/Icon";
@@ -122,7 +123,7 @@ export default async function MetricsPage({
   const [
     { data: sentSheets }, { data: approvedSheets },
     { data: receivedTickets }, { data: resolvedTickets },
-    { data: versions }, { data: ratings }, { count: overdueCount },
+    { data: versions }, { data: ratings }, { data: deliveries }, { count: overdueCount },
   ] = await Promise.all([
     supabase.from("weekly_sheets").select(SHEET_FIELDS).gte("sent_to_client_at", sinceTs),
     supabase.from("weekly_sheets").select(SHEET_FIELDS).gte("approved_at", sinceTs),
@@ -137,6 +138,14 @@ export default async function MetricsPage({
     supabase.from("client_sheet_ratings")
       .select("score, comment, submitted_at, weekly_sheet_id, clients ( name )")
       .gte("submitted_at", sinceTs),
+    /*
+     * Commandes internes livrées sur la période. La ponctualité se mesure à la
+     * livraison, pas à la commande : ce qui traîne encore se lit sur l'écran de
+     * production, où l'on peut agir.
+     */
+    supabase.from("production_requests")
+      .select("due_on, delivered_at")
+      .gte("delivered_at", sinceTs),
     /*
      * Le retard n'est pas un événement de la période : c'est l'état du jour.
      * Le borner à la fenêtre revenait à oublier les fiches en souffrance depuis
@@ -200,6 +209,11 @@ export default async function MetricsPage({
     scores: (ratings ?? []).map((row) => row.score as number),
     eligible: approved.length,
   });
+  const punctuality = productionPunctuality(
+    (deliveries ?? [])
+      .filter((row) => row.delivered_at)
+      .map((row) => ({ dueOn: row.due_on as string, deliveredAt: row.delivered_at as string })),
+  );
   const unhappyComments = (ratings ?? [])
     .filter((row) => (row.score as number) <= 2 && row.comment)
     .map((row) => ({
@@ -261,6 +275,7 @@ export default async function MetricsPage({
     periodLabel: periodLabel(since),
     satisfaction,
     unhappyComments,
+    punctuality,
     penalty,
     budgetIssues: budget.withIssue,
     budgetTotal: budget.total,
@@ -301,6 +316,7 @@ type MetricsData = {
   periodLabel:string;
   satisfaction:ReturnType<typeof satisfactionSummary>;
   unhappyComments:{ client:string; comment:string }[];
+  punctuality:ReturnType<typeof productionPunctuality>;
   ticketTotal:number; typeEntries:[TicketType,number][]; clientEntries:[string,number][]; donutGradient:string;
   signals:{tone:Tone;icon:string;title:string;body:string}[];
 };
@@ -376,6 +392,16 @@ function ValidationView({ data }: { data:MetricsData }) {
     <div className="insights-view insights-detail-view">
       <section className="insights-kpi-row">
         <KpiCard icon="send" label="Fiches envoyées" value={String(data.sent)} detail="sur la période" tone="info"/>
+        <KpiCard
+          icon="layers"
+          label="Commandes internes tenues"
+          value={data.punctuality.percentage === null ? "—" : percentValue(data.punctuality.percentage)}
+          detail={data.punctuality.delivered === 0
+            ? "aucune livraison sur la période"
+            : `${data.punctuality.onTime}/${data.punctuality.delivered} dans les temps${data.punctuality.averageDelayDays === null ? "" : ` · ${data.punctuality.averageDelayDays} j de retard moyen`}`}
+          tone={data.punctuality.percentage === null ? "info" : rateTone(data.punctuality.percentage, 90, 70)}
+          progress={data.punctuality.percentage ?? undefined}
+        />
         <KpiCard icon="users" label="Consultation" value={data.sent ? percentValue(data.viewRate) : "—"} detail={`${data.viewed}/${data.sent || 0} consultées`} tone={data.sent ? rateTone(data.viewRate) : "info"} progress={data.sent ? data.viewRate : undefined}/>
         <KpiCard icon="clock" label="Réponse client" value={hours(data.averageResponse)} detail="délai moyen d’ouverture" tone={delayTone(data.averageResponse)}/>
         <KpiCard icon="check" label="Avant échéance" value={data.approved ? percentValue(data.deadlineRate) : "—"} detail={`${data.overdue} en retard actuellement`} tone={data.overdue ? "danger" : data.approved ? rateTone(data.deadlineRate) : "info"} progress={data.approved ? data.deadlineRate : undefined}/>

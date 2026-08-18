@@ -7,18 +7,15 @@ export function publicationReadiness(input:{ mediaRequired:boolean; mediaAvailab
   return { allowed:true, published:mediaDone&&contentDone };
 }
 
-/**
- * La confirmation de publication est un geste distinct de la préparation.
+/*
+ * La case « publié » fait foi, et rien d'autre.
  *
- * Télécharger le média et copier le texte préparent le post ; seul un humain
- * sait s'il est effectivement en ligne. On n'ouvre la confirmation qu'une fois
- * la préparation faite, pour qu'une case cochée signifie vraiment quelque
- * chose.
+ * La confirmation était fermée tant que le média n'était pas téléchargé et le
+ * texte copié. Or on publie depuis son téléphone, avec un média déjà en
+ * pellicule ou un texte réécrit sur place : la préparation n'est pas la preuve
+ * de la publication, et l'exiger obligeait à cliquer deux boutons pour rien.
+ * Seul un humain sait si le post est en ligne ; c'est lui qui coche.
  */
-export function canConfirmPublication(input:{ mediaRequired:boolean; mediaDownloaded:boolean; contentCopied:boolean }):boolean {
-  const mediaDone = !input.mediaRequired || input.mediaDownloaded;
-  return mediaDone && input.contentCopied;
-}
 
 /**
  * Réseaux prévus mais pas encore cochés comme publiés.

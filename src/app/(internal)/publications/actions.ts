@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { canConfirmPublication, publicationReadiness } from "@/lib/domain/publication-checklist";
+import { publicationReadiness } from "@/lib/domain/publication-checklist";
 import { SOCIAL_NETWORKS } from "@/lib/domain/types";
 import {
   ACCESS_DENIED_MESSAGE,
@@ -98,14 +98,6 @@ export async function setPublicationPublished(itemId:string, published:boolean):
     .eq("id", itemId)
     .maybeSingle();
   if (!item) return { ok:false, published:false, message:"Publication introuvable." };
-
-  if (published && !canConfirmPublication({
-    mediaRequired: item.format !== "texte_seul",
-    mediaDownloaded: Boolean(item.media_downloaded_at),
-    contentCopied: Boolean(item.content_copied_at),
-  })) {
-    return { ok:false, published:false, message:"Téléchargez le média et copiez le texte avant de confirmer." };
-  }
 
   /*
    * Une collaboration oubliée ne se rattrape pas : l'invitation doit être

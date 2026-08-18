@@ -8,7 +8,7 @@ import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { mediaFrameBackground, mediaFrameClass } from "@/lib/domain/media-frame";
 import { SOCIAL_NETWORK_LABELS, type MediaFormat, type SocialNetwork } from "@/lib/domain/types";
-import { canConfirmPublication, missingNetworks } from "@/lib/domain/publication-checklist";
+import { missingNetworks } from "@/lib/domain/publication-checklist";
 
 function todayInParis():string { return new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Paris",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date()); }
 function isToday(day:string):boolean { return day===todayInParis(); }
@@ -151,8 +151,7 @@ function PublishPanel({item,pending,locked,onPublished,onNetwork,onCollaboration
    * Une invitation en collaboration s'envoie à la création du post : oubliée,
    * elle ne se rattrape pas. Elle conditionne donc la confirmation.
    */
-  const ready=canConfirmPublication({ mediaRequired:item.mediaRequired, mediaDownloaded:Boolean(item.mediaDownloadedAt), contentCopied:Boolean(item.contentCopiedAt) })
-    && (!item.collaborationHandle || collaborationDone);
+  const ready=!item.collaborationHandle || collaborationDone;
   const published=Boolean(item.publishedAt);
   const remaining=missingNetworks(item.plannedNetworks,item.publishedNetworks);
 
@@ -163,9 +162,7 @@ function PublishPanel({item,pending,locked,onPublished,onNetwork,onCollaboration
     </label>
 
     {!ready&&!locked&&<p className="mt-1.5 pl-7 text-[11px] text-ink-faint">
-      {item.collaborationHandle&&!collaborationDone
-        ? "Invitez le compte en collaboration pour pouvoir confirmer."
-        : "Téléchargez le média et copiez le texte pour pouvoir confirmer."}
+      Invitez le compte en collaboration pour pouvoir confirmer.
     </p>}
 
     {/* Rien ne s'affiche quand la publication n'est pas en collaboration. */}

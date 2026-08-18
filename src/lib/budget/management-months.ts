@@ -46,11 +46,24 @@ export async function syncManagementMonths(
   });
   if (expected.length === 0) return 0;
 
-  const { data: existing } = await supabase
-    .from("client_budget_lines")
-    .select("id, performed_on")
-    .eq("client_id", client.id)
-    .eq("service_key", MANAGEMENT_MONTH_KEY);
+  const [{ data: existing }, { data: settled }] = await Promise.all([
+    supabase
+      .from("client_budget_lines")
+      .select("id, performed_on")
+      .eq("client_id", client.id)
+      .eq("service_key", MANAGEMENT_MONTH_KEY),
+    /*
+     * Mois dont la facture est établie ou prélevée : ils sortent du champ de la
+     * réconciliation. Une facture partie chez le client ne se recalcule pas —
+     * une règle corrigée aujourd'hui réécrirait sinon des années d'historique
+     * au tarif du jour, et l'addition ne correspondrait plus aux prélèvements.
+     */
+    supabase
+      .from("client_invoices")
+      .select("period_month")
+      .eq("client_id", client.id)
+      .in("status", ["faite", "prelevement_programme"]),
+  ]);
 
   /*
    * Réconciliation, et pas seulement ajout.
@@ -63,6 +76,7 @@ export async function syncManagementMonths(
   const { toInsert: missing, staleIds } = reconcileManagementMonths(
     expected,
     (existing ?? []).map((row) => ({ id: row.id as string, performedOn: row.performed_on as string })),
+    { lockedMonths: (settled ?? []).map((row) => row.period_month as string) },
   );
 
   if (staleIds.length > 0) {
@@ -84,7 +98,7 @@ export async function syncManagementMonths(
       performed_on: month.dueOn,
       note: month.fraction < 1
         ? "Premier mois entamé : facturé au prorata des semaines restantes."
-        : "Inscrit automatiquement au début du mois de gestion.",
+        : "Inscrit automatiquement au premier jour du mois.",
     })),
   );
 

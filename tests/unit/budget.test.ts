@@ -205,17 +205,18 @@ describe("synthèse budgétaire", () => {
 });
 
 describe("mois de gestion dus", () => {
-  it("facture d'avance : le mois est dû le jour où il commence", () => {
+  it("facture d'avance, au premier jour de chaque mois", () => {
     const months = dueManagementMonths({
       contractStartDate: "2026-02-15",
       contractEndDate: null,
       monthlyCostCents: 19_000,
       today: "2026-08-11",
     });
-    // Février à juillet sont dus ; le 15 août n'est pas encore arrivé.
-    expect(months).toHaveLength(6);
+    // Le mois entamé de février, puis les six premiers de mars à août.
+    expect(months).toHaveLength(7);
     expect(months[0]!.dueOn).toBe("2026-02-15");
-    expect(months.at(-1)!.dueOn).toBe("2026-07-15");
+    expect(months[1]!.dueOn).toBe("2026-03-01");
+    expect(months.at(-1)!.dueOn).toBe("2026-08-01");
   });
 
   it("facture le premier mois dès le premier jour de gestion", () => {
@@ -231,7 +232,13 @@ describe("mois de gestion dus", () => {
     expect(months[0]!.amountCents).toBe(7_500);
   });
 
-  it("court d'anniversaire en anniversaire, pas en mois calendaires", () => {
+  /*
+   * La facturation suit le calendrier, pas la date de signature : un client
+   * parti le 21 juillet est facturé le 1er août comme tous les autres. Compter
+   * d'anniversaire en anniversaire retardait sa facture d'août de trois
+   * semaines, et elle manquait à l'appel le 18.
+   */
+  it("court en mois calendaires, pas d'anniversaire en anniversaire", () => {
     const months = dueManagementMonths({
       contractStartDate: "2026-05-15",
       contractEndDate: null,
@@ -239,8 +246,10 @@ describe("mois de gestion dus", () => {
       today: "2026-08-14",
     });
     expect(months.map((month) => month.dueOn)).toEqual([
-      "2026-05-15", "2026-06-15", "2026-07-15",
+      "2026-05-15", "2026-06-01", "2026-07-01", "2026-08-01",
     ]);
+    // Seul le premier mois est entamé ; les suivants sont pleins.
+    expect(months.map((month) => month.amountCents)).toEqual([9_500, 19_000, 19_000, 19_000]);
   });
 
   it("n'entame pas un mois commençant après la fin de gestion", () => {
@@ -390,6 +399,50 @@ describe("réconciliation des mois inscrits", () => {
     );
     expect(result.toInsert).toEqual([]);
     expect(result.staleIds).toEqual([]);
+  });
+});
+
+/*
+ * Une facture partie chez le client est un fait. Corriger une règle de calcul
+ * ne doit pas réécrire trois ans de comptabilité au tarif du jour.
+ */
+describe("mois déjà facturés", () => {
+  const mois = (dueOn: string, index: number) => ({ index, dueOn, fraction: 1, amountCents: 19_000 });
+
+  it("ne supprime pas une ligne appartenant à un mois prélevé", () => {
+    const { staleIds } = reconcileManagementMonths(
+      [mois("2026-08-01", 2)],
+      [{ id: "ancienne", performedOn: "2026-07-21" }],
+      { lockedMonths: ["2026-07-01"] },
+    );
+    expect(staleIds).toEqual([]);
+  });
+
+  it("n'ajoute rien dans un mois déjà facturé", () => {
+    const { toInsert } = reconcileManagementMonths(
+      [mois("2026-07-01", 1), mois("2026-08-01", 2)],
+      [],
+      { lockedMonths: ["2026-07-01"] },
+    );
+    expect(toInsert.map((month) => month.dueOn)).toEqual(["2026-08-01"]);
+  });
+
+  it("corrige librement les mois encore ouverts", () => {
+    const { toInsert, staleIds } = reconcileManagementMonths(
+      [mois("2026-08-01", 2)],
+      [{ id: "ancienne", performedOn: "2026-08-21" }],
+      { lockedMonths: ["2026-07-01"] },
+    );
+    expect(toInsert.map((month) => month.dueOn)).toEqual(["2026-08-01"]);
+    expect(staleIds).toEqual(["ancienne"]);
+  });
+
+  it("se comporte comme avant sans mois verrouillé", () => {
+    const { staleIds } = reconcileManagementMonths(
+      [mois("2026-08-01", 2)],
+      [{ id: "ancienne", performedOn: "2026-07-21" }],
+    );
+    expect(staleIds).toEqual(["ancienne"]);
   });
 });
 

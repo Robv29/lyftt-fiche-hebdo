@@ -315,17 +315,28 @@ export interface ManagementMonth {
   fraction: number;
 }
 
+/** Premier jour du mois calendaire suivant celui d'une date. */
+function firstOfNextMonth(date: string): string {
+  const origin = new Date(`${date}T00:00:00Z`);
+  return new Date(Date.UTC(origin.getUTCFullYear(), origin.getUTCMonth() + 1, 1))
+    .toISOString().slice(0, 10);
+}
+
 /**
  * Mois de gestion dus à ce jour.
  *
- * La gestion se règle **d'avance**, comme un abonnement : le mois est dû le
- * jour où il commence, pas le jour où il s'achève. Une gestion démarrée le
- * 15 février est donc déjà facturée six fois au 11 août — février à juillet —
- * la septième tombant le 15 août.
+ * La gestion se règle **d'avance et au début du mois calendaire**, pour tout le
+ * monde : le 1er septembre ouvre septembre, quelle que soit la date à laquelle
+ * le client a signé. Seul le premier mois fait exception — commencé en cours de
+ * mois, il est facturé au prorata des semaines restantes, à la date de départ.
  *
- * Les mois courent d'anniversaire à anniversaire, pas en mois calendaires : le
- * 15 reste le 15. Le décompte s'arrête à la fin de gestion, un mois qui
- * commencerait après elle n'étant jamais produit.
+ * Les mois couraient auparavant d'anniversaire à anniversaire : un client parti
+ * le 21 juillet était facturé le 21 août, si bien que sa facture d'août
+ * n'existait pas encore le 18. C'est le calendrier qui commande, pas la date de
+ * signature.
+ *
+ * Le décompte s'arrête à la fin de gestion : un mois qui commencerait après
+ * elle n'est jamais produit.
  */
 export function dueManagementMonths(input: {
   contractStartDate: string | null;
@@ -340,18 +351,24 @@ export function dueManagementMonths(input: {
     : input.today;
 
   const months: ManagementMonth[] = [];
-  // Une gestion de plusieurs années reste bornée : 120 mois suffisent.
-  for (let index = 1; index <= 120; index += 1) {
-    const dueOn = addMonths(input.contractStartDate, index - 1);
-    if (dueOn > limit) break;
-    // Seul le premier mois peut être entamé ; les suivants tombent entiers.
-    const fraction = index === 1 ? monthStartFraction(dueOn) : 1;
+  // Premier mois : entamé, donc au prorata, et daté du jour de départ.
+  const firstFraction = monthStartFraction(input.contractStartDate);
+  if (input.contractStartDate <= limit) {
     months.push({
-      index,
-      dueOn,
-      fraction,
-      amountCents: Math.round(input.monthlyCostCents * fraction),
+      index: 1,
+      dueOn: input.contractStartDate,
+      fraction: firstFraction,
+      amountCents: Math.round(input.monthlyCostCents * firstFraction),
     });
+  }
+
+  // Puis le 1er de chaque mois suivant, en entier.
+  let dueOn = firstOfNextMonth(input.contractStartDate);
+  // Une gestion de plusieurs années reste bornée : 120 mois suffisent.
+  for (let index = 2; index <= 120; index += 1) {
+    if (dueOn > limit) break;
+    months.push({ index, dueOn, fraction: 1, amountCents: input.monthlyCostCents });
+    dueOn = firstOfNextMonth(dueOn);
   }
   return months;
 }
@@ -544,10 +561,12 @@ export function monthsRemainingToBill(input: {
   }
 
   let count = 0;
+  // Les échéances tombent le 1er de chaque mois, comme la facturation.
+  let dueOn = firstOfNextMonth(input.contractStartDate);
   for (let index = 1; index <= 120; index += 1) {
-    const dueOn = addMonths(input.contractStartDate, index - 1);
     if (dueOn > input.contractEndDate) break;
     if (dueOn > input.today) count += 1;
+    dueOn = firstOfNextMonth(dueOn);
   }
   return count;
 }
@@ -561,14 +580,30 @@ export function monthsRemainingToBill(input: {
 export function reconcileManagementMonths(
   expected: ManagementMonth[],
   existing: { id: string; performedOn: string }[],
+  options: {
+    /**
+     * Mois dont la facture est établie ou prélevée, au format `AAAA-MM-01`.
+     *
+     * Ils sont intouchables. Une facture partie chez le client est un fait :
+     * la recalculer au tarif du jour ferait diverger l'addition affichée de ce
+     * qui a réellement été prélevé, et la correction d'une règle réécrirait
+     * trois ans de comptabilité.
+     */
+    lockedMonths?: readonly string[];
+  } = {},
 ): { toInsert: ManagementMonth[]; staleIds: string[] } {
+  const locked = new Set(options.lockedMonths ?? []);
+  const isLocked = (date: string) => locked.has(`${date.slice(0, 7)}-01`);
+
   const expectedDates = new Set(expected.map((month) => month.dueOn));
   const presentDates = new Set(
     existing.filter((row) => expectedDates.has(row.performedOn)).map((row) => row.performedOn),
   );
   return {
-    toInsert: expected.filter((month) => !presentDates.has(month.dueOn)),
-    staleIds: existing.filter((row) => !expectedDates.has(row.performedOn)).map((row) => row.id),
+    toInsert: expected.filter((month) => !presentDates.has(month.dueOn) && !isLocked(month.dueOn)),
+    staleIds: existing
+      .filter((row) => !expectedDates.has(row.performedOn) && !isLocked(row.performedOn))
+      .map((row) => row.id),
   };
 }
 
