@@ -6,6 +6,8 @@ import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/se
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sanitizeText } from "@/lib/security/sanitize";
 import { checkAttachment, safeFileName } from "@/lib/security/attachments";
+import { uploadSheetMedia } from "@/lib/media/internal-upload";
+import { prepareCorrectionForClient, transitionTicket } from "@/lib/internal/actions";
 
 export interface ProductionActionResult {
   ok: boolean;
@@ -238,4 +240,219 @@ export async function deleteProductionRequest(requestId: string): Promise<Produc
 
   revalidatePath("/production");
   return { ok: true, message: "Commande retirée." };
+}
+
+// ---------------------------------------------------------------------------
+// Corrections demandées par le client
+//
+// La production n'a pas à rouvrir le ticket pour livrer : elle dépose le
+// fichier, elle valide, et la correction part au contrôle du community
+// manager. Le texte de la publication, les hashtags et la date restent à
+// l'écran éditorial — ici, seul le fichier compte.
+// ---------------------------------------------------------------------------
+
+/** Nature du fichier attendu, déduite de la famille du ticket. */
+function expectedKindForCategory(category: string): "image" | "video" {
+  return category === "video" ? "video" : "image";
+}
+
+export async function deliverTicketMedia(formData: FormData): Promise<ProductionActionResult> {
+  const profile = await requireProfile();
+  if (!profile) return { ok: false, message: ACCESS_DENIED };
+
+  const ticketId = z.string().uuid().safeParse(formData.get("ticketId"));
+  if (!ticketId.success) return { ok: false, message: "Ticket invalide." };
+
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) {
+    return { ok: false, message: "Déposez le fichier corrigé." };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const { data: ticket } = await supabase
+    .from("client_tickets")
+    .select("id, status, category, client_id, weekly_sheet_id, weekly_sheet_item_id")
+    .eq("id", ticketId.data)
+    .maybeSingle();
+  if (!ticket) return { ok: false, message: "Ticket introuvable ou accès refusé." };
+
+  const expected = expectedKindForCategory(ticket.category as string);
+  if (!file.type.startsWith(`${expected}/`)) {
+    return {
+      ok: false,
+      message: expected === "video"
+        ? "Cette correction attend une vidéo."
+        : "Cette correction attend une image.",
+    };
+  }
+
+  if (!ticket.weekly_sheet_item_id) {
+    return {
+      ok: false,
+      message: "Cette demande ne porte pas sur une publication précise : traitez-la depuis le ticket.",
+    };
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { data: item } = await admin
+    .from("weekly_sheet_items")
+    .select("id, media_asset_id")
+    .eq("id", ticket.weekly_sheet_item_id)
+    .maybeSingle();
+
+  /*
+   * Le fichier remplacé n'est pas effacé : il reste chaîné par
+   * `replaces_media_id`, ce qui permet de remonter aux versions précédentes
+   * d'une publication corrigée plusieurs fois.
+   */
+  const upload = await uploadSheetMedia({
+    file,
+    clientId: ticket.client_id as string,
+    sheetId: ticket.weekly_sheet_id as string,
+    uploadedBy: profile.id,
+    expectedKind: expected,
+    replacesMediaId: (item?.media_asset_id as string | null) ?? null,
+  });
+  if (!upload.data) return { ok: false, message: upload.error ?? "Téléversement impossible." };
+
+  const { error } = await admin
+    .from("weekly_sheet_items")
+    .update({ media_asset_id: upload.data.assetId, media_external_url: null })
+    .eq("id", ticket.weekly_sheet_item_id);
+  if (error) return { ok: false, message: `Correction non enregistrée : ${error.message}` };
+
+  /*
+   * Sur un carrousel, la couverture est la première image de la série : c'est
+   * elle que remplace le fichier déposé. Les autres images restent en place —
+   * on ne devine pas laquelle le client visait.
+   */
+  const { data: gallery } = await admin
+    .from("weekly_sheet_item_media")
+    .select("id, position")
+    .eq("weekly_sheet_item_id", ticket.weekly_sheet_item_id)
+    .order("position", { ascending: true });
+  const cover = (gallery ?? [])[0];
+  if (cover) {
+    await admin
+      .from("weekly_sheet_item_media")
+      .update({ media_asset_id: upload.data.assetId })
+      .eq("id", cover.id as string);
+  }
+
+  // Un ticket seulement affecté passe en cours dès le premier dépôt.
+  if (ticket.status === "assigned") {
+    const transition = new FormData();
+    transition.set("ticketId", ticketId.data);
+    transition.set("nextStatus", "in_progress");
+    await transitionTicket(transition);
+  }
+
+  revalidatePath("/production");
+  revalidatePath(`/retours/${ticketId.data}`);
+  return {
+    ok: true,
+    message: cover
+      ? "Fichier déposé : il remplace l'image de couverture."
+      : "Fichier déposé.",
+  };
+}
+
+/** La production rend sa copie : la correction part au contrôle interne. */
+export async function submitTicketForReview(ticketId: string): Promise<ProductionActionResult> {
+  const parsed = z.string().uuid().safeParse(ticketId);
+  if (!parsed.success) return { ok: false, message: "Ticket invalide." };
+
+  const supabase = await createSupabaseServerClient();
+  const { data: ticket } = await supabase
+    .from("client_tickets")
+    .select("id, status")
+    .eq("id", parsed.data)
+    .maybeSingle();
+  if (!ticket) return { ok: false, message: "Ticket introuvable ou accès refusé." };
+
+  /*
+   * Un ticket seulement affecté passe d'abord en cours : la machine à états
+   * n'admet pas de saut, et l'on ne va pas demander deux clics pour dire la
+   * même chose — la correction est faite, elle part au contrôle.
+   */
+  if (ticket.status === "assigned") {
+    const start = new FormData();
+    start.set("ticketId", parsed.data);
+    start.set("nextStatus", "in_progress");
+    const started = await transitionTicket(start);
+    if (!started.ok) return { ok: false, message: started.message };
+  }
+
+  const transition = new FormData();
+  transition.set("ticketId", parsed.data);
+  transition.set("nextStatus", "ready_for_review");
+  const result = await transitionTicket(transition);
+
+  revalidatePath("/production");
+  return result.ok
+    ? { ok: true, message: "Correction envoyée au contrôle." }
+    : { ok: false, message: result.message };
+}
+
+/**
+ * Contrôle interne validé : la version corrigée part au client.
+ *
+ * C'est le bout de la chaîne demandé — déposer, valider, obtenir le lien. La
+ * validation enchaîne d'un geste ce qui demandait trois écrans : le contrôle
+ * interne, la génération de la version corrigée, et le lien de validation de
+ * la fiche, accompagné de son message prêt à coller.
+ *
+ * Le lien produit est celui de la fiche : le client rouvre le tableau qu'il
+ * connaît et y retrouve la publication corrigée à sa place. Multiplier les
+ * liens à usage unique lui ferait chercher lequel ouvrir.
+ */
+export async function validateTicketCorrection(
+  ticketId: string,
+): Promise<ProductionActionResult & { reviewUrl?: string; messageBody?: string; whatsappUrl?: string }> {
+  const profile = await requireProfile();
+  if (!profile) return { ok: false, message: ACCESS_DENIED };
+  if (!["super_admin", "production_manager", "community_manager"].includes(profile.role)) {
+    return { ok: false, message: "Seul le community manager valide le contrôle interne." };
+  }
+
+  const parsed = z.string().uuid().safeParse(ticketId);
+  if (!parsed.success) return { ok: false, message: "Ticket invalide." };
+
+  const supabase = await createSupabaseServerClient();
+  const { data: ticket } = await supabase
+    .from("client_tickets")
+    .select("id, status, weekly_sheet_id")
+    .eq("id", parsed.data)
+    .maybeSingle();
+  if (!ticket) return { ok: false, message: "Ticket introuvable ou accès refusé." };
+
+  const transition = new FormData();
+  transition.set("ticketId", parsed.data);
+  transition.set("nextStatus", "internally_reviewed");
+  const reviewed = await transitionTicket(transition);
+  if (!reviewed.ok) return { ok: false, message: reviewed.message };
+
+  /*
+   * Le texte et les hashtags ne sont pas touchés ici : ils ont été arrêtés à
+   * l'écran éditorial. Seule la version est datée, puis le lien préparé.
+   */
+  const correction = new FormData();
+  correction.set("ticketId", parsed.data);
+  correction.set("sheetId", ticket.weekly_sheet_id as string);
+  correction.set("itemId", "");
+  correction.set("caption", "");
+  correction.set("hashtags", "");
+  correction.set("summary", "Correction déposée par la production et validée en interne.");
+  const prepared = await prepareCorrectionForClient(correction);
+  if (!prepared.ok) return { ok: false, message: prepared.message };
+
+  revalidatePath("/production");
+  revalidatePath("/retours");
+  return {
+    ok: true,
+    message: "Correction validée. Le lien client est prêt.",
+    reviewUrl: prepared.reviewUrl,
+    messageBody: prepared.messageBody,
+    whatsappUrl: prepared.whatsappUrl,
+  };
 }

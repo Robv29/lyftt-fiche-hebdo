@@ -1,13 +1,12 @@
-import Link from "next/link";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
 import { deadlineState } from "@/lib/domain/deadline";
-import { ticketStatusLabel } from "@/lib/domain/types";
-import { ClientAvatar, EmptyState, PageHeader, StatusDot } from "@/components/ui";
-import { Icon } from "@/components/Icon";
+import { ticketPriorityLabel, ticketStatusLabel } from "@/lib/domain/types";
+import { PageHeader } from "@/components/ui";
 import { resolveMediaUrl } from "@/lib/media/signed-url";
 import { todayInParis } from "@/lib/domain/client-lifecycle";
 import { ProductionRequests, type ProductionRequestRow } from "./ProductionRequests";
+import { TicketCorrections, type TicketCorrectionRow } from "./TicketCorrections";
 
 /**
  * §22 — Espace de production.
@@ -22,9 +21,9 @@ export default async function ProductionPage() {
   const { data: tickets } = await supabase
     .from("client_tickets")
     .select(
-      `id, ticket_number, title, ticket_type, status, priority, due_at,
+      `id, ticket_number, title, description, ticket_type, category, status, priority, due_at,
+       weekly_sheet_item_id,
        clients ( name ),
-       weekly_sheet_items ( scheduled_date, caption ),
        client_ticket_assignments!inner ( assignment_role, profile_id )`,
     )
     .in("category", ["graphic", "video"])
@@ -72,6 +71,31 @@ export default async function ProductionPage() {
     };
   }));
 
+  /*
+   * Corrections clients : on ne montre que ce qui sert à produire — qui, quoi,
+   * pour quand. Le texte de la publication et ses hashtags restent à l'écran
+   * éditorial ; ici, seul le fichier corrigé est attendu.
+   */
+  const corrections: TicketCorrectionRow[] = (tickets ?? []).map((ticket) => {
+    const client = ticket.clients as unknown as { name: string } | null;
+    const due = ticket.due_at ? deadlineState(new Date(ticket.due_at)) : null;
+    return {
+      id: ticket.id as string,
+      ticketNumber: ticket.ticket_number as string,
+      clientName: client?.name ?? "Client",
+      typeLabel: getTicketTypeDefinition(ticket.ticket_type).label,
+      title: ticket.title as string,
+      description: (ticket.description as string | null) ?? "",
+      status: ticket.status as string,
+      statusLabel: ticketStatusLabel(ticket.status),
+      category: (ticket.category === "video" ? "video" : "graphic") as "graphic" | "video",
+      priorityLabel: ticket.priority !== "normal" ? ticketPriorityLabel(ticket.priority) : null,
+      dueLabel: due?.label ?? null,
+      overdue: Boolean(due?.isOverdue),
+      hasItem: Boolean(ticket.weekly_sheet_item_id),
+    };
+  });
+
   return (
     <div className="space-y-7">
       <PageHeader eyebrow="Studio de production" title={isProductionRole ? "Production" : "Production"} description={isProductionRole ? "Les corrections qui vous sont affectées et les commandes internes, triées selon leur échéance." : "Les retours clients à corriger et les commandes internes de l'équipe."} />
@@ -87,50 +111,11 @@ export default async function ProductionPage() {
         <span className="text-xs text-ink-faint">{(tickets ?? []).length} en cours</span>
       </div>
 
-      {(tickets ?? []).length === 0 ? (
-        <EmptyState icon="layers" title="Production à jour" description="Aucune correction graphique ou vidéo n’attend d’intervention." />
-      ) : (
-        <ul className="grid gap-4 lg:grid-cols-2">
-          {(tickets ?? []).map((ticket) => {
-            const client = ticket.clients as unknown as { name: string } | null;
-            const item = ticket.weekly_sheet_items as unknown as {
-              scheduled_date: string;
-              caption: string;
-            } | null;
-            const due = ticket.due_at ? deadlineState(new Date(ticket.due_at)) : null;
-
-            return (
-              <li key={ticket.id} className="card lift-card overflow-hidden">
-                <Link
-                  href={`/retours/${ticket.id}`}
-                  className="group block p-5 hover:bg-[#f7fafe]"
-                >
-                  <div className="flex items-start gap-3">
-                    <ClientAvatar name={client?.name ?? "Client"}/>
-                    <div className="min-w-0 flex-1"><div className="flex flex-wrap items-start justify-between gap-2"><div><h2 className="truncate text-sm font-semibold">{client?.name}</h2><p className="mt-1 text-xs text-ink-faint">{getTicketTypeDefinition(ticket.ticket_type).label}</p></div><Icon name="arrow" className="h-4 w-4 text-ink-faint transition-transform group-hover:translate-x-0.5"/></div>
-                    {item && <p className="mt-4 line-clamp-2 text-sm leading-relaxed text-ink-soft">Publication du {item.scheduled_date} — {item.caption}</p>}
-                    <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-3 text-xs">
-                      <StatusDot tone="info">{ticketStatusLabel(ticket.status)}</StatusDot>
-                      {due && (
-                        <span
-                          className={due.isOverdue ? "text-state-changes" : "text-ink-faint"}
-                        >
-                          {due.label}
-                        </span>
-                      )}
-                      <span className="ml-auto text-ink-faint">{ticket.ticket_number}</span>
-                    </div></div>
-                  </div>
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      <TicketCorrections tickets={corrections} canValidate={!isProductionRole}/>
 
       <p className="rounded-2xl bg-[#e8f2ff] px-4 py-3 text-xs leading-relaxed text-[#385a78]">
-        Le renvoi au client reste à la charge du community manager : déposez votre
-        nouvelle version puis passez le ticket en « Prêt à contrôler ».
+        Déposez le fichier corrigé puis validez : la correction part au contrôle du
+        community manager, qui la valide et obtient le lien à envoyer au client.
       </p>
     </div>
   );

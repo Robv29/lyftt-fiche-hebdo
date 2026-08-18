@@ -28,26 +28,41 @@ export default async function InternalLayout({
    * sa validation. Sans ce signal, un fichier déposé pouvait rester des jours
    * sans que le demandeur sache qu'il était prêt.
    */
-  const { count: productionBadge } = isProduction
-    ? await supabase
-        .from("production_requests")
-        .select("id", { count: "exact", head: true })
-        .eq("status", "a_faire")
-    : await supabase
-        .from("production_requests")
-        .select("id", { count: "exact", head: true })
-        .eq("status", "livree")
-        .eq("requested_by", profile.id);
+  const [{ count: requestsBadge }, { count: correctionsBadge }] = await Promise.all([
+    isProduction
+      ? supabase
+          .from("production_requests")
+          .select("id", { count: "exact", head: true })
+          .eq("status", "a_faire")
+      : supabase
+          .from("production_requests")
+          .select("id", { count: "exact", head: true })
+          .eq("status", "livree")
+          .eq("requested_by", profile.id),
+    /*
+     * Corrections clients déposées et non contrôlées. Le graphiste n'a rien à
+     * en faire — elles ne lui appartiennent plus — tandis que le community
+     * manager doit les voir : c'est lui qui valide et renvoie au client.
+     */
+    isProduction
+      ? Promise.resolve({ count: 0 })
+      : supabase
+          .from("client_tickets")
+          .select("id", { count: "exact", head: true })
+          .eq("status", "ready_for_review")
+          .in("category", ["graphic", "video"]),
+  ]);
+  const productionBadge = (requestsBadge ?? 0) + (correctionsBadge ?? 0);
 
   const links = isProduction
-    ? [{ href: "/production", label: "Corrections clients", icon: "layers", badge: productionBadge ?? 0 }]
+    ? [{ href: "/production", label: "Corrections clients", icon: "layers", badge: productionBadge }]
     : [
         { href: "/", label: "Vue d’ensemble", icon: "dashboard", badge: null },
         { href: "/publications", label: "Publications", icon: "send", badge: null },
         { href: "/fiches", label: "Planning", icon: "calendar", badge: null },
         { href: "/clients", label: "Clients", icon: "users", badge: null },
         { href: "/retours", label: "Tickets clients", icon: "message", badge: openTickets ?? 0 },
-        { href: "/production", label: "Production", icon: "layers", badge: productionBadge ?? 0 },
+        { href: "/production", label: "Production", icon: "layers", badge: productionBadge },
         { href: "/indicateurs", label: "Indicateurs", icon: "chart", badge: null },
         ...(profile.role === "super_admin"
           ? [
