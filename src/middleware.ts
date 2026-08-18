@@ -5,7 +5,8 @@ import { normalizeKey, normalizeSupabaseUrl } from "@/lib/supabase/url";
 /**
  * Rafraîchit la session Supabase et protège les écrans internes.
  *
- * Le portail client (`/client-review/...`) est volontairement exclu : il est
+ * Le portail client (`/client-review/...`) et le formulaire de demande
+ * (`/demande/...`) sont volontairement exclus : ils sont
  * public et son contrôle d'accès repose sur le token, pas sur une session.
  */
 export async function middleware(request: NextRequest) {
@@ -100,6 +101,6 @@ export const config = {
      * authentification. Les y soumettre renvoyait une redirection 307 vers la
      * page de connexion, que le cron ne peut évidemment pas suivre.
      */
-    "/((?!client-review|login|api|test-clic|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!client-review|demande|login|api|test-clic|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };
