@@ -42,7 +42,8 @@ export default async function ProductionPage() {
     supabase
       .from("production_requests")
       .select(`id, client_id, kind, title, brief, due_on, status, requested_by, requested_by_name, clients ( name ),
-        media_assets:media_asset_id ( kind, file_name, storage_path, preview_path, purged_at, preview_purged_at )`)
+        media_assets:media_asset_id ( kind, file_name, storage_path, preview_path, purged_at, preview_purged_at ),
+        reference:reference_media_id ( storage_path, preview_path, purged_at, preview_purged_at )`)
       .order("due_on", { ascending: true }),
     supabase.from("clients").select("id, name").eq("is_active", true).order("name"),
   ]);
@@ -52,6 +53,11 @@ export default async function ProductionPage() {
     const media = row.media_assets as unknown as { kind: string; file_name: string; storage_path: string; preview_path: string | null; purged_at: string | null; preview_purged_at: string | null } | null;
     const resolved = media
       ? await resolveMediaUrl({ storagePath: media.storage_path, previewPath: media.preview_path, purgedAt: media.purged_at, previewPurgedAt: media.preview_purged_at })
+      : null;
+    // La référence est signée comme le reste : le bucket est privé.
+    const reference = row.reference as unknown as { storage_path: string; preview_path: string | null; purged_at: string | null; preview_purged_at: string | null } | null;
+    const resolvedReference = reference
+      ? await resolveMediaUrl({ storagePath: reference.storage_path, previewPath: reference.preview_path, purgedAt: reference.purged_at, previewPurgedAt: reference.preview_purged_at })
       : null;
     return {
       id: row.id as string,
@@ -67,6 +73,7 @@ export default async function ProductionPage() {
       mediaUrl: resolved?.url ?? null,
       mediaFileName: media?.file_name ?? null,
       mediaKind: media?.kind ?? null,
+      referenceUrl: resolvedReference?.url ?? null,
       overdue: (row.due_on as string) < today && row.status === "a_faire",
     };
   }));

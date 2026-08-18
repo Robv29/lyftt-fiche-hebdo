@@ -40,6 +40,12 @@ const createSchema = z.object({
   title: z.string().trim().min(3, "Décrivez la demande en quelques mots.").max(160, "Titre trop long (160 caractères maximum)."),
   brief: z.string().trim().max(2000, "Brief trop long (2000 caractères maximum).").optional(),
   dueOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Indiquez la date limite."),
+  /*
+   * Référence déjà téléversée depuis le navigateur : on ne reçoit ici que son
+   * identifiant. Le fichier ne transite pas par l'action, dont le corps est
+   * plafonné — une photo de téléphone le dépasse sans peine.
+   */
+  referenceMediaId: z.string().uuid().optional(),
 });
 
 export async function createProductionRequest(formData: FormData): Promise<ProductionActionResult> {
@@ -52,6 +58,7 @@ export async function createProductionRequest(formData: FormData): Promise<Produ
     title: formData.get("title"),
     brief: formData.get("brief") ?? undefined,
     dueOn: formData.get("dueOn"),
+    referenceMediaId: formData.get("referenceMediaId") || undefined,
   });
   if (!parsed.success) {
     return { ok: false, message: parsed.error.issues[0]?.message ?? "Formulaire invalide." };
@@ -70,6 +77,7 @@ export async function createProductionRequest(formData: FormData): Promise<Produ
      * quitte l'agence et que son profil est effacé.
      */
     requested_by_name: profile.full_name ?? null,
+    reference_media_id: parsed.data.referenceMediaId ?? null,
   });
 
   if (error) return { ok: false, message: `Demande non enregistrée : ${error.message}` };

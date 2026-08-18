@@ -3,6 +3,7 @@
 import { useRef, useState, useTransition, type DragEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
+import { uploadMediaDirect } from "@/lib/media/direct-upload";
 import {
   createProductionRequest,
   deleteProductionRequest,
@@ -28,6 +29,8 @@ export interface ProductionRequestRow {
   mediaUrl: string | null;
   mediaFileName: string | null;
   mediaKind: string | null;
+  /** Visuel de référence joint à la demande, s'il y en a un. */
+  referenceUrl: string | null;
   overdue: boolean;
 }
 
@@ -70,6 +73,31 @@ export function ProductionRequests({
   const [pending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<ProductionActionResult | null>(null);
   const [open, setOpen] = useState(false);
+  /*
+   * Référence : envoyée directement au stockage, pas à travers l'action.
+   * Le corps d'une action serveur est plafonné, et une photo prise au
+   * téléphone le dépasse régulièrement.
+   */
+  const [clientId, setClientId] = useState("");
+  const [reference, setReference] = useState<{ id: string; previewUrl: string } | null>(null);
+  const [referenceStatus, setReferenceStatus] = useState<"vide" | "envoi" | "erreur">("vide");
+
+  const attachReference = async (file: File) => {
+    if (!clientId) {
+      setFeedback({ ok: false, message: "Choisissez d'abord le client concerné." });
+      return;
+    }
+    setReferenceStatus("envoi");
+    const previewUrl = URL.createObjectURL(file);
+    const result = await uploadMediaDirect({ file, clientId, sheetId: null });
+    if (!result.ok || !result.mediaAssetId) {
+      setReferenceStatus("erreur");
+      setFeedback({ ok: false, message: result.message ?? "Référence non envoyée." });
+      return;
+    }
+    setReference({ id: result.mediaAssetId, previewUrl });
+    setReferenceStatus("vide");
+  };
 
   const run = (action: () => Promise<ProductionActionResult>) => {
     startTransition(async () => {
@@ -124,6 +152,8 @@ export function ProductionRequests({
               setFeedback(result);
               if (result.ok) {
                 form.reset();
+                setReference(null);
+                setClientId("");
                 setOpen(false);
                 router.refresh();
               }
@@ -141,7 +171,7 @@ export function ProductionRequests({
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <label className="label" htmlFor="request-client">Client concerné</label>
-              <select id="request-client" name="clientId" required className="field" defaultValue="">
+              <select id="request-client" name="clientId" required className="field" value={clientId} onChange={(event) => setClientId(event.target.value)}>
                 <option value="" disabled>Choisir un client…</option>
                 {clients.map((client) => (
                   <option key={client.id} value={client.id}>{client.name}</option>
@@ -174,6 +204,52 @@ export function ProductionRequests({
           <div>
             <label className="label" htmlFor="request-brief">Brief et informations utiles</label>
             <textarea id="request-brief" name="brief" rows={4} maxLength={2000} className="field" placeholder="Message à faire passer, format, lieu, contraintes, éléments déjà disponibles…"/>
+          </div>
+
+          {/*
+            Une référence vaut mieux qu'un paragraphe : « comme la story de la
+            semaine dernière, mais plus sobre » suppose que l'autre l'ait sous
+            les yeux.
+          */}
+          <div>
+            <label className="label" htmlFor="request-reference">
+              Visuel de référence <span className="font-normal text-ink-faint">(facultatif)</span>
+            </label>
+            <input type="hidden" name="referenceMediaId" value={reference?.id ?? ""}/>
+            {reference ? (
+              <div className="mt-1 flex items-center gap-3 rounded-xl border border-line bg-white p-2">
+                <span className="block w-[72px] overflow-hidden rounded-lg border border-line">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={reference.previewUrl} alt="Référence jointe" className="block aspect-square w-full object-cover"/>
+                </span>
+                <span className="text-xs text-ink-soft">Référence jointe</span>
+                <button
+                  type="button"
+                  className="ml-auto text-xs text-state-changes hover:underline"
+                  onClick={() => setReference(null)}
+                >
+                  Retirer
+                </button>
+              </div>
+            ) : (
+              <input
+                id="request-reference"
+                type="file"
+                accept="image/*"
+                className="field text-xs"
+                disabled={referenceStatus === "envoi"}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) void attachReference(file);
+                  event.target.value = "";
+                }}
+              />
+            )}
+            <p className="mt-1 text-xs text-ink-faint">
+              {referenceStatus === "envoi"
+                ? "Envoi de la référence…"
+                : "Une image qui montre le rendu attendu : ambiance, cadrage, mise en page."}
+            </p>
           </div>
 
           <button type="submit" className="btn-primary" disabled={pending}>
@@ -256,6 +332,14 @@ function RequestCard({
 
         {request.brief && (
           <p className="mt-3 whitespace-pre-line text-xs leading-relaxed text-ink-soft">{request.brief}</p>
+        )}
+
+        {request.referenceUrl && (
+          <figure className="mt-3 overflow-hidden rounded-xl border border-line bg-white">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={request.referenceUrl} alt="Visuel de référence" className="block max-h-40 w-full object-contain"/>
+            <figcaption className="border-t px-3 py-2 text-[11px] text-ink-faint">Référence à suivre</figcaption>
+          </figure>
         )}
 
         <p className="mt-3 text-[11px] text-ink-faint">
