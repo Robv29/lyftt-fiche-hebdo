@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { delayScore, healthScore, MIN_SATISFACTION_ANSWERS } from "@/lib/domain/health-score";
+import { delayScore, healthActions, healthScore, MIN_SATISFACTION_ANSWERS } from "@/lib/domain/health-score";
 
 const vide = {
   satisfactionPercentage: null, satisfactionAnswers: 0,
@@ -89,5 +89,41 @@ describe("score de santé", () => {
 
   it("ne note rien quand la période est vide", () => {
     expect(healthScore(vide).score).toBeNull();
+  });
+});
+
+describe("conseils pour atteindre l'objectif", () => {
+  const complet = {
+    ...vide,
+    satisfactionPercentage: 80, satisfactionAnswers: 5,
+    viewRate: 100, noCorrectionRate: 100,
+    sentBeforeDeadlineRate: 100, correctionHours: 1, productionPunctuality: 100,
+    budgetsComplete: 100, shootingsCategorised: 20, ticketsOnTime: 100,
+  };
+
+  it("ne retient que les mesures sous l'objectif", () => {
+    const actions = healthActions(healthScore(complet)).filter((action) => action.percentage !== null);
+    expect(actions.map((action) => action.key)).toEqual(["shootings", "satisfaction-note"]);
+  });
+
+  it("chiffre le gain réel sur le score global, pas le gain brut", () => {
+    const [premier] = healthActions(healthScore(complet));
+    // 70 points manquants, sur un tiers d'un pilier qui pèse 30 % du score.
+    expect(premier.key).toBe("shootings");
+    expect(premier.gain).toBeCloseTo(7, 1);
+  });
+
+  it("classe les mesures absentes en dernier, sans promettre de points", () => {
+    const actions = healthActions(healthScore({ ...complet, productionPunctuality: null }));
+    const absente = actions.find((action) => action.key === "prod-interne");
+    expect(absente?.gain).toBe(0);
+    expect(actions.at(-1)?.percentage).toBeNull();
+  });
+
+  it("ne conseille rien quand tout est au-dessus de l'objectif", () => {
+    const actions = healthActions(healthScore({
+      ...complet, satisfactionPercentage: 95, shootingsCategorised: 95,
+    }));
+    expect(actions.filter((action) => action.percentage !== null)).toHaveLength(0);
   });
 });

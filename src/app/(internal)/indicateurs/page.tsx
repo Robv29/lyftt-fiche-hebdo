@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { budgetPenalty, budgetSummary, shootingTally, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
-import { healthScore, type HealthPillar } from "@/lib/domain/health-score";
+import { healthActions, healthScore, HEALTH_TARGET, type HealthAction, type HealthPillar } from "@/lib/domain/health-score";
 import { clientLifecycle, todayInParis } from "@/lib/domain/client-lifecycle";
 import type { MonthlyCadence } from "@/lib/domain/planning";
 import { satisfactionSummary } from "@/lib/domain/planning";
@@ -328,6 +328,7 @@ export default async function MetricsPage({
     deadlineRate,
     overallScore,
     health,
+    healthActions: healthActions(health),
     openTicketsLate: ticketsWithDue.length - ticketsNotLate.length,
     periodLabel: periodLabel(since),
     satisfaction,
@@ -365,7 +366,7 @@ type MetricsData = {
   sent:number; viewed:number; approved:number; approvedWithoutCorrection:number; beforeDeadline:number;
   overdue:number; averageResponse:number; averageCorrection:number; averageVersions:number; outOfScope:number;
   ticketsPerSheet:number; viewRate:number; noCorrectionRate:number; deadlineRate:number; overallScore:number;
-  health:ReturnType<typeof healthScore>; openTicketsLate:number;
+  health:ReturnType<typeof healthScore>; healthActions:HealthAction[]; openTicketsLate:number;
   /** Fenêtre analysée, telle qu'elle est écrite sur le sélecteur. */
   periodLabel:string;
   satisfaction:ReturnType<typeof satisfactionSummary>;
@@ -448,6 +449,8 @@ function OverviewView({ data }: { data:MetricsData }) {
       </section>
 
       <HealthPanel health={data.health}/>
+
+      <AdvicePanel score={data.health.score} actions={data.healthActions}/>
 
       <section className="insights-overview-bottom">
         <SignalPanel signals={data.signals}/>
@@ -600,6 +603,69 @@ function HealthCard({ pillar }: { pillar:HealthPillar }) {
           </li>
         ))}
       </ul>
+    </article>
+  );
+}
+
+/**
+ * Ce qu'il reste à faire pour atteindre l'objectif.
+ *
+ * Un score qui stagne sans mode d'emploi finit en décoration. Chaque conseil
+ * annonce ce qu'il rapporte vraiment sur le score global, du plus payant au
+ * moins payant — sinon on travaille au hasard, souvent au mauvais endroit.
+ */
+function AdvicePanel({ score, actions }: { score:number|null; actions:HealthAction[] }) {
+  const toDo = actions.filter((action) => action.percentage !== null);
+  const missing = actions.filter((action) => action.percentage === null);
+  const gap = score === null ? null : Math.max(0, HEALTH_TARGET - score);
+  const reachable = Math.round(toDo.reduce((total, action) => total + action.gain, 0) * 10) / 10;
+
+  return (
+    <article className="insights-card insights-advice-panel">
+      <div className="insights-panel-heading">
+        <div>
+          <p className="eyebrow">Objectif {HEALTH_TARGET} %</p>
+          <h2 className="mt-1 font-semibold">
+            {gap === null
+              ? "Pas encore assez de données pour viser"
+              : gap === 0
+                ? "Objectif atteint"
+                : `${gap} point${gap > 1 ? "s" : ""} à rattraper`}
+          </h2>
+        </div>
+        {toDo.length > 0 && <span className="insights-soft-badge">+{reachable} pts disponibles</span>}
+      </div>
+
+      {toDo.length === 0 && missing.length === 0
+        ? <EmptyMetric text="Toutes les mesures sont au-dessus de l’objectif."/>
+        : (
+          <ol className="insights-advice-list">
+            {toDo.map((action) => (
+              <li key={action.key}>
+                <div className="insights-advice-head">
+                  <span className="insights-advice-gain">+{action.gain} pts</span>
+                  <div>
+                    <strong>{action.label}</strong>
+                    <small>{action.pillarLabel} · {Math.round(action.percentage!)} % aujourd’hui</small>
+                  </div>
+                </div>
+                <p>{action.advice}</p>
+              </li>
+            ))}
+            {missing.map((action) => (
+              <li key={action.key} className="insights-advice-missing">
+                <div className="insights-advice-head">
+                  <span className="insights-advice-gain">non mesuré</span>
+                  <div>
+                    <strong>{action.label}</strong>
+                    <small>{action.pillarLabel}</small>
+                  </div>
+                </div>
+                <p>{action.advice}</p>
+              </li>
+            ))}
+          </ol>
+        )}
     </article>
   );
 }
