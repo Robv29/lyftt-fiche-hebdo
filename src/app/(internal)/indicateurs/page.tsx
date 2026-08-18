@@ -6,6 +6,7 @@ import { clientLifecycle, todayInParis } from "@/lib/domain/client-lifecycle";
 import type { MonthlyCadence } from "@/lib/domain/planning";
 import { satisfactionSummary } from "@/lib/domain/planning";
 import { productionPunctuality } from "@/lib/domain/production-requests";
+import { ticketSlaSummary, TICKET_SLA_HOURS } from "@/lib/domain/ticket-sla";
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
 import type { TicketType } from "@/lib/domain/ticket-types";
 import { Icon } from "@/components/Icon";
@@ -152,7 +153,7 @@ export default async function MetricsPage({
     supabase.from("weekly_sheets").select(SHEET_FIELDS).gte("approved_at", sinceTs),
     supabase.from("client_tickets").select(TICKET_FIELDS).gte("submitted_at", sinceTs),
     supabase.from("client_tickets").select(TICKET_FIELDS).gte("resolved_at", sinceTs),
-    supabase.from("weekly_sheet_versions").select("weekly_sheet_id, version_number"),
+    supabase.from("weekly_sheet_versions").select("weekly_sheet_id, version_number, source_ticket_id, sent_to_client_at"),
     /*
      * Notes données par les clients sur la période. Une note par fiche validée,
      * posée à l'écran de validation : c'est la voix du client, à côté des
@@ -175,13 +176,14 @@ export default async function MetricsPage({
      * plus longtemps — précisément celles qu'il faut voir.
      */
     /*
-     * Tickets encore ouverts et datés. Comme le retard des fiches, c'est un
-     * état du jour : le borner à la fenêtre masquerait les plus anciens.
+     * Tickets encore ouverts. Comme le retard des fiches, c'est un état du
+     * jour : le borner à la fenêtre masquerait les plus anciens. L'échéance ne
+     * vient plus de la base mais de l'heure d'arrivée — vingt heures pour
+     * renvoyer la correction.
      */
     supabase.from("client_tickets")
-      .select("due_at")
-      .not("status", "in", OPEN_TICKET_STATUSES)
-      .not("due_at", "is", null),
+      .select("id, submitted_at, resolved_at")
+      .not("status", "in", OPEN_TICKET_STATUSES),
     supabase.from("weekly_sheets")
       .select("id", { count: "exact", head: true })
       .lt("validation_deadline_at", new Date().toISOString())
@@ -276,8 +278,36 @@ export default async function MetricsPage({
    * plonger l'agence. C'est le module qui écarte ces mesures et redistribue
    * les poids ; ici on se contente de dire ce qu'on sait vraiment.
    */
-  const ticketsWithDue = (openTickets ?? []).filter((ticket) => ticket.due_at);
-  const ticketsNotLate = ticketsWithDue.filter((ticket) => new Date(ticket.due_at as string) >= new Date());
+  /*
+   * Respect du délai de retour.
+   *
+   * Deux populations, un seul barème : les tickets reçus dans la fenêtre, qui
+   * disent la tenue de la période, et les tickets encore ouverts hors fenêtre,
+   * qui traînent depuis plus longtemps. Ne compter que les premiers laisserait
+   * les retards les plus anciens hors du score.
+   */
+  /*
+   * La réponse au client, c'est le lien corrigé qui part — pas la clôture du
+   * ticket, qu'on oublie de poser. On prend donc le premier envoi d'une
+   * version issue du ticket, et `resolved_at` seulement en repli.
+   */
+  const answeredAt = new Map<string, string>();
+  for (const version of versions ?? []) {
+    const ticketId = version.source_ticket_id as string | null;
+    const sentAt = version.sent_to_client_at as string | null;
+    if (!ticketId || !sentAt) continue;
+    const known = answeredAt.get(ticketId);
+    if (!known || new Date(sentAt) < new Date(known)) answeredAt.set(ticketId, sentAt);
+  }
+  const slaInput = (ticket: { id: string; submitted_at: string; resolved_at: string | null }) => ({
+    submittedAt: ticket.submitted_at,
+    respondedAt: answeredAt.get(ticket.id) ?? ticket.resolved_at ?? null,
+  });
+  const slaTickets = [
+    ...ticketList.filter((ticket) => inWindow(ticket.submitted_at)).map(slaInput),
+    ...(openTickets ?? []).filter((ticket) => !inWindow(ticket.submitted_at)).map(slaInput),
+  ];
+  const sla = ticketSlaSummary(slaTickets);
   const health = healthScore({
     satisfactionPercentage: satisfaction.percentage,
     satisfactionAnswers: satisfaction.answers,
@@ -290,7 +320,7 @@ export default async function MetricsPage({
     shootingsCategorised: budget.shootingsTotal
       ? ratio(budget.shootingsCategorised, budget.shootingsTotal)
       : null,
-    ticketsOnTime: ticketsWithDue.length ? ratio(ticketsNotLate.length, ticketsWithDue.length) : null,
+    ticketsOnTime: sla.percentage,
   });
   const overallScore = health.score ?? Math.max(0, relationScore - penalty);
   const typeEntries = [...byType.entries()].sort((a, b) => b[1] - a[1]);
@@ -306,9 +336,11 @@ export default async function MetricsPage({
       : averageCorrection > 24
         ? { tone:"warning" as const, icon:"clock", title:"Délai à surveiller", body:`Moyenne actuelle : ${hours(averageCorrection)}.` }
         : { tone:"success" as const, icon:"layers", title:"Corrections fluides", body:averageCorrection ? `Moyenne : ${hours(averageCorrection)}.` : "Pas encore assez de données." },
-    ticketsPerSheet > 1.2
-      ? { tone:"warning" as const, icon:"message", title:"Retours nombreux", body:`${ticketsPerSheet.toFixed(1)} ticket en moyenne par fiche.` }
-      : { tone:"info" as const, icon:"message", title:"Retours stables", body:sent.length ? `${ticketsPerSheet.toFixed(1)} ticket par fiche.` : "Pas encore de fiche envoyée." },
+    sla.late > 0
+      ? { tone:"danger" as const, icon:"clock", title:`${sla.late} retour${sla.late > 1 ? "s" : ""} hors délai`, body:`Promesse de ${TICKET_SLA_HOURS} h${sla.worstLateHours === null ? "" : ` · pire retard ${hours(sla.worstLateHours)}`}.` }
+      : sla.measured > 0
+        ? { tone:"success" as const, icon:"clock", title:`Délai de ${TICKET_SLA_HOURS} h tenu`, body:`${sla.onTime}/${sla.measured} retours corrigés dans les temps.` }
+        : { tone:"info" as const, icon:"message", title:"Retours stables", body:sent.length ? `${ticketsPerSheet.toFixed(1)} ticket par fiche.` : "Pas encore de fiche envoyée." },
   ];
 
   const data = {
@@ -329,7 +361,8 @@ export default async function MetricsPage({
     overallScore,
     health,
     healthActions: healthActions(health),
-    openTicketsLate: ticketsWithDue.length - ticketsNotLate.length,
+    openTicketsLate: sla.late,
+    sla,
     periodLabel: periodLabel(since),
     satisfaction,
     unhappyComments,
@@ -367,6 +400,7 @@ type MetricsData = {
   overdue:number; averageResponse:number; averageCorrection:number; averageVersions:number; outOfScope:number;
   ticketsPerSheet:number; viewRate:number; noCorrectionRate:number; deadlineRate:number; overallScore:number;
   health:ReturnType<typeof healthScore>; healthActions:HealthAction[]; openTicketsLate:number;
+  sla:ReturnType<typeof ticketSlaSummary>;
   /** Fenêtre analysée, telle qu'elle est écrite sur le sélecteur. */
   periodLabel:string;
   satisfaction:ReturnType<typeof satisfactionSummary>;
@@ -499,6 +533,20 @@ function ReturnsView({ data }: { data:MetricsData }) {
         <KpiCard icon="message" label="Tickets reçus" value={String(data.ticketTotal)} detail="sur la période" tone="info"/>
         <KpiCard icon="layers" label="Tickets par fiche" value={data.sent ? data.ticketsPerSheet.toFixed(1) : "—"} detail="moyenne après envoi" tone={data.ticketsPerSheet > 1.2 ? "warning" : "success"}/>
         <KpiCard icon="clock" label="Délai de correction" value={hours(data.averageCorrection)} detail="demande → résolution" tone={delayTone(data.averageCorrection)}/>
+        {/*
+          La promesse tenue, à côté du délai moyen : une moyenne flatteuse peut
+          cacher deux retours partis trois jours trop tard.
+        */}
+        <KpiCard
+          icon="check"
+          label={`Retours corrigés en ${TICKET_SLA_HOURS} h`}
+          value={data.sla.percentage === null ? "—" : percentValue(data.sla.percentage)}
+          detail={data.sla.measured === 0
+            ? `aucun retour jugeable · ${data.sla.running} en cours`
+            : `${data.sla.onTime}/${data.sla.measured} dans les temps${data.sla.worstLateHours === null ? "" : ` · pire retard ${hours(data.sla.worstLateHours)}`}`}
+          tone={data.sla.percentage === null ? "info" : rateTone(data.sla.percentage, 90, 70)}
+          progress={data.sla.percentage ?? undefined}
+        />
         <KpiCard icon="copy" label="Versions par fiche" value={data.averageVersions ? data.averageVersions.toFixed(1) : "—"} detail={`${data.outOfScope} hors périmètre`} tone={data.outOfScope || data.averageVersions > 2 ? "warning" : "success"}/>
       </section>
       <section className="insights-detail-grid insights-returns-grid">

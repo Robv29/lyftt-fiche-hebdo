@@ -94,7 +94,7 @@ export interface HealthInputs {
   budgetsComplete: number | null;
   /** Shootings dont on sait s'ils sont compris au forfait ou vendus en plus. */
   shootingsCategorised: number | null;
-  /** Tickets ouverts dont l'échéance n'est pas dépassée. */
+  /** Retours renvoyés au client dans les vingt heures suivant leur arrivée. */
   ticketsOnTime: number | null;
 }
 
@@ -184,10 +184,10 @@ export function healthScore(input: HealthInputs): HealthScore {
         },
         {
           key: "tickets",
-          label: "Tickets sans retard",
+          label: "Retours corrigés en 20 h",
           percentage: input.ticketsOnTime,
-          advice: "Reprenez les tickets dont l'échéance est passée, ou repoussez-la explicitement plutôt que de la laisser filer.",
-          missingAdvice: "Aucun ticket ouvert avec échéance : rien en souffrance.",
+          advice: "Renvoyez le lien corrigé dans les vingt heures qui suivent l'arrivée du retour : un ticket ouvert au-delà est déjà compté en faute.",
+          missingAdvice: "Aucun retour jugeable : les compteurs en cours ne sont pas notés.",
         },
       ],
     },

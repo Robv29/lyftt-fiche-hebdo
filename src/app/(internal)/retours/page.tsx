@@ -3,6 +3,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isServiceRequest, isServiceRequestOverdue, serviceRequestAgeInDays } from "@/lib/domain/ticket-types";
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
 import { deadlineState } from "@/lib/domain/deadline";
+import { ticketDeadline, TICKET_SLA_HOURS } from "@/lib/domain/ticket-sla";
 import {
   ticketPriorityLabel,
   ticketStatusLabel,
@@ -55,8 +56,14 @@ export default async function TicketsPage({
   if (statusFilter === "open") {
     query = query.not("status", "in", "(closed,cancelled,rejected,approved_by_client)");
   } else if (statusFilter === "overdue") {
+    /*
+     * Le retard se compte depuis l'arrivée du retour, pas depuis l'échéance de
+     * la fiche : un ticket reçu lundi pour une semaine validée vendredi
+     * passait « dans les temps » pendant quatre jours. Vingt heures après son
+     * arrivée, il est en faute.
+     */
     query = query
-      .lt("due_at", new Date().toISOString())
+      .lt("submitted_at", new Date(Date.now() - TICKET_SLA_HOURS * 3_600_000).toISOString())
       .not("status", "in", "(closed,cancelled,rejected,approved_by_client)");
   } else if (statusFilter !== "all") {
     query = query.eq("status", statusFilter as TicketStatus);
@@ -66,6 +73,33 @@ export default async function TicketsPage({
   if (filters.type) query = query.eq("ticket_type", filters.type);
 
   const { data: tickets } = await query;
+
+  /*
+   * Le compte à rebours s'arrête quand le lien corrigé part chez le client.
+   * S'appuyer sur `resolved_at` le laisserait courir indéfiniment : on oublie
+   * de clore les tickets, et l'écran afficherait des retards imaginaires.
+   */
+  const { data: correctionVersions } = await supabase
+    .from("weekly_sheet_versions")
+    .select("source_ticket_id, sent_to_client_at")
+    .in("source_ticket_id", (tickets ?? []).map((ticket) => ticket.id))
+    .not("sent_to_client_at", "is", null);
+  const answeredAt = new Map<string, string>();
+  for (const version of correctionVersions ?? []) {
+    const ticketId = version.source_ticket_id as string;
+    const sentAt = version.sent_to_client_at as string;
+    const known = answeredAt.get(ticketId);
+    if (!known || new Date(sentAt) < new Date(known)) answeredAt.set(ticketId, sentAt);
+  }
+
+  /*
+   * Un ticket dont la correction est partie n'est plus en retard, même si
+   * personne ne l'a clos. La base ne sait pas faire ce tri — elle ignore le
+   * lien entre un ticket et la version envoyée — alors il se fait ici.
+   */
+  const visibleTickets = statusFilter === "overdue"
+    ? (tickets ?? []).filter((ticket) => !(answeredAt.get(ticket.id) ?? ticket.resolved_at))
+    : tickets ?? [];
 
   const { data: linkClients } = await supabase
     .from("clients")
@@ -95,18 +129,21 @@ export default async function TicketsPage({
         ))}
       </nav>
 
-      {(tickets ?? []).length === 0 ? (
+      {visibleTickets.length === 0 ? (
         <EmptyState icon="message" title="Aucun ticket" description="Aucune demande ne correspond au filtre sélectionné." />
       ) : (
         <ul className="space-y-3">
-          {(tickets ?? []).map((ticket) => {
+          {visibleTickets.map((ticket) => {
             const client = ticket.clients as unknown as { name: string } | null;
             const week = ticket.weekly_sheets as unknown as { iso_week: number } | null;
             const assignments = (ticket.client_ticket_assignments ?? []) as unknown as {
               assignment_role: string;
               profiles: { full_name: string } | null;
             }[];
-            const due = ticket.due_at ? deadlineState(new Date(ticket.due_at)) : null;
+            // Tant que la correction n'est pas partie, c'est la promesse des
+            // vingt heures qui court ; ensuite l'échéance n'apprend plus rien.
+            const answered = answeredAt.get(ticket.id) ?? ticket.resolved_at;
+            const due = answered ? null : deadlineState(ticketDeadline(ticket.submitted_at));
 
             return (
               <li key={ticket.id} className="card lift-card overflow-hidden">
