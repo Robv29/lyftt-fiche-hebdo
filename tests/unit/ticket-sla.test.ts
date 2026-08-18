@@ -42,15 +42,15 @@ describe("heures ouvrées", () => {
 });
 
 describe("échéance d'un retour client", () => {
-  it("laisse vingt heures ouvrées, soit deux jours et deux heures", () => {
-    expect(TICKET_SLA_HOURS).toBe(20);
-    // Lundi 11 h 09 → mardi (9 h) → mercredi 13 h 09.
-    expect(paris(ticketDeadline("2026-08-17T09:09:00Z"))).toBe("mer. 19/08 13:09");
+  it("laisse dix heures ouvrées, soit une journée de travail et une heure", () => {
+    expect(TICKET_SLA_HOURS).toBe(10);
+    // Lundi 11 h 09 → 6 h 51 restant le lundi → 3 h 09 le mardi matin.
+    expect(paris(ticketDeadline("2026-08-17T09:09:00Z"))).toBe("mar. 18/08 12:09");
   });
 
   it("ne fait pas courir le compteur pendant un week-end férié", () => {
-    // Samedi 15 août : rien avant lundi 9 h, puis 9 h + 9 h + 2 h.
-    expect(paris(ticketDeadline("2026-08-15T07:54:00Z"))).toBe("mer. 19/08 11:00");
+    // Samedi : rien avant lundi 9 h, puis 9 h + 1 h le mardi.
+    expect(paris(ticketDeadline("2026-08-15T07:54:00Z"))).toBe("mar. 18/08 10:00");
   });
 
   it("compte tenu une correction envoyée avant l'heure", () => {
@@ -72,8 +72,9 @@ describe("échéance d'un retour client", () => {
   });
 
   it("dit les heures ouvrées restantes, négatives une fois l'heure passée", () => {
-    expect(ticketHoursLeft("2026-08-17T09:09:00Z", new Date("2026-08-19T09:09:00Z"))).toBe(2);
-    expect(ticketHoursLeft("2026-08-17T09:09:00Z", new Date("2026-08-19T13:09:00Z"))).toBe(-2);
+    // Échéance mardi 12 h 09 : deux heures avant, puis deux heures après.
+    expect(ticketHoursLeft("2026-08-17T09:09:00Z", new Date("2026-08-18T08:09:00Z"))).toBe(2);
+    expect(ticketHoursLeft("2026-08-17T09:09:00Z", new Date("2026-08-18T12:09:00Z"))).toBe(-2);
   });
 });
 
@@ -90,10 +91,10 @@ describe("bilan des délais de retour", () => {
 
   it("mesure l'ampleur du pire retard en heures ouvrées", () => {
     const bilan = ticketSlaSummary([
-      // Échéance mercredi 13 h 09, correction partie à 17 h 09 : quatre heures.
+      // Échéance mardi 12 h 09, correction partie mercredi 17 h 09 : quatorze heures.
       { submittedAt: "2026-08-17T09:09:00Z", respondedAt: "2026-08-19T15:09:00Z" },
     ], now);
-    expect(bilan).toMatchObject({ measured: 1, late: 1, percentage: 0, worstLateHours: 4 });
+    expect(bilan).toMatchObject({ measured: 1, late: 1, percentage: 0, worstLateHours: 14 });
   });
 
   it("ne note rien quand aucun ticket n'est jugeable", () => {

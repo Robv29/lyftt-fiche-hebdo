@@ -15,7 +15,12 @@ import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
  * aurait fini par ne plus regarder l'indicateur.
  */
 
-export const TICKET_SLA_HOURS = 20;
+/**
+ * Dix heures ouvrées, soit une journée de travail et une heure : un retour
+ * reçu un jour se répond le jour ouvré suivant, pas deux jours plus tard.
+ * Vingt heures ouvrées ne mordait jamais — aucun retard sur l'historique.
+ */
+export const TICKET_SLA_HOURS = 10;
 export const SLA_TIMEZONE = "Europe/Paris";
 /** Journée de travail : 9 h – 18 h, soit neuf heures utiles. */
 export const WORK_START_HOUR = 9;
