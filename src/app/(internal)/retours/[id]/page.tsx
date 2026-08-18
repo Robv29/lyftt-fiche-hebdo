@@ -31,7 +31,7 @@ export default async function TicketDetailPage({
     .select(
       `id, ticket_number, title, description, client_suggestion, details, ticket_type,
        category, status, priority, due_at, submitted_at, resolved_at, created_by_name, created_by_email,
-       reopen_count, weekly_sheet_id,
+       reopen_count, weekly_sheet_id, client_id,
        clients ( id, name ),
        weekly_sheets ( iso_week, iso_year ),
        weekly_sheet_items ( id, caption, hashtags, scheduled_date, approval_status,
@@ -293,6 +293,7 @@ export default async function TicketDetailPage({
             ticketId={ticket.id}
             ticketNumber={ticket.ticket_number}
             sheetId={ticket.weekly_sheet_id}
+            clientId={ticket.client_id}
             status={ticket.status}
             category={ticket.category}
             clientName={client?.name ?? "Client"}

@@ -29,7 +29,7 @@ export interface ProductionRequestRow {
   mediaUrl: string | null;
   mediaFileName: string | null;
   mediaKind: string | null;
-  /** Visuel de référence joint à la demande, s'il y en a un. */
+  /** Visuel d'exemple joint à la demande : une inspiration, pas un modèle. */
   referenceUrl: string | null;
   overdue: boolean;
 }
@@ -74,7 +74,7 @@ export function ProductionRequests({
   const [feedback, setFeedback] = useState<ProductionActionResult | null>(null);
   const [open, setOpen] = useState(false);
   /*
-   * Référence : envoyée directement au stockage, pas à travers l'action.
+   * Exemple : envoyé directement au stockage, pas à travers l'action.
    * Le corps d'une action serveur est plafonné, et une photo prise au
    * téléphone le dépasse régulièrement.
    */
@@ -92,7 +92,7 @@ export function ProductionRequests({
     const result = await uploadMediaDirect({ file, clientId, sheetId: null });
     if (!result.ok || !result.mediaAssetId) {
       setReferenceStatus("erreur");
-      setFeedback({ ok: false, message: result.message ?? "Référence non envoyée." });
+      setFeedback({ ok: false, message: result.message ?? "Exemple non envoyé." });
       return;
     }
     setReference({ id: result.mediaAssetId, previewUrl });
@@ -207,22 +207,22 @@ export function ProductionRequests({
           </div>
 
           {/*
-            Une référence vaut mieux qu'un paragraphe : « comme la story de la
+            Un exemple vaut mieux qu'un paragraphe : « comme la story de la
             semaine dernière, mais plus sobre » suppose que l'autre l'ait sous
             les yeux.
           */}
           <div>
             <label className="label" htmlFor="request-reference">
-              Visuel de référence <span className="font-normal text-ink-faint">(facultatif)</span>
+              Visuel d&apos;exemple ou d&apos;inspiration <span className="font-normal text-ink-faint">(facultatif)</span>
             </label>
             <input type="hidden" name="referenceMediaId" value={reference?.id ?? ""}/>
             {reference ? (
               <div className="mt-1 flex items-center gap-3 rounded-xl border border-line bg-white p-2">
                 <span className="block w-[72px] overflow-hidden rounded-lg border border-line">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={reference.previewUrl} alt="Référence jointe" className="block aspect-square w-full object-cover"/>
+                  <img src={reference.previewUrl} alt="Exemple joint" className="block aspect-square w-full object-cover"/>
                 </span>
-                <span className="text-xs text-ink-soft">Référence jointe</span>
+                <span className="text-xs text-ink-soft">Exemple joint</span>
                 <button
                   type="button"
                   className="ml-auto text-xs text-state-changes hover:underline"
@@ -247,8 +247,8 @@ export function ProductionRequests({
             )}
             <p className="mt-1 text-xs text-ink-faint">
               {referenceStatus === "envoi"
-                ? "Envoi de la référence…"
-                : "Une image qui montre le rendu attendu : ambiance, cadrage, mise en page."}
+                ? "Envoi de l’exemple…"
+                : "Une image qui donne l’idée : ambiance, cadrage, mise en page. Elle inspire, elle n’est pas à reproduire."}
             </p>
           </div>
 
@@ -300,10 +300,24 @@ function RequestCard({
   const [dragging, setDragging] = useState(false);
   const delivered = request.status === "livree";
 
-  const deliver = (file: File) => {
+  const [sending, setSending] = useState(false);
+
+  /*
+   * Envoi direct au stockage, puis l'identifiant à l'action. Faire transiter le
+   * fichier par l'action butait sur le plafond du corps de requête : une vidéo
+   * de montage échouait systématiquement.
+   */
+  const deliver = async (file: File) => {
+    setSending(true);
+    const result = await uploadMediaDirect({ file, clientId: request.clientId, sheetId: null });
+    setSending(false);
+    if (!result.ok || !result.mediaAssetId) {
+      window.alert(result.message ?? "Envoi impossible.");
+      return;
+    }
     const formData = new FormData();
     formData.set("requestId", request.id);
-    formData.set("file", file);
+    formData.set("mediaAssetId", result.mediaAssetId);
     onDeliver(formData);
   };
 
@@ -311,7 +325,7 @@ function RequestCard({
     event.preventDefault();
     setDragging(false);
     const file = event.dataTransfer.files?.[0];
-    if (file) deliver(file);
+    if (file) void deliver(file);
   };
 
   return (
@@ -337,8 +351,8 @@ function RequestCard({
         {request.referenceUrl && (
           <figure className="mt-3 overflow-hidden rounded-xl border border-line bg-white">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={request.referenceUrl} alt="Visuel de référence" className="block max-h-40 w-full object-contain"/>
-            <figcaption className="border-t px-3 py-2 text-[11px] text-ink-faint">Référence à suivre</figcaption>
+            <img src={request.referenceUrl} alt="Visuel d’exemple" className="block max-h-40 w-full object-contain"/>
+            <figcaption className="border-t px-3 py-2 text-[11px] text-ink-faint">Exemple donné à la demande — pour l’idée, pas à reproduire</figcaption>
           </figure>
         )}
 
@@ -374,7 +388,13 @@ function RequestCard({
         >
           <Icon name="layers" className="mx-auto h-5 w-5 text-ink-faint"/>
           <p className="mt-2 text-xs font-semibold">
-            {delivered ? "Déposer une nouvelle version" : `Glissez ${request.kind === "video" ? "la vidéo" : "le fichier"} ici`}
+            {/*
+              L'envoi d'un montage prend du temps : le dire, sinon on croit
+              l'écran figé et on dépose une seconde fois.
+            */}
+            {sending
+              ? "Envoi du fichier…"
+              : delivered ? "Déposer une nouvelle version" : `Glissez ${request.kind === "video" ? "la vidéo" : "le fichier"} ici`}
           </p>
           <p className="mt-1 text-[11px] text-ink-faint">ou cliquez pour choisir un fichier</p>
           <input
@@ -384,7 +404,7 @@ function RequestCard({
             className="hidden"
             onChange={(event) => {
               const file = event.target.files?.[0];
-              if (file) deliver(file);
+              if (file) void deliver(file);
               event.target.value = "";
             }}
           />

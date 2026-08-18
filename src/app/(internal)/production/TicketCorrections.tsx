@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRef, useState, useTransition, type DragEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
+import { uploadMediaDirect } from "@/lib/media/direct-upload";
 import { deliverTicketMedia, submitTicketForReview, validateTicketCorrection } from "./actions";
 
 export interface TicketCorrectionRow {
@@ -18,6 +19,8 @@ export interface TicketCorrectionRow {
   status: string;
   statusLabel: string;
   category: "graphic" | "video";
+  /** Client de la correction : le fichier est rangé dans son dossier. */
+  clientId: string;
   priorityLabel: string | null;
   dueLabel: string | null;
   overdue: boolean;
@@ -72,6 +75,7 @@ function TicketCard({ ticket, canValidate }: { ticket: TicketCorrectionRow; canV
   const [copied, setCopied] = useState(false);
   // Ce qui vient d'être déposé pendant cette session, pour l'annoncer sur place.
   const [delivered, setDelivered] = useState(false);
+  const [sending, setSending] = useState(false);
 
   const awaitingValidation = ticket.status === "ready_for_review";
   // Corrigé et validé : il ne reste qu'à l'envoyer, depuis le ticket.
@@ -80,10 +84,21 @@ function TicketCard({ ticket, canValidate }: { ticket: TicketCorrectionRow; canV
   const openToDelivery = ["assigned", "in_progress", "reopened"].includes(ticket.status);
   const accept = ticket.category === "video" ? "video/*" : "image/*";
 
-  const deliver = (file: File) => {
+  /*
+   * Le fichier part d'abord au stockage, puis seul son identifiant rejoint
+   * l'action : une vidéo corrigée dépasse le corps admis par une action.
+   */
+  const deliver = async (file: File) => {
+    setSending(true);
+    const upload = await uploadMediaDirect({ file, clientId: ticket.clientId, sheetId: null });
+    setSending(false);
+    if (!upload.ok || !upload.mediaAssetId) {
+      setFeedback({ ok: false, message: upload.message ?? "Envoi impossible." });
+      return;
+    }
     const formData = new FormData();
     formData.set("ticketId", ticket.id);
-    formData.set("file", file);
+    formData.set("mediaAssetId", upload.mediaAssetId);
     startTransition(async () => {
       const result = await deliverTicketMedia(formData);
       setFeedback(result);
@@ -98,7 +113,7 @@ function TicketCard({ ticket, canValidate }: { ticket: TicketCorrectionRow; canV
     event.preventDefault();
     setDragging(false);
     const file = event.dataTransfer.files?.[0];
-    if (file) deliver(file);
+    if (file) void deliver(file);
   };
 
   const submit = () => startTransition(async () => {
@@ -201,7 +216,7 @@ function TicketCard({ ticket, canValidate }: { ticket: TicketCorrectionRow; canV
             >
               <Icon name={delivered ? "check" : "upload"} className={`mx-auto h-5 w-5 ${delivered ? "text-state-approved" : "text-ink-faint"}`}/>
               <p className="mt-2 text-xs font-semibold">
-                {pending ? "Envoi…" : delivered ? "Déposer une nouvelle version" : `Glissez ${ticket.category === "video" ? "la vidéo corrigée" : "le fichier corrigé"} ici`}
+                {sending || pending ? "Envoi…" : delivered ? "Déposer une nouvelle version" : `Glissez ${ticket.category === "video" ? "la vidéo corrigée" : "le fichier corrigé"} ici`}
               </p>
               <p className="mt-1 text-[11px] text-ink-faint">ou cliquez pour choisir un fichier</p>
               <input
@@ -211,7 +226,7 @@ function TicketCard({ ticket, canValidate }: { ticket: TicketCorrectionRow; canV
                 className="hidden"
                 onChange={(event) => {
                   const file = event.target.files?.[0];
-                  if (file) deliver(file);
+                  if (file) void deliver(file);
                   event.target.value = "";
                 }}
               />

@@ -5,8 +5,6 @@ import { z } from "zod";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sanitizeText } from "@/lib/security/sanitize";
-import { checkAttachment, safeFileName } from "@/lib/security/attachments";
-import { uploadSheetMedia } from "@/lib/media/internal-upload";
 import { prepareCorrectionForClient, transitionTicket } from "@/lib/internal/actions";
 
 export interface ProductionActionResult {
@@ -41,9 +39,9 @@ const createSchema = z.object({
   brief: z.string().trim().max(2000, "Brief trop long (2000 caractères maximum).").optional(),
   dueOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Indiquez la date limite."),
   /*
-   * Référence déjà téléversée depuis le navigateur : on ne reçoit ici que son
-   * identifiant. Le fichier ne transite pas par l'action, dont le corps est
-   * plafonné — une photo de téléphone le dépasse sans peine.
+   * Visuel d'exemple, déjà téléversé depuis le navigateur : on ne reçoit ici
+   * que son identifiant. Le fichier ne transite pas par l'action, dont le corps
+   * est plafonné — une photo de téléphone le dépasse sans peine.
    */
   referenceMediaId: z.string().uuid().optional(),
 });
@@ -107,10 +105,14 @@ export async function deliverProductionRequest(formData: FormData): Promise<Prod
   const requestId = z.string().uuid().safeParse(formData.get("requestId"));
   if (!requestId.success) return { ok: false, message: "Commande invalide." };
 
-  const file = formData.get("file");
-  if (!(file instanceof File) || file.size === 0) {
-    return { ok: false, message: "Déposez le fichier produit." };
-  }
+  /*
+   * Le fichier a déjà été envoyé au stockage depuis le navigateur : on ne
+   * reçoit ici que son identifiant. Le faire transiter par l'action butait sur
+   * le plafond du corps de requête — une vidéo de montage le dépasse toujours,
+   * et la livraison échouait précisément quand elle comptait le plus.
+   */
+  const mediaAssetId = z.string().uuid().safeParse(formData.get("mediaAssetId"));
+  if (!mediaAssetId.success) return { ok: false, message: "Déposez le fichier produit." };
 
   const supabase = await createSupabaseServerClient();
   const { data: request } = await supabase
@@ -121,7 +123,19 @@ export async function deliverProductionRequest(formData: FormData): Promise<Prod
   if (!request) return { ok: false, message: "Commande introuvable ou accès refusé." };
 
   const expected = KIND_EXPECTATIONS[request.kind as string] ?? "image";
-  if (!file.type.startsWith(`${expected}/`)) {
+  const admin = createSupabaseAdminClient();
+  const { data: asset } = await admin
+    .from("media_assets")
+    .select("id, kind, client_id")
+    .eq("id", mediaAssetId.data)
+    .maybeSingle();
+
+  // Le média doit appartenir au client de la commande : un identifiant deviné
+  // ne doit pas rattacher le fichier d'un autre client.
+  if (!asset || asset.client_id !== request.client_id) {
+    return { ok: false, message: "Fichier introuvable pour ce client." };
+  }
+  if (asset.kind !== expected) {
     return {
       ok: false,
       message: expected === "video"
@@ -130,46 +144,13 @@ export async function deliverProductionRequest(formData: FormData): Promise<Prod
     };
   }
 
-  const head = new Uint8Array(await file.slice(0, 12).arrayBuffer());
-  const check = checkAttachment({ size: file.size, type: file.type, name: file.name }, head);
-  if (!check.valid) return { ok: false, message: check.message ?? "Fichier refusé." };
-
-  const admin = createSupabaseAdminClient();
-  const fileName = safeFileName(file.name);
-  const storagePath = `clients/${request.client_id}/production/${request.id}/${crypto.randomUUID()}-${fileName}`;
-  const { error: storageError } = await admin.storage.from("media").upload(
-    storagePath,
-    await file.arrayBuffer(),
-    { contentType: file.type, upsert: false },
-  );
-  if (storageError) return { ok: false, message: `Téléversement impossible : ${storageError.message}` };
-
-  const { data: asset, error: assetError } = await admin.from("media_assets").insert({
-    client_id: request.client_id,
-    kind: expected,
-    storage_path: storagePath,
-    file_name: fileName,
-    mime_type: file.type,
-    byte_size: file.size,
-    uploaded_by: profile.id,
-  }).select("id").single();
-
-  if (assetError || !asset) {
-    await admin.storage.from("media").remove([storagePath]);
-    return { ok: false, message: `Média non enregistré : ${assetError?.message ?? "erreur"}` };
-  }
-
   const { error } = await supabase.from("production_requests").update({
     media_asset_id: asset.id,
     status: "livree",
     delivered_at: new Date().toISOString(),
   }).eq("id", request.id);
 
-  if (error) {
-    await admin.from("media_assets").delete().eq("id", asset.id);
-    await admin.storage.from("media").remove([storagePath]);
-    return { ok: false, message: `Livraison non enregistrée : ${error.message}` };
-  }
+  if (error) return { ok: false, message: `Livraison non enregistrée : ${error.message}` };
 
   revalidatePath("/production");
   return { ok: true, message: "Fichier livré. Le demandeur peut valider." };
@@ -271,10 +252,8 @@ export async function deliverTicketMedia(formData: FormData): Promise<Production
   const ticketId = z.string().uuid().safeParse(formData.get("ticketId"));
   if (!ticketId.success) return { ok: false, message: "Ticket invalide." };
 
-  const file = formData.get("file");
-  if (!(file instanceof File) || file.size === 0) {
-    return { ok: false, message: "Déposez le fichier corrigé." };
-  }
+  const mediaAssetId = z.string().uuid().safeParse(formData.get("mediaAssetId"));
+  if (!mediaAssetId.success) return { ok: false, message: "Déposez le fichier corrigé." };
 
   const supabase = await createSupabaseServerClient();
   const { data: ticket } = await supabase
@@ -285,14 +264,6 @@ export async function deliverTicketMedia(formData: FormData): Promise<Production
   if (!ticket) return { ok: false, message: "Ticket introuvable ou accès refusé." };
 
   const expected = expectedKindForCategory(ticket.category as string);
-  if (!file.type.startsWith(`${expected}/`)) {
-    return {
-      ok: false,
-      message: expected === "video"
-        ? "Cette correction attend une vidéo."
-        : "Cette correction attend une image.",
-    };
-  }
 
   if (!ticket.weekly_sheet_item_id) {
     return {
@@ -309,23 +280,40 @@ export async function deliverTicketMedia(formData: FormData): Promise<Production
     .maybeSingle();
 
   /*
+   * Le fichier est déjà au stockage : envoyé depuis le navigateur, il ne passe
+   * pas par le corps de l'action, plafonné bien en dessous d'une vidéo.
+   */
+  const { data: asset } = await admin
+    .from("media_assets")
+    .select("id, kind, client_id")
+    .eq("id", mediaAssetId.data)
+    .maybeSingle();
+  if (!asset || asset.client_id !== ticket.client_id) {
+    return { ok: false, message: "Fichier introuvable pour ce client." };
+  }
+  if (asset.kind !== expected) {
+    return {
+      ok: false,
+      message: expected === "video"
+        ? "Cette correction attend une vidéo."
+        : "Cette correction attend une image.",
+    };
+  }
+
+  /*
    * Le fichier remplacé n'est pas effacé : il reste chaîné par
    * `replaces_media_id`, ce qui permet de remonter aux versions précédentes
    * d'une publication corrigée plusieurs fois.
    */
-  const upload = await uploadSheetMedia({
-    file,
-    clientId: ticket.client_id as string,
-    sheetId: ticket.weekly_sheet_id as string,
-    uploadedBy: profile.id,
-    expectedKind: expected,
-    replacesMediaId: (item?.media_asset_id as string | null) ?? null,
-  });
-  if (!upload.data) return { ok: false, message: upload.error ?? "Téléversement impossible." };
+  if (item?.media_asset_id) {
+    await admin.from("media_assets")
+      .update({ replaces_media_id: item.media_asset_id })
+      .eq("id", asset.id);
+  }
 
   const { error } = await admin
     .from("weekly_sheet_items")
-    .update({ media_asset_id: upload.data.assetId, media_external_url: null })
+    .update({ media_asset_id: asset.id, media_external_url: null })
     .eq("id", ticket.weekly_sheet_item_id);
   if (error) return { ok: false, message: `Correction non enregistrée : ${error.message}` };
 
@@ -343,7 +331,7 @@ export async function deliverTicketMedia(formData: FormData): Promise<Production
   if (cover) {
     await admin
       .from("weekly_sheet_item_media")
-      .update({ media_asset_id: upload.data.assetId })
+      .update({ media_asset_id: asset.id })
       .eq("id", cover.id as string);
   }
 

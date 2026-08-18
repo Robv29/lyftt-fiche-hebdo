@@ -5,11 +5,12 @@ import { addTicketComment, prepareCorrectionForClient, resolveServiceRequest, se
 import { isServiceRequestOverdue, serviceRequestAgeInDays, SERVICE_REQUEST_ALERT_DAYS } from "@/lib/domain/ticket-types";
 import { Icon } from "@/components/Icon";
 import { deliverTicketMedia } from "../../production/actions";
+import { uploadMediaDirect } from "@/lib/media/direct-upload";
 
 interface Transition { to:string; label:string; requiresReason:boolean }
 
-export function TicketActions({ ticketId, ticketNumber, sheetId, item, category, status, clientName, transitions, serviceRequest, submittedAt, resolvedAt }: {
-  ticketId:string; ticketNumber:string; sheetId:string; category:string; status:string; clientName:string;
+export function TicketActions({ ticketId, ticketNumber, sheetId, clientId, item, category, status, clientName, transitions, serviceRequest, submittedAt, resolvedAt }: {
+  ticketId:string; ticketNumber:string; sheetId:string; clientId:string; category:string; status:string; clientName:string;
   item:{
     id:string; caption:string; hashtags:string[]; scheduledDate:string;
     /** Média actuellement rattaché : c'est celui que verra le client. */
@@ -44,10 +45,19 @@ export function TicketActions({ ticketId, ticketNumber, sheetId, item, category,
    * broutille. C'est la même action serveur dans les deux cas — un seul chemin
    * pour un seul fichier.
    */
-  const deposit = (file:File) => {
+  const deposit = async (file:File) => {
+    /*
+     * Le fichier part au stockage depuis le navigateur, puis seul son
+     * identifiant rejoint l'action : une vidéo dépasse le corps admis.
+     */
+    const upload = await uploadMediaDirect({ file, clientId, sheetId });
+    if (!upload.ok || !upload.mediaAssetId) {
+      setFeedback({ ok:false, message: upload.message ?? "Envoi impossible." });
+      return;
+    }
     const formData = new FormData();
     formData.set("ticketId", ticketId);
-    formData.set("file", file);
+    formData.set("mediaAssetId", upload.mediaAssetId);
     startTransition(async()=>{
       const result = await deliverTicketMedia(formData);
       setFeedback(result);
@@ -138,7 +148,7 @@ export function TicketActions({ ticketId, ticketNumber, sheetId, item, category,
             role="presentation"
             onDragOver={(event)=>{event.preventDefault();setDragging(true);}}
             onDragLeave={()=>setDragging(false)}
-            onDrop={(event)=>{event.preventDefault();setDragging(false);const file=event.dataTransfer.files?.[0];if(file)deposit(file);}}
+            onDrop={(event)=>{event.preventDefault();setDragging(false);const file=event.dataTransfer.files?.[0];if(file)void deposit(file);}}
             onClick={()=>fileRef.current?.click()}
             className={`mt-3 cursor-pointer rounded-xl border-2 border-dashed px-4 py-5 text-center transition-colors ${dragging ? "border-[#1468ff] bg-[#f0f6ff]" : deposited ? "border-state-approved/50 bg-state-approved/5" : "border-line bg-white hover:bg-canvas"}`}
           >
@@ -150,7 +160,7 @@ export function TicketActions({ ticketId, ticketNumber, sheetId, item, category,
               type="file"
               accept={category === "video" ? "video/*" : "image/*"}
               className="hidden"
-              onChange={(event)=>{const file=event.target.files?.[0];if(file)deposit(file);event.target.value="";}}
+              onChange={(event)=>{const file=event.target.files?.[0];if(file)void deposit(file);event.target.value="";}}
             />
           </div>
           <details className="mt-3">

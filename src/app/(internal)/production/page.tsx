@@ -22,7 +22,7 @@ export default async function ProductionPage() {
     .from("client_tickets")
     .select(
       `id, ticket_number, title, description, ticket_type, category, status, priority, due_at,
-       weekly_sheet_item_id,
+       weekly_sheet_item_id, client_id,
        clients ( name ),
        client_ticket_assignments!inner ( assignment_role, profile_id )`,
     )
@@ -54,7 +54,7 @@ export default async function ProductionPage() {
     const resolved = media
       ? await resolveMediaUrl({ storagePath: media.storage_path, previewPath: media.preview_path, purgedAt: media.purged_at, previewPurgedAt: media.preview_purged_at })
       : null;
-    // La référence est signée comme le reste : le bucket est privé.
+    // L'exemple est signé comme le reste : le bucket est privé.
     const reference = row.reference as unknown as { storage_path: string; preview_path: string | null; purged_at: string | null; preview_purged_at: string | null } | null;
     const resolvedReference = reference
       ? await resolveMediaUrl({ storagePath: reference.storage_path, previewPath: reference.preview_path, purgedAt: reference.purged_at, previewPurgedAt: reference.preview_purged_at })
@@ -89,6 +89,7 @@ export default async function ProductionPage() {
     return {
       id: ticket.id as string,
       ticketNumber: ticket.ticket_number as string,
+      clientId: ticket.client_id as string,
       clientName: client?.name ?? "Client",
       typeLabel: getTicketTypeDefinition(ticket.ticket_type).label,
       title: ticket.title as string,
