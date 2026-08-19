@@ -22,7 +22,7 @@ const CHART_COLORS = ["#1b87dd", "#34c5bb", "#78d6a3", "#ef9c50", "#e65b67", "#7
  * note sans rien dire d'utile.
  */
 const OPEN_TICKET_STATUSES = "(approved_by_client,closed,rejected,out_of_scope,cancelled)";
-const METRICS_VIEWS = ["overview", "validation", "returns", "clients"] as const;
+const METRICS_VIEWS = ["overview", "validation", "returns", "satisfaction", "clients"] as const;
 type MetricsView = typeof METRICS_VIEWS[number];
 type Tone = "info" | "success" | "warning" | "danger" | "violet";
 
@@ -269,9 +269,6 @@ export default async function MetricsPage({
       submittedAt: row.submitted_at as string,
     };
   }));
-  const unhappyComments = satisfactionEntries
-    .filter((entry) => entry.score <= 2 && entry.comment)
-    .map((entry) => ({ client: entry.clientName, comment: entry.comment! }));
   const outOfScope = received.filter((ticket) => ticket.status === "out_of_scope").length;
   const ticketsPerSheet = sent.length ? received.length / sent.length : 0;
   const viewRate = ratio(viewed.length, sent.length);
@@ -385,7 +382,6 @@ export default async function MetricsPage({
     periodLabel: periodLabel(since),
     satisfaction,
     satisfactionEntries,
-    unhappyComments,
     punctuality,
     ticketTotal,
     typeEntries,
@@ -410,6 +406,7 @@ export default async function MetricsPage({
       {view === "overview" ? <OverviewView data={data}/> : null}
       {view === "validation" ? <ValidationView data={data}/> : null}
       {view === "returns" ? <ReturnsView data={data}/> : null}
+      {view === "satisfaction" ? <SatisfactionView data={data}/> : null}
       {view === "clients" ? <ClientsView data={data}/> : null}
     </div>
   );
@@ -425,7 +422,6 @@ type MetricsData = {
   periodLabel:string;
   satisfaction:ReturnType<typeof satisfactionSummary>;
   satisfactionEntries:{ clientId:string; clientName:string; clientLogoUrl:string|null; score:number; percentage:number; comment:string|null; submittedAt:string }[];
-  unhappyComments:{ client:string; comment:string }[];
   punctuality:ReturnType<typeof productionPunctuality>;
   ticketTotal:number; typeEntries:[TicketType,number][]; clientEntries:[string,number][]; donutGradient:string;
   signals:{tone:Tone;icon:string;title:string;body:string}[];
@@ -574,6 +570,46 @@ function ReturnsView({ data }: { data:MetricsData }) {
         <TicketPanel data={data} roomy/>
         <SignalPanel signals={data.signals} roomy/>
       </section>
+    </div>
+  );
+}
+
+/**
+ * La voix du client, à part.
+ *
+ * Elle vivait mêlée aux métriques de tickets : deux sujets différents — le
+ * traitement opérationnel des retours, et ce que le client en pense — sous un
+ * seul onglet. Elle a son propre onglet, pour qu'on sache où la trouver sans
+ * la chercher au milieu d'autre chose.
+ */
+function SatisfactionView({ data }: { data:MetricsData }) {
+  return (
+    <div className="insights-view insights-detail-view">
+      <section className="insights-kpi-row">
+        <KpiCard
+          icon="spark"
+          label="Satisfaction moyenne"
+          value={data.satisfaction.percentage === null ? "—" : percentValue(data.satisfaction.percentage)}
+          detail={data.satisfaction.answers === 0 ? "aucune réponse sur la période" : `${data.satisfaction.answers} note${data.satisfaction.answers > 1 ? "s" : ""} reçue${data.satisfaction.answers > 1 ? "s" : ""}`}
+          tone={data.satisfaction.percentage === null ? "info" : data.satisfaction.unhappy > 0 ? "danger" : rateTone(data.satisfaction.percentage)}
+          progress={data.satisfaction.percentage ?? undefined}
+        />
+        <KpiCard
+          icon="users"
+          label="Taux de réponse"
+          value={data.satisfaction.responseRate === null ? "—" : percentValue(data.satisfaction.responseRate)}
+          detail={`${data.satisfaction.answers}/${data.satisfaction.eligible} fiches validées notées`}
+          tone={data.satisfaction.responseRate === null ? "info" : rateTone(data.satisfaction.responseRate, 60, 30)}
+          progress={data.satisfaction.responseRate ?? undefined}
+        />
+        <KpiCard
+          icon="warning"
+          label="Notes décevantes"
+          value={String(data.satisfaction.unhappy)}
+          detail="à recontacter en priorité"
+          tone={data.satisfaction.unhappy > 0 ? "danger" : "success"}
+        />
+      </section>
       <SatisfactionBoard entries={data.satisfactionEntries}/>
     </div>
   );
@@ -678,24 +714,36 @@ function ClientsView({ data }: { data:MetricsData }) {
 }
 
 /*
- * Quatre onglets, jamais plus : le nom du sidebar est déjà « Vue d’ensemble »
- * pour l’accueil (`/`) — le reprendre ici pour un onglet différent créait une
- * confusion. « Aperçu » et « Retours » (au lieu de « Vue d’ensemble » et
- * « Retours clients ») lèvent l’ambiguïté et raccourcissent des libellés qui
- * débordaient sur mobile.
+ * Le nom du sidebar est déjà « Vue d’ensemble » pour l’accueil (`/`) — le
+ * reprendre ici pour un onglet différent créait une confusion. « Aperçu » et
+ * « Retours » (au lieu de « Vue d’ensemble » et « Retours clients ») lèvent
+ * l’ambiguïté et raccourcissent des libellés qui débordaient sur mobile.
+ * « Satisfaction » a son propre onglet plutôt que de rester noyée dans
+ * « Retours » : le traitement des tickets et ce que le client en pense sont
+ * deux sujets, pas un seul.
  *
- * La grille à quatre colonnes fixes garantit que les quatre tiennent toujours
- * dans l’écran, sans défilement horizontal ni texte qui disparaît : à l’étroit,
- * l’icône passe au-dessus du libellé plutôt que de faire disparaître ce dernier.
+ * La grille tient toujours dans l’écran, sans défilement horizontal ni texte
+ * qui disparaît : à l’étroit, l’icône passe au-dessus du libellé plutôt que
+ * de le faire disparaître. Le nombre de colonnes suit `items.length`, pour ne
+ * pas devoir retoucher la feuille de style au prochain onglet ajouté.
  */
 function MetricsMenu({ view, since }: { view:MetricsView; since:string }) {
   const items:{id:MetricsView;label:string;icon:string}[]=[
     {id:"overview",label:"Aperçu",icon:"dashboard"},
     {id:"validation",label:"Validation",icon:"check"},
     {id:"returns",label:"Retours",icon:"message"},
+    {id:"satisfaction",label:"Satisfaction",icon:"spark"},
     {id:"clients",label:"Clients",icon:"users"},
   ];
-  return <nav className="insights-menu" aria-label="Catégories d’indicateurs">{items.map((item)=><Link key={item.id} href={`/indicateurs?vue=${item.id}&depuis=${since}`} aria-current={view===item.id?"page":undefined} className={view===item.id?"active":""}><Icon name={item.icon}/><span>{item.label}</span></Link>)}</nav>;
+  return (
+    <nav
+      className="insights-menu"
+      aria-label="Catégories d’indicateurs"
+      style={{ "--tab-count": items.length } as React.CSSProperties}
+    >
+      {items.map((item)=><Link key={item.id} href={`/indicateurs?vue=${item.id}&depuis=${since}`} aria-current={view===item.id?"page":undefined} className={view===item.id?"active":""}><Icon name={item.icon}/><span>{item.label}</span></Link>)}
+    </nav>
+  );
 }
 
 function PeriodFilter({ since, view }: { since:string; view:MetricsView }) {
