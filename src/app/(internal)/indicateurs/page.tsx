@@ -677,11 +677,22 @@ function ClientsView({ data }: { data:MetricsData }) {
   );
 }
 
+/*
+ * Quatre onglets, jamais plus : le nom du sidebar est déjà « Vue d’ensemble »
+ * pour l’accueil (`/`) — le reprendre ici pour un onglet différent créait une
+ * confusion. « Aperçu » et « Retours » (au lieu de « Vue d’ensemble » et
+ * « Retours clients ») lèvent l’ambiguïté et raccourcissent des libellés qui
+ * débordaient sur mobile.
+ *
+ * La grille à quatre colonnes fixes garantit que les quatre tiennent toujours
+ * dans l’écran, sans défilement horizontal ni texte qui disparaît : à l’étroit,
+ * l’icône passe au-dessus du libellé plutôt que de faire disparaître ce dernier.
+ */
 function MetricsMenu({ view, since }: { view:MetricsView; since:string }) {
   const items:{id:MetricsView;label:string;icon:string}[]=[
-    {id:"overview",label:"Vue d’ensemble",icon:"dashboard"},
+    {id:"overview",label:"Aperçu",icon:"dashboard"},
     {id:"validation",label:"Validation",icon:"check"},
-    {id:"returns",label:"Retours clients",icon:"message"},
+    {id:"returns",label:"Retours",icon:"message"},
     {id:"clients",label:"Clients",icon:"users"},
   ];
   return <nav className="insights-menu" aria-label="Catégories d’indicateurs">{items.map((item)=><Link key={item.id} href={`/indicateurs?vue=${item.id}&depuis=${since}`} aria-current={view===item.id?"page":undefined} className={view===item.id?"active":""}><Icon name={item.icon}/><span>{item.label}</span></Link>)}</nav>;

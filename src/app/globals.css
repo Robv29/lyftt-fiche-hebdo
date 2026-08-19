@@ -182,9 +182,15 @@
 .insights-period a { min-width:52px; min-height:36px; display:grid; place-items:center; padding:0 12px; border-radius:11px; color:var(--text-muted); font-size:11px; font-weight:700; transition:color var(--motion-fast) var(--ease-out),background-color var(--motion-fast) var(--ease-out),box-shadow var(--motion-fast) var(--ease-out); }
 .insights-period a:hover { color:var(--primary-deep); background:#f2f7fb; }
 .insights-period a.active { color:#fff; background:linear-gradient(135deg,#176fc0,#21a6cf); box-shadow:0 6px 16px rgba(23,111,192,.24); }
-.insights-menu { display:flex; align-items:center; align-self:center; gap:5px; max-width:100%; padding:6px; border:1px solid rgba(255,255,255,.12); border-radius:18px; background:linear-gradient(135deg,#16233d,#203657); box-shadow:0 14px 32px rgba(20,45,73,.18); overflow-x:auto; scrollbar-width:none; }
-.insights-menu::-webkit-scrollbar { display:none; }
-.insights-menu a { min-height:42px; display:flex; align-items:center; justify-content:center; gap:8px; padding:0 17px; border-radius:13px; color:rgba(255,255,255,.62); font-size:12px; font-weight:650; white-space:nowrap; transition:color var(--motion-fast) var(--ease-out),background-color var(--motion-ui) var(--ease-out),box-shadow var(--motion-ui) var(--ease-out),transform var(--motion-fast) var(--ease-out); }
+/*
+ * Quatre colonnes fixes, jamais un ruban qui déborde : la grille garantit que
+ * les quatre onglets tiennent dans la largeur disponible, à n'importe quelle
+ * taille d'écran — plus besoin de défilement horizontal ni de deviner qu'il y
+ * a une suite hors champ.
+ */
+.insights-menu { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:5px; width:100%; padding:6px; border:1px solid rgba(255,255,255,.12); border-radius:18px; background:linear-gradient(135deg,#16233d,#203657); box-shadow:0 14px 32px rgba(20,45,73,.18); }
+.insights-menu a { min-width:0; min-height:42px; display:flex; align-items:center; justify-content:center; gap:7px; padding:0 10px; border-radius:13px; overflow:hidden; color:rgba(255,255,255,.62); font-size:12px; font-weight:650; white-space:nowrap; text-overflow:ellipsis; transition:color var(--motion-fast) var(--ease-out),background-color var(--motion-ui) var(--ease-out),box-shadow var(--motion-ui) var(--ease-out),transform var(--motion-fast) var(--ease-out); }
+.insights-menu a span { overflow:hidden; text-overflow:ellipsis; }
 .insights-menu a:hover { color:#fff; background:rgba(255,255,255,.07); }
 .insights-menu a.active { color:#fff; background:linear-gradient(135deg,#247fd3,#31b9c7); box-shadow:0 7px 18px rgba(13,107,178,.34),inset 0 1px 0 rgba(255,255,255,.2); }
 .insights-menu svg { width:15px; height:15px; }
@@ -462,9 +468,14 @@
   .mobile-nav a span { max-width:56px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .insights-period { width:100%; }
   .insights-period a { min-width:0; flex:1; }
-  .insights-menu a { padding-inline:12px; }
-  .insights-menu a span { display:none; }
-  .insights-menu svg { width:18px; height:18px; }
+  /*
+   * À l'étroit, l'icône passe au-dessus du libellé plutôt que de le faire
+   * disparaître — le même choix que `.mobile-nav`, déjà éprouvé sur cet écran.
+   * Un onglet sans texte se comprend une fois, se réapprend à chaque visite.
+   */
+  .insights-menu { gap:3px; padding:5px; }
+  .insights-menu a { flex-direction:column; gap:2px; padding:6px 2px; min-height:52px; font-size:9.5px; }
+  .insights-menu svg { width:17px; height:17px; }
   .insights-overview-kpis { grid-template-columns:1fr; }
   .insights-hero-panel { min-height:300px; }
   .insights-ring.light { right:16px; bottom:16px; }
