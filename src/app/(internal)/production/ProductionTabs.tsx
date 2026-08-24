@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react";
 
 type ProductionTab = "overview" | "detail";
 
-export function ProductionTabs({ overview, detail }: { overview: ReactNode; detail: ReactNode }) {
+export function ProductionTabs({ overview, detail, detailAlertCount = 0 }: { overview: ReactNode; detail: ReactNode; /** Commandes ou corrections en retard : affiché sur l'onglet sans qu'il faille l'ouvrir. */ detailAlertCount?: number }) {
   const [active, setActive] = useState<ProductionTab>("overview");
 
   return (
@@ -31,6 +31,9 @@ export function ProductionTabs({ overview, detail }: { overview: ReactNode; deta
           onClick={() => setActive("detail")}
         >
           Commandes &amp; corrections
+          {detailAlertCount > 0 && (
+            <span className="grid h-5 min-w-5 place-items-center rounded-full bg-state-changes px-1.5 text-[10px] font-bold text-white">{detailAlertCount}</span>
+          )}
         </button>
       </div>
 

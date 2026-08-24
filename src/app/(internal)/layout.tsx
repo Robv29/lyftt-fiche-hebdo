@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { appRoleLabel } from "@/lib/domain/types";
+import { todayInParis } from "@/lib/domain/client-lifecycle";
 import { InternalShell } from "@/components/InternalShell";
 
 /** §8 — La navigation porte la pastille des retours clients à traiter. */
@@ -57,6 +58,19 @@ export default async function InternalLayout({
             .select("id", { count: "exact", head: true })
             .in("category", ["graphic", "video"])
             .in("status", ["ready_for_review", "new_version_generated"]),
+          // En retard : sans ça, un community manager ou un admin qui ne produit
+          // pas lui-même ne voit jamais que la production a pris du retard.
+          supabase
+            .from("production_requests")
+            .select("id", { count: "exact", head: true })
+            .eq("status", "a_faire")
+            .lt("due_on", todayInParis()),
+          supabase
+            .from("client_tickets")
+            .select("id", { count: "exact", head: true })
+            .in("category", ["graphic", "video"])
+            .not("status", "in", "(closed,cancelled,rejected,approved_by_client)")
+            .lt("due_at", new Date().toISOString()),
         ],
   );
   const productionBadge = productionCounts.reduce(

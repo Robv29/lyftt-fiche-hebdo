@@ -18,9 +18,13 @@ import { ProductionTabs } from "./ProductionTabs";
  * Graphistes et vidéastes ne voient que les tickets qui leur sont affectés :
  * la restriction est appliquée par RLS (`can_access_ticket`), pas seulement ici.
  */
-export default async function ProductionPage() {
+const MAX_WEEK_OFFSET = 6;
+
+export default async function ProductionPage({ searchParams }: { searchParams: Promise<{ week?: string }> }) {
   const profile = await getCurrentProfile();
   const supabase = await createSupabaseServerClient();
+  // Combien de semaines après celle-ci la vue d'ensemble regarde ; 0 = cette semaine.
+  const weekOffset = Math.min(MAX_WEEK_OFFSET, Math.max(0, Math.trunc(Number((await searchParams).week)) || 0));
 
   const { data: tickets } = await supabase
     .from("client_tickets")
@@ -42,8 +46,9 @@ export default async function ProductionPage() {
    * Commandes internes : la RLS borne déjà la lecture au périmètre de chacun.
    * Les médias livrés sont signés ici — bucket privé oblige.
    */
-  const weekRange = planningWeekRange();
-  const currentIso = isoWeekIdentity(new Date());
+  const viewedNow = new Date(Date.now() + weekOffset * 7 * 86400000);
+  const weekRange = planningWeekRange(viewedNow);
+  const currentIso = isoWeekIdentity(viewedNow);
 
   const [{ data: rawRequests }, { data: overviewClients }, { data: rawCurrentSheets }] = await Promise.all([
     supabase
@@ -122,6 +127,10 @@ export default async function ProductionPage() {
     };
   });
 
+  // Ce qui a dépassé son échéance : le sous-menu l'affiche sans qu'il faille ouvrir l'onglet pour le découvrir.
+  const overdueCount = requests.filter((request) => request.overdue).length
+    + corrections.filter((correction) => correction.overdue).length;
+
   /*
    * Vue d'ensemble : un client sans fiche cette semaine a autant besoin d'être
    * vu qu'un client dont la fiche est incomplète — sa ligne existe donc même
@@ -184,7 +193,8 @@ export default async function ProductionPage() {
       <PageHeader eyebrow="Studio de production" title={isProductionRole ? "Production" : "Production"} description={isProductionRole ? "Les corrections qui vous sont affectées et les commandes internes, triées selon leur échéance." : "Les retours clients à corriger et les commandes internes de l'équipe."} />
 
       <ProductionTabs
-        overview={<ProductionOverview rows={overviewRows} weekLabel={weekLabel}/>}
+        overview={<ProductionOverview rows={overviewRows} weekLabel={weekLabel} weekOffset={weekOffset} maxWeekOffset={MAX_WEEK_OFFSET}/>}
+        detailAlertCount={overdueCount}
         detail={<div className="space-y-7">
       <ProductionRequests
         requests={requests}

@@ -35,14 +35,28 @@ function BucketCell({ status, color }: { status: BucketStatus; color: string }) 
  * Le pourcentage de complétion d'une fiche ne dit pas *quoi* manque ; ce
  * tableau répond directement, colonne par colonne, sans ouvrir chaque fiche.
  */
-export function ProductionOverview({ rows, weekLabel }: { rows: OverviewRow[]; weekLabel: string }) {
+export function ProductionOverview({ rows, weekLabel, weekOffset, maxWeekOffset }: { rows: OverviewRow[]; weekLabel: string; weekOffset: number; maxWeekOffset: number }) {
   const done = rows.filter((row) => row.done).length;
 
   return (
     <div className="space-y-4">
-      <p className="text-xs text-ink-faint">
-        {weekLabel} · {done} client{done > 1 ? "s" : ""} prêt{done > 1 ? "s" : ""} sur {rows.length}.
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs text-ink-faint">
+          {weekLabel} · {done} client{done > 1 ? "s" : ""} prêt{done > 1 ? "s" : ""} sur {rows.length}.
+        </p>
+        <div className="flex items-center gap-1.5">
+          {weekOffset > 0 ? (
+            <Link href={`/production?week=${weekOffset - 1}`} className="btn-secondary min-h-9 px-3 text-xs">
+              <Icon name="arrow" className="h-3.5 w-3.5 rotate-180"/>{weekOffset === 1 ? "Cette semaine" : "Semaine précédente"}
+            </Link>
+          ) : null}
+          {weekOffset < maxWeekOffset && (
+            <Link href={`/production?week=${weekOffset + 1}`} className="btn-secondary min-h-9 px-3 text-xs">
+              Semaine suivante<Icon name="arrow" className="h-3.5 w-3.5"/>
+            </Link>
+          )}
+        </div>
+      </div>
 
       {rows.length === 0 ? (
         <p className="card px-4 py-6 text-center text-sm text-ink-faint">Aucun client actif cette semaine.</p>
