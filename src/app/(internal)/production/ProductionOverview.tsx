@@ -22,6 +22,8 @@ function BucketCell({ status, color }: { status: BucketStatus; color: string }) 
       </span>
     );
   }
+  // « expected » : compris dans le forfait, aucune fiche créée — rond vide, sans marque.
+  if (status === "expected") return <span className="mx-auto block h-6 w-6 rounded-full border-2" style={{ borderColor: color }}/>;
   return (
     <span className="mx-auto grid h-6 w-6 place-items-center rounded-full border-2 text-[11px] font-bold" style={{ borderColor: color, color }}>
       !

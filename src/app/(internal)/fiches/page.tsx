@@ -12,7 +12,8 @@ import { sheetStatusLabel, type MediaFormat, type SheetStatus, type TicketPriori
 import { isClientValidated, validationRate } from "@/lib/domain/sheet-status";
 import { clientLifecycleForWeek } from "@/lib/domain/client-lifecycle";
 import { isTicketOpen } from "@/lib/domain/workflow";
-import { PlanningTabs, isPlanningTab } from "./PlanningTabs";
+import { PlanningTabs } from "./PlanningTabs";
+import { isPlanningTab } from "./planning-tab";
 import { PlanningSheetList, type PlanningEntry } from "./PlanningSheetList";
 
 interface PlanningItem {

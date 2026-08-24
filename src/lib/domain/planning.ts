@@ -109,8 +109,14 @@ export function sheetCompletion(items: CompletionItem[]): {
   };
 }
 
-/** Prêt / à compléter / rien de prévu — l'état d'une famille de contenu sur une fiche. */
-export type BucketStatus = "ready" | "pending" | "none";
+/**
+ * État d'une famille de contenu, sur une fiche ou avant même sa création.
+ *
+ * `expected` : compris dans le forfait du client mais aucune fiche créée pour
+ * la semaine — différent de `none`, qui veut dire que cette famille ne fait
+ * simplement pas partie de sa formule.
+ */
+export type BucketStatus = "ready" | "pending" | "expected" | "none";
 
 function isCompletionItemReady(item: CompletionItem): boolean {
   const captionOk = !requiresCaption(item.format) || Boolean(item.caption?.trim());

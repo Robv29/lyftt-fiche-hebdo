@@ -3,13 +3,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { Icon } from "@/components/Icon";
-
-export type PlanningTab = "past" | "current" | "next";
-const TAB_IDS: readonly PlanningTab[] = ["past", "current", "next"];
-
-export function isPlanningTab(value: string | undefined): value is PlanningTab {
-  return TAB_IDS.includes(value as PlanningTab);
-}
+import type { PlanningTab } from "./planning-tab";
 
 export interface PlanningValidation {
   validated: number;

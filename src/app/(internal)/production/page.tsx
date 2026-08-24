@@ -5,8 +5,8 @@ import { ticketPriorityLabel, ticketStatusLabel, type MediaFormat } from "@/lib/
 import { PageHeader } from "@/components/ui";
 import { resolveMediaUrl } from "@/lib/media/signed-url";
 import { clientLifecycleForWeek, todayInParis } from "@/lib/domain/client-lifecycle";
-import { contentBucketStatuses, isoWeekIdentity, planningWeekRange, sheetCompletion, type BucketStatus } from "@/lib/domain/planning";
-import { CONTENT_BUCKETS, type ContentBucket } from "@/lib/domain/content-buckets";
+import { contentBucketStatuses, isoWeekIdentity, planningWeekRange, sheetCompletion, weeklyFormatsForCadence, type BucketStatus, type MonthlyCadence } from "@/lib/domain/planning";
+import { bucketForFormat, CONTENT_BUCKETS, type ContentBucket } from "@/lib/domain/content-buckets";
 import { ProductionRequests, type ProductionRequestRow } from "./ProductionRequests";
 import { TicketCorrections, type TicketCorrectionRow } from "./TicketCorrections";
 import { ProductionOverview, type OverviewRow } from "./ProductionOverview";
@@ -145,7 +145,18 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
   const currentSheets = (rawCurrentSheets ?? []) as unknown as OverviewSheetRow[];
   const sheetByClientId = new Map<string, OverviewSheetRow>();
   for (const sheet of currentSheets) if (sheet.clients?.id) sheetByClientId.set(sheet.clients.id, sheet);
-  const emptyBuckets = Object.fromEntries(CONTENT_BUCKETS.map((bucket) => [bucket.key, "none"])) as Record<ContentBucket, BucketStatus>;
+
+  /*
+   * Sans fiche créée, une famille de contenu comprise dans le forfait du
+   * client reste « attendue » (rond vide) plutôt que de se confondre avec une
+   * famille qui ne fait simplement pas partie de sa formule (tiret).
+   */
+  const expectedBucketsForClient = (notes: unknown): Set<ContentBucket> => {
+    let settings: { monthlyCadence?: MonthlyCadence } = {};
+    try { settings = typeof notes === "string" ? JSON.parse(notes) : {}; } catch { settings = {}; }
+    const formats = weeklyFormatsForCadence(settings.monthlyCadence ?? {}, currentIso.week);
+    return new Set(formats.map(bucketForFormat));
+  };
 
   const overviewRows: OverviewRow[] = (overviewClients ?? [])
     .filter((client) => clientLifecycleForWeek({
@@ -158,10 +169,14 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
     .map((client): OverviewRow => {
       const sheet = sheetByClientId.get(client.id);
       if (!sheet) {
+        const expected = expectedBucketsForClient(client.notes);
+        const buckets = Object.fromEntries(
+          CONTENT_BUCKETS.map((bucket) => [bucket.key, expected.has(bucket.key) ? "expected" : "none"]),
+        ) as Record<ContentBucket, BucketStatus>;
         return {
           clientId: client.id, clientName: client.name, hasSheet: false, topic: null, done: false,
           href: `/fiches/nouvelle?client=${client.id}&isoYear=${currentIso.year}&isoWeek=${currentIso.week}`,
-          buckets: emptyBuckets,
+          buckets,
         };
       }
       const items = sheet.weekly_sheet_items.map((item) => ({
