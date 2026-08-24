@@ -151,7 +151,16 @@
 .main-content>div { max-width:1400px; margin-inline:auto; animation:page-arrive var(--motion-ui) var(--ease-out) both; }
 .mobile-nav { display:none; }
 
-@keyframes page-arrive { from { opacity:0; transform:translate3d(0, 8px, 0); } to { opacity:1; transform:translate3d(0, 0, 0); } }
+/*
+ * Opacité seule : `.main-content>div` est le conteneur racine de CHAQUE page
+ * interne, donc l'ancêtre de toute modale en position fixe qu'elle contient
+ * (« Modifier le client », par exemple). Un `transform` animé dessus — même
+ * revenu à l'identité en fin d'animation, `matrix(1,0,0,1,0,0)` n'est pas
+ * `none` — en fait le bloc englobant de ces modales, qui se retrouvent
+ * coincées dans sa boîte au lieu de couvrir l'écran. Vérifié en conditions
+ * réelles : c'était le cas.
+ */
+@keyframes page-arrive { from { opacity:0; } }
 @keyframes panel-arrive { from { opacity:0; transform:translate3d(0,-7px,0) scale(.992); } to { opacity:1; transform:translate3d(0,0,0) scale(1); } }
 @keyframes side-sheet-in { from { opacity:.65; transform:translate3d(28px,0,0); } to { opacity:1; transform:translate3d(0,0,0); } }
 
@@ -504,7 +513,16 @@
    bloc quand le système demande moins d'animation (fin de fichier).
 --------------------------------------------------------------------------- */
 
-@keyframes rise-in { from { opacity:0; transform:translate3d(0,12px,0); } }
+/*
+ * Opacité seule, jamais de transform : `rise-in` s'applique à des conteneurs
+ * de page (en-têtes, sections) qui peuvent contenir une modale en position
+ * fixe (« Modifier le client », la notation client…). Un `transform` sur un
+ * ancêtre — même animé, même de retour à l'identité en fin d'animation — fait
+ * de cet ancêtre le bloc englobant des descendants `position:fixed`, qui se
+ * retrouvent alors coincés dans sa boîte au lieu de couvrir l'écran. C'est
+ * arrivé ici : bug vécu, pas hypothétique.
+ */
+@keyframes rise-in { from { opacity:0; } }
 @keyframes bar-grow { from { transform:scaleX(0); } }
 @keyframes ring-in { from { opacity:0; transform:scale(.86) rotate(-6deg); } }
 @keyframes badge-pop { from { transform:scale(.4); opacity:0; } 70% { transform:scale(1.12); } }
@@ -557,8 +575,20 @@
 .topbar-icon b { animation:badge-pop 320ms cubic-bezier(.22,1.15,.36,1) both, badge-halo 2.6s var(--ease-out) 600ms infinite; }
 .nav-item b,.mobile-nav b { animation:badge-pop 320ms cubic-bezier(.22,1.15,.36,1) both; }
 
-/* Réponse au geste : rien ne bouge tant qu'on ne touche pas. */
-.card,.content-card,.insights-card,.insights-kpi {
+/*
+ * Réponse au geste : rien ne bouge tant qu'on ne touche pas.
+ *
+ * `.card`/`.content-card` servent de socle à peu près partout, y compris à
+ * des écrans qui posent une modale en position fixe quelque part dans leur
+ * descendance (« Modifier le client », par exemple). Une simple déclaration
+ * `transition: transform` sur un ancêtre — même sans transition en cours —
+ * suffit à en faire le bloc englobant de ces modales, qui se retrouvent
+ * coincées dans sa boîte au lieu de couvrir l'écran. `.insights-card` et
+ * `.insights-kpi` sont sans risque : propres à Indicateurs, qui n'a aucune
+ * modale.
+ */
+.card,.content-card { transition:box-shadow var(--motion-ui) var(--ease-out), border-color var(--motion-fast) var(--ease-out); }
+.insights-card,.insights-kpi {
   transition:transform var(--motion-ui) var(--ease-out), box-shadow var(--motion-ui) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
 }
 .btn svg { transition:transform var(--motion-fast) var(--ease-out); }
