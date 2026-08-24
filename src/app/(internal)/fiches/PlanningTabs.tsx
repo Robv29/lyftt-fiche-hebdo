@@ -1,9 +1,15 @@
 "use client";
 
+import { usePathname, useRouter } from "next/navigation";
 import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { Icon } from "@/components/Icon";
 
-type PlanningTab = "past" | "current" | "next";
+export type PlanningTab = "past" | "current" | "next";
+const TAB_IDS: readonly PlanningTab[] = ["past", "current", "next"];
+
+export function isPlanningTab(value: string | undefined): value is PlanningTab {
+  return TAB_IDS.includes(value as PlanningTab);
+}
 
 export interface PlanningValidation {
   validated: number;
@@ -29,6 +35,7 @@ export function PlanningTabs({
   counts,
   validation,
   toCreate,
+  initialTab,
   past,
   current,
   next,
@@ -38,16 +45,30 @@ export function PlanningTabs({
   validation: Record<PlanningTab, PlanningValidation>;
   /** Fiches de la semaine prochaine restant à créer. */
   toCreate: number;
+  /** Onglet lu depuis `?tab=` côté serveur : évite `useSearchParams` (et son Suspense). */
+  initialTab: PlanningTab;
   past: ReactNode;
   current: ReactNode;
   next: ReactNode;
 }) {
-  const [active, setActive] = useState<PlanningTab>("current");
+  const router = useRouter();
+  const pathname = usePathname();
+  /*
+   * L'onglet vit aussi dans l'URL, pas seulement dans ce state : sans ça,
+   * revenir en arrière depuis une fiche ouverte depuis « Semaine prochaine »
+   * ramenait toujours sur « Cette semaine », l'onglet par défaut au montage.
+   */
+  const [active, setActiveState] = useState<PlanningTab>(initialTab);
   const content = { past, current, next }[active];
   const activeTab = TABS.find((tab) => tab.id === active)!;
   // L'indicateur suit l'onglet : un taux affiché sur une autre période que
   // celle qu'on regarde se lit comme une erreur.
   const rate = validation[active];
+
+  const setActive = (tab: PlanningTab) => {
+    setActiveState(tab);
+    router.replace(tab === "current" ? pathname : `${pathname}?tab=${tab}`, { scroll: false });
+  };
 
   const move = (event: KeyboardEvent<HTMLButtonElement>, direction: -1 | 1) => {
     event.preventDefault();

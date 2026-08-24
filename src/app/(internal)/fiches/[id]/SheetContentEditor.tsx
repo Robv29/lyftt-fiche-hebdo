@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { saveSheetContent, type SheetContentActionResult } from "./actions";
 import { Icon } from "@/components/Icon";
 import { MEDIA_FORMAT_LABELS, requiresCaption, requiresMedia, type MediaFormat } from "@/lib/domain/types";
+import { CONTENT_BUCKETS, bucketForFormat, type ContentBucketDefinition } from "@/lib/domain/content-buckets";
 import { mediaFrameBackground, mediaFrameClass, supportsGallery } from "@/lib/domain/media-frame";
 import { PostPreview } from "@/components/PostPreview";
 import { uploadMediaDirect } from "@/lib/media/direct-upload";
@@ -195,6 +196,19 @@ export function SheetContentEditor({ sheetId, clientId, clientName, initialItems
     + Number(requiresMedia(item.format) && hasMedia(item)), 0);
   const progress = requirements ? Math.round((completed / requirements) * 100) : 0;
 
+  /*
+   * Photos, vidéos, visuels, textes… : regroupées par famille plutôt que
+   * mélangées dans l'ordre de saisie, pour repérer d'un coup d'œil ce qui
+   * manque dans chacune. L'index d'origine est conservé pour que la
+   * numérotation « Publication N » ne bouge pas d'un groupe à l'autre.
+   */
+  const indexed = items.map((item, index) => ({ item, index }));
+  const removedEntries = indexed.filter(({ item }) => item.removed);
+  const groups = CONTENT_BUCKETS.map((bucket) => ({
+    bucket,
+    entries: indexed.filter(({ item }) => !item.removed && bucketForFormat(item.format) === bucket.key),
+  })).filter((group) => group.entries.length > 0);
+
   return (
     <form action={(formData) => {
       formData.set("sheetId", sheetId);
@@ -227,26 +241,41 @@ export function SheetContentEditor({ sheetId, clientId, clientName, initialItems
 
       {feedback && <p className={`rounded-xl border px-4 py-3 text-sm ${feedback.ok ? "border-state-approved/30 bg-state-approved/5 text-state-approved" : "border-state-changes/30 bg-state-changes/5 text-state-changes"}`}>{feedback.message}</p>}
 
-      {items.map((item, index) => {
-        if (item.removed) {
-          return (
-            <article key={item.id} className="card flex flex-wrap items-center justify-between gap-3 border-dashed p-4 text-sm">
-              <span className="text-ink-faint">
-                Publication {index + 1} · {MEDIA_FORMAT_LABELS[item.format]} — retirée à l’enregistrement
-              </span>
-              <button type="button" className="text-xs font-semibold text-[#0759e6] hover:underline" onClick={() => update(item.id, { removed: false })}>
-                Annuler le retrait
-              </button>
-            </article>
-          );
-        }
+      {groups.map(({ bucket, entries }) => (
+        <section key={bucket.key} className="space-y-4">
+          <div className="flex items-center gap-2 rounded-xl px-3 py-2" style={{ background: bucket.bg, color: bucket.text }}>
+            <Icon name={bucket.icon} className="h-4 w-4 shrink-0"/>
+            <h3 className="text-xs font-bold uppercase tracking-wide">{bucket.label}</h3>
+            <span className="ml-auto rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-semibold">{entries.length}</span>
+          </div>
+          {entries.map(({ item, index }) => renderItem(item, index, bucket))}
+        </section>
+      ))}
+
+      {removedEntries.map(({ item, index }) => (
+        <article key={item.id} className="card flex flex-wrap items-center justify-between gap-3 border-dashed p-4 text-sm">
+          <span className="text-ink-faint">
+            Publication {index + 1} · {MEDIA_FORMAT_LABELS[item.format]} — retirée à l’enregistrement
+          </span>
+          <button type="button" className="text-xs font-semibold text-[#0759e6] hover:underline" onClick={() => update(item.id, { removed: false })}>
+            Annuler le retrait
+          </button>
+        </article>
+      ))}
+
+      <button type="submit" className="btn-primary" disabled={pending}>{pending ? "Enregistrement…" : requiresRevalidation ? "Enregistrer et créer une nouvelle version" : progress === 100 ? "Enregistrer la fiche complète" : "Enregistrer l’avancement"}</button>
+    </form>
+  );
+
+  /** Une publication, dans le groupe de sa famille de contenu. */
+  function renderItem(item: EditorItem, index: number, bucket: ContentBucketDefinition) {
         const mediaReady = !requiresMedia(item.format) || hasMedia(item);
         const captionReady = !requiresCaption(item.format) || Boolean(item.caption.trim());
         const itemReady = Boolean(captionReady && item.hashtags.trim() && mediaReady);
         return (
-          <article key={item.id} className="card space-y-4 p-4 sm:p-5">
+          <article key={item.id} className="card space-y-4 border-l-4 p-4 sm:p-5" style={{ borderLeftColor: bucket.accent }}>
             <div className="flex items-center gap-3">
-              <span className={`grid h-9 w-9 place-items-center rounded-xl text-xs font-bold ${itemReady ? "bg-state-approved/10 text-state-approved" : "bg-[#edf4ff] text-[#0759e6]"}`}>{itemReady ? <Icon name="check" className="h-4 w-4"/> : index + 1}</span>
+              <span className={`grid h-9 w-9 place-items-center rounded-xl text-xs font-bold ${itemReady ? "bg-state-approved/10 text-state-approved" : ""}`} style={!itemReady ? { background: bucket.bg, color: bucket.text } : undefined}>{itemReady ? <Icon name="check" className="h-4 w-4"/> : index + 1}</span>
               <div className="min-w-0 flex-1"><h3 className="text-sm font-semibold">Publication {index + 1} · {MEDIA_FORMAT_LABELS[item.format]}</h3><p className="text-xs text-ink-faint">{itemReady ? "Prête" : "À compléter"}</p></div>
               <button
                 type="button"
@@ -396,9 +425,5 @@ export function SheetContentEditor({ sheetId, clientId, clientName, initialItems
             </div>
           </article>
         );
-      })}
-
-      <button type="submit" className="btn-primary" disabled={pending}>{pending ? "Enregistrement…" : requiresRevalidation ? "Enregistrer et créer une nouvelle version" : progress === 100 ? "Enregistrer la fiche complète" : "Enregistrer l’avancement"}</button>
-    </form>
-  );
+  }
 }

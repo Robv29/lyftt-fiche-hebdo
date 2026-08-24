@@ -1,5 +1,6 @@
 import { isoWeekStart } from "./deadline";
 import { requiresCaption, requiresMedia, type MediaFormat } from "./types";
+import { CONTENT_BUCKETS, bucketForFormat, type ContentBucket } from "./content-buckets";
 
 export type PlanningBucket = "past" | "current" | "next" | "later";
 
@@ -106,6 +107,33 @@ export function sheetCompletion(items: CompletionItem[]): {
     ...totals,
     percentage: totals.total === 0 ? 0 : Math.round((totals.completed / totals.total) * 100),
   };
+}
+
+/** Prêt / à compléter / rien de prévu — l'état d'une famille de contenu sur une fiche. */
+export type BucketStatus = "ready" | "pending" | "none";
+
+function isCompletionItemReady(item: CompletionItem): boolean {
+  const captionOk = !requiresCaption(item.format) || Boolean(item.caption?.trim());
+  const hashtagsOk = hasHashtags(item.hashtags);
+  const mediaOk = !requiresMedia(item.format) || Boolean(item.mediaAssetId || item.mediaExternalUrl);
+  return captionOk && hashtagsOk && mediaOk;
+}
+
+/**
+ * État de chaque famille de contenu (photos, vidéos, visuels…) sur une fiche.
+ *
+ * Sert la vue d'ensemble de Production : un pourcentage global ne dit pas
+ * *quoi* manque, alors que « Vidéos : à compléter » se lit sans ouvrir la
+ * fiche.
+ */
+export function contentBucketStatuses(items: CompletionItem[]): Record<ContentBucket, BucketStatus> {
+  const active = items.filter((item) => !item.isCancelled);
+  const statuses = {} as Record<ContentBucket, BucketStatus>;
+  for (const bucket of CONTENT_BUCKETS) {
+    const bucketItems = active.filter((item) => bucketForFormat(item.format) === bucket.key);
+    statuses[bucket.key] = bucketItems.length === 0 ? "none" : bucketItems.every(isCompletionItemReady) ? "ready" : "pending";
+  }
+  return statuses;
 }
 
 export interface MonthlyCadence {

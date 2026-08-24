@@ -1,12 +1,16 @@
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
-import { deadlineState } from "@/lib/domain/deadline";
-import { ticketPriorityLabel, ticketStatusLabel } from "@/lib/domain/types";
+import { deadlineState, formatPeriod } from "@/lib/domain/deadline";
+import { ticketPriorityLabel, ticketStatusLabel, type MediaFormat } from "@/lib/domain/types";
 import { PageHeader } from "@/components/ui";
 import { resolveMediaUrl } from "@/lib/media/signed-url";
-import { todayInParis } from "@/lib/domain/client-lifecycle";
+import { clientLifecycleForWeek, todayInParis } from "@/lib/domain/client-lifecycle";
+import { contentBucketStatuses, isoWeekIdentity, planningWeekRange, sheetCompletion, type BucketStatus } from "@/lib/domain/planning";
+import { CONTENT_BUCKETS, type ContentBucket } from "@/lib/domain/content-buckets";
 import { ProductionRequests, type ProductionRequestRow } from "./ProductionRequests";
 import { TicketCorrections, type TicketCorrectionRow } from "./TicketCorrections";
+import { ProductionOverview, type OverviewRow } from "./ProductionOverview";
+import { ProductionTabs } from "./ProductionTabs";
 
 /**
  * §22 — Espace de production.
@@ -38,15 +42,29 @@ export default async function ProductionPage() {
    * Commandes internes : la RLS borne déjà la lecture au périmètre de chacun.
    * Les médias livrés sont signés ici — bucket privé oblige.
    */
-  const [{ data: rawRequests }, { data: requestClients }] = await Promise.all([
+  const weekRange = planningWeekRange();
+  const currentIso = isoWeekIdentity(new Date());
+
+  const [{ data: rawRequests }, { data: overviewClients }, { data: rawCurrentSheets }] = await Promise.all([
     supabase
       .from("production_requests")
       .select(`id, client_id, kind, title, brief, due_on, status, requested_by, requested_by_name, clients ( name ),
         media_assets:media_asset_id ( kind, file_name, storage_path, preview_path, purged_at, preview_purged_at ),
         reference:reference_media_id ( storage_path, preview_path, purged_at, preview_purged_at )`)
       .order("due_on", { ascending: true }),
-    supabase.from("clients").select("id, name").eq("is_active", true).order("name"),
+    supabase
+      .from("clients")
+      .select("id, name, notes, is_active, contract_start_date, contract_end_date, pause_start_date, pause_end_date")
+      .eq("is_active", true)
+      .order("name"),
+    supabase
+      .from("weekly_sheets")
+      .select(`id, topic, status,
+        clients ( id, name ),
+        weekly_sheet_items ( caption, hashtags, format, media_asset_id, media_external_url, is_cancelled )`)
+      .eq("period_start", weekRange.currentStart),
   ]);
+  const requestClients = overviewClients;
 
   const today = todayInParis();
   const requests: ProductionRequestRow[] = await Promise.all((rawRequests ?? []).map(async (row) => {
@@ -104,10 +122,70 @@ export default async function ProductionPage() {
     };
   });
 
+  /*
+   * Vue d'ensemble : un client sans fiche cette semaine a autant besoin d'être
+   * vu qu'un client dont la fiche est incomplète — sa ligne existe donc même
+   * sans fiche, avec « à créer » pour seul état.
+   */
+  interface OverviewSheetRow {
+    id: string;
+    topic: string | null;
+    clients: { id: string; name: string } | null;
+    weekly_sheet_items: Array<{ caption: string | null; hashtags: string[] | null; format: MediaFormat; media_asset_id: string | null; media_external_url: string | null; is_cancelled: boolean }>;
+  }
+  const currentSheets = (rawCurrentSheets ?? []) as unknown as OverviewSheetRow[];
+  const sheetByClientId = new Map<string, OverviewSheetRow>();
+  for (const sheet of currentSheets) if (sheet.clients?.id) sheetByClientId.set(sheet.clients.id, sheet);
+  const emptyBuckets = Object.fromEntries(CONTENT_BUCKETS.map((bucket) => [bucket.key, "none"])) as Record<ContentBucket, BucketStatus>;
+
+  const overviewRows: OverviewRow[] = (overviewClients ?? [])
+    .filter((client) => clientLifecycleForWeek({
+      isActive: client.is_active,
+      contractStartDate: client.contract_start_date,
+      contractEndDate: client.contract_end_date,
+      pauseStartDate: client.pause_start_date,
+      pauseEndDate: client.pause_end_date,
+    }, weekRange.currentStart).canProduce)
+    .map((client): OverviewRow => {
+      const sheet = sheetByClientId.get(client.id);
+      if (!sheet) {
+        return {
+          clientId: client.id, clientName: client.name, hasSheet: false, topic: null, done: false,
+          href: `/fiches/nouvelle?client=${client.id}&isoYear=${currentIso.year}&isoWeek=${currentIso.week}`,
+          buckets: emptyBuckets,
+        };
+      }
+      const items = sheet.weekly_sheet_items.map((item) => ({
+        caption: item.caption,
+        hashtags: item.hashtags,
+        format: item.format,
+        mediaAssetId: item.media_asset_id,
+        mediaExternalUrl: item.media_external_url,
+        isCancelled: item.is_cancelled,
+      }));
+      return {
+        clientId: client.id,
+        clientName: client.name,
+        hasSheet: true,
+        topic: sheet.topic,
+        done: sheetCompletion(items).percentage === 100,
+        href: `/fiches/${sheet.id}`,
+        buckets: contentBucketStatuses(items),
+      };
+    })
+    .sort((a, b) => {
+      const rank = (row: OverviewRow) => row.hasSheet ? (row.done ? 2 : 1) : 0;
+      return rank(a) - rank(b) || a.clientName.localeCompare(b.clientName, "fr");
+    });
+  const weekLabel = `Semaine ${currentIso.week} · ${formatPeriod(new Date(`${weekRange.currentStart}T00:00:00Z`), new Date(`${weekRange.currentEnd}T00:00:00Z`))}`;
+
   return (
     <div className="space-y-7">
       <PageHeader eyebrow="Studio de production" title={isProductionRole ? "Production" : "Production"} description={isProductionRole ? "Les corrections qui vous sont affectées et les commandes internes, triées selon leur échéance." : "Les retours clients à corriger et les commandes internes de l'équipe."} />
 
+      <ProductionTabs
+        overview={<ProductionOverview rows={overviewRows} weekLabel={weekLabel}/>}
+        detail={<div className="space-y-7">
       <ProductionRequests
         requests={requests}
         clients={(requestClients ?? []).map((client) => ({ id: client.id as string, name: client.name as string }))}
@@ -125,6 +203,8 @@ export default async function ProductionPage() {
         Déposez le fichier corrigé puis validez : la correction part au contrôle du
         community manager, qui la valide et obtient le lien à envoyer au client.
       </p>
+        </div>}
+      />
     </div>
   );
 }
