@@ -28,12 +28,9 @@ export function LegalPage({
 
       <div className="legal-prose">{children}</div>
 
-      {/*
-        * Les mentions légales ne sont volontairement pas listées ici : elles
-        * restent incomplètes et ne doivent pas être présentées aux clients
-        * tant que l'identification de l'éditeur n'est pas renseignée.
-        */}
       <footer className="mt-12 border-t border-line pt-6 text-xs text-ink-faint">
+        <Link className="underline" href="/mentions-legales">Mentions légales</Link>
+        <span className="mx-2">·</span>
         <Link className="underline" href="/politique-de-confidentialite">Politique de confidentialité</Link>
       </footer>
     </main>

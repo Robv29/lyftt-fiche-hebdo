@@ -17,6 +17,10 @@ export function PrivacyNotice() {
         <a className="underline" href="/politique-de-confidentialite">
           Politique de confidentialité
         </a>
+        <span className="mx-2">·</span>
+        <a className="underline" href="/mentions-legales">
+          Mentions légales
+        </a>
       </p>
     </footer>
   );
