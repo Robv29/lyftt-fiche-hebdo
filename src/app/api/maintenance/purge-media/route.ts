@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { logRibAccess } from "@/lib/internal/rib-audit";
 import { decideMediaRetention, formatBytes } from "@/lib/domain/media-retention";
 import { cadenceFromNotes, syncManagementMonths } from "@/lib/budget/management-months";
 
@@ -22,6 +23,9 @@ import { cadenceFromNotes, syncManagementMonths } from "@/lib/budget/management-
  * prélèvement et la facture de solde.
  */
 const RIB_RETENTION_DAYS = 30;
+
+/** Jours de conservation du journal des accès au RIB. */
+const RIB_LOG_RETENTION_DAYS = 365;
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -143,7 +147,29 @@ async function handle(request: NextRequest) {
 
     await admin.storage.from("media").remove(paths);
     purgedRibs += paths.length;
+
+    // La suppression automatique est un accès au RIB comme un autre : elle
+    // doit laisser la même trace qu'un retrait fait à la main.
+    await logRibAccess({
+      clientId: client.id,
+      eventType: "purged",
+      metadata: { contractEndDate: client.contract_end_date, retentionDays: RIB_RETENTION_DAYS },
+    });
   }
+
+  /*
+   * Le journal des accès au RIB est lui-même une donnée : il dit qui consulte
+   * les coordonnées bancaires de qui. Il se purge donc à son tour, passé un an
+   * — assez pour reconstituer l'historique d'un incident, pas au point de
+   * constituer un fichier de surveillance de l'équipe.
+   */
+  const { count: purgedRibEvents } = await admin
+    .from("client_rib_events")
+    .delete({ count: "exact" })
+    .lt(
+      "created_at",
+      new Date(Date.now() - RIB_LOG_RETENTION_DAYS * 86_400_000).toISOString(),
+    );
 
   // Chaque média, avec la publication qui le porte et la règle du client.
   const { data: assets, error } = await admin
@@ -308,6 +334,7 @@ async function handle(request: NextRequest) {
     apercusPurges: previewPurgedIds.length,
     fichesSupprimees: deletedSheets,
     ribsPurges: purgedRibs,
+    evenementsRibPurges: purgedRibEvents ?? 0,
     espaceLibere: formatBytes(freed),
   });
 }

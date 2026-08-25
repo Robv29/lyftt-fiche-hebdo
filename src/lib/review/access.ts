@@ -1,16 +1,13 @@
 import "server-only";
-import { headers } from "next/headers";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { env } from "@/lib/supabase/env";
 import {
-  hashIp,
   hashToken,
   isWellFormedToken,
-  userAgentFamily,
   validateLinkState,
   type LinkRejectionReason,
 } from "@/lib/domain/tokens";
 import { rateLimit } from "@/lib/security/rate-limit";
+import { callerFingerprint } from "@/lib/security/caller";
 import { resolveMediaUrl } from "@/lib/media/signed-url";
 import { resolveClientLogoUrl } from "@/lib/media/client-logo";
 import type {
@@ -93,18 +90,6 @@ export interface ReviewSheet {
   currentVersionNumber: number | null;
   currentVersionId: string | null;
   items: ReviewItem[];
-}
-
-/** Identifiant de l'appelant, pour la limitation de débit uniquement. */
-async function callerFingerprint(): Promise<{ ipHash: string; uaFamily: string | null }> {
-  const headerList = await headers();
-  const forwarded = headerList.get("x-forwarded-for");
-  const ip = forwarded?.split(",")[0]?.trim() || headerList.get("x-real-ip") || "inconnu";
-
-  return {
-    ipHash: hashIp(ip, env.ipHashSalt),
-    uaFamily: userAgentFamily(headerList.get("user-agent")),
-  };
 }
 
 export type ResolveResult =

@@ -6,6 +6,7 @@ import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/se
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sanitizeText } from "@/lib/security/sanitize";
 import { checkAttachment, safeFileName } from "@/lib/security/attachments";
+import { logRibAccess } from "@/lib/internal/rib-audit";
 import { addMonths, findService, formatEuros, isShootingLine, MANAGEMENT_MONTH_KEY, SHOOTING_FORFAIT_KEY } from "@/lib/domain/budget";
 
 export interface BudgetActionResult {
@@ -401,6 +402,13 @@ export async function uploadClientRib(formData: FormData): Promise<BudgetActionR
     await admin.storage.from("media").remove([previous]);
   }
 
+  await logRibAccess({
+    clientId: clientId.data,
+    eventType: previous ? "replaced" : "uploaded",
+    profile,
+    metadata: { fileName },
+  });
+
   revalidatePath("/budget");
   revalidatePath(`/budget/${clientId.data}`);
   return { ok: true, message: "RIB déposé." };
@@ -430,6 +438,8 @@ export async function removeClientRib(clientId: string): Promise<BudgetActionRes
 
   const path = current?.rib_storage_path as string | null | undefined;
   if (path) await admin.storage.from("media").remove([path]);
+
+  await logRibAccess({ clientId: parsed.data, eventType: "removed", profile });
 
   revalidatePath("/budget");
   revalidatePath(`/budget/${parsed.data}`);

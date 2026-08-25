@@ -57,6 +57,7 @@ export function BudgetEditor({
   initialBudgetCents,
   initialNote,
   rib,
+  ribEvents,
   lines,
   months,
   summary,
@@ -78,6 +79,7 @@ export function BudgetEditor({
   initialBudgetCents: number;
   initialNote: string;
   rib: { fileName: string | null; uploadedAt: string | null; url: string | null };
+  ribEvents: RibEvent[];
   lines: EditorLine[];
   months: InvoiceMonth[];
   summary: BudgetSummary;
@@ -269,6 +271,7 @@ export function BudgetEditor({
           clientId={clientId}
           mode={mode}
           rib={rib}
+          ribEvents={ribEvents}
           pending={pending}
           onUpload={(formData) => run(() => uploadClientRib(formData))}
           onRemove={() => run(() => removeClientRib(clientId))}
@@ -497,6 +500,7 @@ function RibPanel({
   clientId,
   mode,
   rib,
+  ribEvents,
   pending,
   onUpload,
   onRemove,
@@ -504,6 +508,7 @@ function RibPanel({
   clientId: string;
   mode: BillingMode;
   rib: { fileName: string | null; uploadedAt: string | null; url: string | null };
+  ribEvents: RibEvent[];
   pending: boolean;
   onUpload: (formData: FormData) => void;
   onRemove: () => void;
@@ -578,9 +583,60 @@ function RibPanel({
               </button>
             </div>
           )}
+
+          <RibAccessLog events={ribEvents}/>
         </div>
       </div>
     </section>
+  );
+}
+
+export interface RibEvent {
+  id: string;
+  eventType: string;
+  profileLabel: string | null;
+  createdAt: string;
+}
+
+const RIB_EVENT_LABELS: Record<string, string> = {
+  viewed: "Consultation",
+  uploaded: "Dépôt",
+  replaced: "Remplacement",
+  removed: "Retrait",
+  purged: "Purge automatique",
+};
+
+/*
+ * Journal des accès aux coordonnées bancaires.
+ *
+ * Replié par défaut : il ne sert qu'à répondre à une question précise — qui a
+ * consulté ce RIB, et quand — et n'a pas à peser sur l'écran le reste du temps.
+ */
+function RibAccessLog({ events }: { events: RibEvent[] }) {
+  if (events.length === 0) return null;
+
+  const format = new Intl.DateTimeFormat("fr-FR", {
+    day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+  });
+
+  return (
+    <details className="mt-4 border-t border-line pt-3">
+      <summary className="cursor-pointer text-xs font-semibold text-ink-faint hover:text-ink">
+        Journal des accès ({events.length})
+      </summary>
+      <ul className="mt-2 space-y-1.5">
+        {events.map((event) => (
+          <li key={event.id} className="flex flex-wrap items-baseline gap-x-2 text-xs text-ink-soft">
+            <span className="tabular-nums text-ink-faint">{format.format(new Date(event.createdAt))}</span>
+            <span className="font-medium">{RIB_EVENT_LABELS[event.eventType] ?? event.eventType}</span>
+            <span className="text-ink-faint">· {event.profileLabel ?? "Auteur inconnu"}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 text-[11px] leading-relaxed text-ink-faint">
+        Dix derniers accès. Le journal est conservé un an, puis purgé automatiquement.
+      </p>
+    </details>
   );
 }
 

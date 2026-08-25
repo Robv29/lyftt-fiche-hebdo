@@ -8,6 +8,7 @@ import { BudgetEditor } from "./BudgetEditor";
 import { cadenceFromNotes, shootingPlanFromNotes, syncManagementMonths } from "@/lib/budget/management-months";
 import { invoiceMonths, type InvoiceStatus } from "@/lib/domain/invoicing";
 import { resolveMediaUrl } from "@/lib/media/signed-url";
+import { logRibAccess } from "@/lib/internal/rib-audit";
 import { isShootingLine, shootingSchedule } from "@/lib/domain/budget";
 
 export const dynamic = "force-dynamic";
@@ -114,15 +115,43 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
   /*
    * Le RIB vit dans le bucket privé : rien ne s'affiche sans URL signée, qui
    * n'est valable qu'une heure. Elle est donc calculée à chaque affichage.
+   *
+   * C'est ici, et non au clic sur le fichier, que l'accès se joue : une fois
+   * l'URL signée remise au navigateur, les coordonnées bancaires sont
+   * consultables. L'événement est donc consigné au moment où l'URL est
+   * délivrée.
    */
-  const ribUrl = budget?.rib_storage_path
-    ? (await resolveMediaUrl({
-        storagePath: budget.rib_storage_path as string,
-        previewPath: null,
-        purgedAt: null,
-        previewPurgedAt: null,
-      })).url
-    : null;
+  let ribUrl: string | null = null;
+  if (budget?.rib_storage_path) {
+    ribUrl = (await resolveMediaUrl({
+      storagePath: budget.rib_storage_path as string,
+      previewPath: null,
+      purgedAt: null,
+      previewPurgedAt: null,
+    })).url;
+
+    await logRibAccess({
+      clientId,
+      eventType: "viewed",
+      profile,
+      metadata: { fileName: budget.rib_file_name ?? null },
+    });
+  }
+
+  /*
+   * Journal des accès, lu par le client utilisateur : la policy réserve la
+   * lecture aux `super_admin`, si bien que la base tranche elle aussi, et pas
+   * seulement la garde du haut de cette page.
+   *
+   * Chargé après l'événement de consultation ci-dessus, qui n'a donc pas à
+   * apparaître dans la liste qu'il produit.
+   */
+  const { data: ribEvents } = await supabase
+    .from("client_rib_events")
+    .select("id, event_type, profile_label, created_at")
+    .eq("client_id", clientId)
+    .order("created_at", { ascending: false })
+    .limit(10);
 
   /*
    * Cycle du shooting vendu : les dates réalisées ou calées sont des lignes de
@@ -160,6 +189,12 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
         initialMode={mode}
         initialBudgetCents={budget?.budget_cents ?? 0}
         initialNote={budget?.note ?? ""}
+        ribEvents={(ribEvents ?? []).map((event) => ({
+          id: event.id as string,
+          eventType: event.event_type as string,
+          profileLabel: (event.profile_label as string | null) ?? null,
+          createdAt: event.created_at as string,
+        }))}
         rib={{
           fileName: (budget?.rib_file_name as string | null) ?? null,
           uploadedAt: (budget?.rib_uploaded_at as string | null) ?? null,

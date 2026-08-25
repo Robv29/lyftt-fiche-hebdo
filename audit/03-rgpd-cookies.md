@@ -83,7 +83,37 @@ fournisseurs. **[IM]** Ce point n'est documenté nulle part dans le dépôt.
 >
 > Vérifié en base au moment de la mise en place : aucun RIB n'était stocké, la purge ne
 > détruit donc rien de rétroactif ; 10 clients sans date de fin sont bien préservés par la
-> requête. **Reste ouverte** la journalisation des accès au RIB, non traitée.
+> requête.
+>
+> ### ✅ Journalisation des accès — mise en place le 25 août 2026
+>
+> Table `client_rib_events` (migration `20260825110000_rib_access_log.sql`). Cinq
+> événements sont consignés : consultation, dépôt, remplacement, retrait, purge
+> automatique. Chacun porte l'auteur, l'horodatage, une empreinte d'IP salée et la
+> famille de navigateur — la même minimisation que pour le portail client.
+>
+> **La consultation est journalisée au moment où l'URL signée est délivrée**, et non au
+> clic sur le fichier : une fois l'URL remise au navigateur, les coordonnées sont
+> accessibles. C'est là que l'accès se joue réellement.
+>
+> Trois propriétés vérifiées en base, transaction annulée :
+>
+> | Contrôle | Résultat |
+> |---|---|
+> | Lecture par un `super_admin` | ✅ autorisée |
+> | Lecture par un `production_manager` | ✅ aucune ligne |
+> | Lecture anonyme | ✅ refusée |
+> | Modification d'un événement | ✅ bloquée par trigger |
+> | Suppression (purge, art. 17) | ✅ possible |
+>
+> L'immuabilité vaut **y compris pour la clé service-role** : un journal réinscriptible
+> n'a aucune valeur probante. La suppression reste ouverte, pour la rétention et pour
+> l'effacement demandé par un client.
+>
+> Le journal est **conservé un an**, puis purgé par la tâche quotidienne : assez pour
+> reconstituer un incident, pas au point de constituer un fichier de surveillance de
+> l'équipe. Les dix derniers accès sont lisibles sur la fiche budget du client, sous un
+> bloc replié — un journal qu'on ne peut pas consulter n'a qu'une valeur théorique.
 
 ### T3 — Validation client par lien public
 
