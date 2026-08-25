@@ -17,6 +17,12 @@ import { cadenceFromNotes, syncManagementMonths } from "@/lib/budget/management-
  * validé tacitement. Les deux verbes pointent donc sur le même traitement.
  */
 
+/**
+ * Jours de conservation du RIB au-delà de la fin de gestion. Couvre le dernier
+ * prélèvement et la facture de solde.
+ */
+const RIB_RETENTION_DAYS = 30;
+
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
@@ -86,6 +92,57 @@ async function handle(request: NextRequest) {
       // Un budget en échec ne doit pas empêcher la purge des médias.
       console.error("[entretien] mois de gestion impossibles", client.id, error);
     }
+  }
+
+  /*
+   * §RGPD — Purge des coordonnées bancaires.
+   *
+   * Le RIB est conservé jusqu'à la fin de la gestion, et trente jours au-delà :
+   * le dernier prélèvement et la facture de solde tombent après la date de fin,
+   * et supprimer le RIB à la minute obligerait à le redemander au client.
+   *
+   * Un client sans date de fin est un client dont la gestion se poursuit : son
+   * RIB n'est pas purgé. C'est la seule lecture cohérente d'un champ vide —
+   * l'absence de date n'y signifie pas « terminé depuis toujours ».
+   *
+   * Le fichier vit dans le bucket privé `media`, hors de `media_assets` : il
+   * échappe donc au cycle de purge des médias, d'où cette étape distincte.
+   */
+  let purgedRibs = 0;
+  const ribCutoff = new Date(Date.now() - RIB_RETENTION_DAYS * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+
+  const { data: endedClients } = await admin
+    .from("clients")
+    .select("id, contract_end_date, client_budgets ( rib_storage_path )")
+    .not("contract_end_date", "is", null)
+    .lt("contract_end_date", ribCutoff);
+
+  for (const client of endedClients ?? []) {
+    const budgets = (client.client_budgets ?? []) as unknown as { rib_storage_path: string | null }[];
+    const paths = budgets.map((b) => b.rib_storage_path).filter((path): path is string => Boolean(path));
+    if (paths.length === 0) continue;
+
+    // Les colonnes d'abord : si le retrait du fichier échoue, la référence ne
+    // survit pas à un fichier absent — l'inverse laisserait un lien mort.
+    const { error: ribError } = await admin
+      .from("client_budgets")
+      .update({
+        rib_storage_path: null,
+        rib_file_name: null,
+        rib_uploaded_at: null,
+        rib_uploaded_by: null,
+      })
+      .eq("client_id", client.id);
+
+    if (ribError) {
+      console.error("[entretien] RIB non purgé", client.id, ribError.message);
+      continue;
+    }
+
+    await admin.storage.from("media").remove(paths);
+    purgedRibs += paths.length;
   }
 
   // Chaque média, avec la publication qui le porte et la règle du client.
@@ -250,6 +307,7 @@ async function handle(request: NextRequest) {
     originauxPurges: purgedIds.length,
     apercusPurges: previewPurgedIds.length,
     fichesSupprimees: deletedSheets,
+    ribsPurges: purgedRibs,
     espaceLibere: formatBytes(freed),
   });
 }

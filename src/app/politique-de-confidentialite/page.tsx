@@ -101,6 +101,12 @@ export default function PolitiqueDeConfidentialitePage() {
             Les <strong>coordonnées de contact</strong> sont conservées pendant la durée de la
             relation contractuelle.
           </li>
+          <li>
+            Les <strong>coordonnées bancaires</strong>, lorsqu&apos;un prélèvement est mis en
+            place, sont conservées jusqu&apos;à la fin de la gestion, puis trente jours au-delà
+            afin de couvrir le dernier prélèvement et la facture de solde. Elles sont ensuite
+            supprimées automatiquement, fichier compris.
+          </li>
         </ul>
       </LegalSection>
 

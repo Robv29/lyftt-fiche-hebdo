@@ -28,7 +28,7 @@ plusieurs conclusions de cet audit, notamment celles marquées « À confirmer �
 | R-2 | Localisation d'hébergement de **Resend** | Transfert hors EEE éventuel (chap. V) |
 | R-3 | Registre des traitements existant, s'il y en a un | Art. 30 |
 | R-4 | ✅ **RÉSOLU 25/08 — la page n'existe pas** (404, et certificat TLS invalide sur le domaine). Une politique de confidentialité est désormais servie par l'application, vers laquelle le portail renvoie | — |
-| R-5 | Durées de conservation **voulues** (comptes, contacts, RIB, contenus) | Aucune n'est définie hors la purge à 14 j |
+| R-5 | ⚠️ **PARTIEL 25/08** — **RIB : fin de gestion + 30 j**, arrêté et purge automatisée. Restent à définir : comptes, contacts, contenus | Aucune autre n'est définie hors la purge à 14 j |
 | R-6 | Le contrat client prévoit-il la **validation tacite** ? | Sa validité juridique en dépend entièrement |
 | R-7 | Procédure existante de recueil du droit à l'image | Traitement T4, non encadré |
 | R-8 | Volumétrie réelle (nombre de clients, de contacts, de personnes sur les visuels) | Détermine l'obligation éventuelle d'AIPD |

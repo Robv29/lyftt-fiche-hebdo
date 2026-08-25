@@ -65,6 +65,25 @@ fournisseurs. **[IM]** Ce point n'est documenté nulle part dans le dépôt.
 > donnée bancaire conservée sans durée ni traçabilité d'accès définie. Une donnée bancaire
 > ne devrait être conservée que le temps strictement nécessaire au mandat de prélèvement,
 > et son accès journalisé.
+>
+> ### ✅ Durée arrêtée et appliquée le 25 août 2026
+>
+> **Conservation : jusqu'à la fin de la gestion, plus trente jours.** Le délai couvre le
+> dernier prélèvement et la facture de solde, qui tombent après la date de fin.
+>
+> La purge est **automatique**, greffée sur la tâche planifiée quotidienne
+> (`src/app/api/maintenance/purge-media/route.ts`) : colonnes remises à nul puis fichier
+> retiré du stockage. La durée est désormais annoncée aux personnes concernées dans la
+> politique de confidentialité — l'écart entre l'information donnée et la pratique réelle,
+> relevé au §3, est donc résorbé sur ce point.
+>
+> Un client **sans date de fin** est traité comme un client dont la gestion se poursuit :
+> son RIB n'est pas purgé. C'est le choix de l'éditeur, et la seule lecture cohérente d'un
+> champ vide.
+>
+> Vérifié en base au moment de la mise en place : aucun RIB n'était stocké, la purge ne
+> détruit donc rien de rétroactif ; 10 clients sans date de fin sont bien préservés par la
+> requête. **Reste ouverte** la journalisation des accès au RIB, non traitée.
 
 ### T3 — Validation client par lien public
 
