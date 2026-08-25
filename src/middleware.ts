@@ -101,6 +101,6 @@ export const config = {
      * authentification. Les y soumettre renvoyait une redirection 307 vers la
      * page de connexion, que le cron ne peut évidemment pas suivre.
      */
-    "/((?!client-review|demande|login|api|test-clic|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!client-review|demande|login|api|politique-de-confidentialite|mentions-legales|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

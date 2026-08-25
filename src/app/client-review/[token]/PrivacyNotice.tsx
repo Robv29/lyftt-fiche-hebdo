@@ -14,7 +14,7 @@ export function PrivacyNotice() {
         l&apos;adresse <a className="underline" href="mailto:contact@lyftt.fr">contact@lyftt.fr</a>.
       </p>
       <p className="mt-2">
-        <a className="underline" href="https://lyftt.fr/politique-de-confidentialite">
+        <a className="underline" href="/politique-de-confidentialite">
           Politique de confidentialité
         </a>
       </p>

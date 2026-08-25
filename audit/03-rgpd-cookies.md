@@ -1,5 +1,21 @@
 # Audit RGPD, vie privée et traceurs
 
+> ### ✅ Mise à jour du 25 août 2026 — information des personnes (art. 13)
+>
+> Le portail client renvoyait vers `https://lyftt.fr/politique-de-confidentialite`.
+> **Cette page n'existe pas** : le domaine répond 404 et présente en outre un certificat
+> TLS ne couvrant pas `lyftt.fr` (il pointe vers un mutualisé OVH). Les contacts clients
+> n'avaient donc accès à **aucune** information sur le traitement de leurs données —
+> manquement direct à l'art. 13.
+>
+> Une politique de confidentialité complète est désormais servie par l'application
+> (`/politique-de-confidentialite`) et `PrivacyNotice` y renvoie. Elle n'affirme que ce
+> qui est vérifiable dans le code : durées réellement appliquées, sous-traitants réels,
+> absence de traceur. **Elle ne comble pas** les points ci-dessous qui relèvent d'une
+> décision de l'entreprise : durées de conservation des comptes, des contacts et du
+> **RIB**, et base légale du **droit à l'image** (`T4`).
+
+
 > **Avertissement.** Cette analyse est une **aide à la conformité** fondée sur la lecture
 > du code, des migrations et de la configuration. Elle **ne constitue pas un avis
 > juridique** et doit être validée par un professionnel du droit avant mise en production

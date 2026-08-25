@@ -1,7 +1,12 @@
 # Plan de correction
 
-Corrections triées par priorité. Aucune n'a été appliquée : **l'audit s'arrête au constat,
-conformément à la consigne.** Les correctifs ci-dessous attendent votre accord explicite.
+Corrections triées par priorité.
+
+> **État au 25 août 2026 :** le **lot 1** et le **lot 2** sont appliqués et déployés
+> (`F-01` à `F-05`), à l'exception de `F-05` traité autrement que prévu — par `overrides`
+> de `postcss` et `sharp` plutôt que par une montée en Next 16, les CVE se trouvant dans
+> ces bibliothèques et non dans le framework. Les lots 3 et 4 restent ouverts, ainsi que
+> les mentions légales.
 
 Ordre d'exécution recommandé : lot 1 (critique) → lot 2 (élevé) → lot 3 (moyen) →
 lot 4 (conformité). Après chaque lot : `npm run typecheck`, `npm run lint`,

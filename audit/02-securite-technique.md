@@ -9,17 +9,17 @@ explicitement marqués **« À confirmer »**.
 | ID | Constat | Gravité | Confiance | Impact | Fichier / Flux | Correction | Priorité |
 |---|---|---:|---:|---|---|---|---:|
 | C-01 | ✅ **CORRIGÉ 24/08** — Auto-promotion au rôle `super_admin` | ~~Critique~~ | Vérifié | Compromission totale | `20260824190000_lock_profile_role.sql` | Appliquée | — |
-| H-01 | Falsification du statut d'un ticket (dont « validé client ») | Élevé | Confirmée | Preuve contractuelle corrompue | `20260803090200_rls.sql:171` | Restreindre transitions | 2 |
-| H-02 | 4 CVE hautes dans les dépendances (`sharp`, `postcss`) | Élevé | Confirmée | Lecture de fichiers / DoS | `package.json` | Montée Next.js | 3 |
-| H-03 | Limitation de débit en mémoire, inopérante en serverless | Élevé | Confirmée | Force brute du portail | `src/lib/security/rate-limit.ts:59` | Magasin partagé | 4 |
-| M-01 | `/api/diagnostic` public : fuite de configuration | Moyen | Confirmée | Reconnaissance | `src/app/api/diagnostic/route.ts` | Supprimer | 2 |
+| H-01 | ✅ **CORRIGÉ 25/08** — Falsification du statut d'un ticket | ~~Élevé~~ | Vérifié | Preuve contractuelle corrompue | `20260825090000_lock_ticket_transitions.sql` | Appliquée | — |
+| H-02 | ✅ **CORRIGÉ 25/08** — 4 CVE hautes (`sharp`, `postcss`) | ~~Élevé~~ | Vérifié | Lecture de fichiers / DoS | `package.json` | Overrides, sans Next 16 | — |
+| H-03 | ✅ **CORRIGÉ 25/08** — Limitation de débit inopérante en serverless | ~~Élevé~~ | Vérifié | Force brute du portail | `20260825100000_shared_rate_limit.sql` | Magasin en base | — |
+| M-01 | ✅ **CORRIGÉ 25/08** — `/api/diagnostic` public | ~~Moyen~~ | Vérifié | Reconnaissance | Route supprimée | Appliquée | — |
 | M-02 | Absence de CSP, HSTS et en-têtes globaux | Moyen | Confirmée | XSS non contenue | `next.config.ts:9` | Ajouter en-têtes | 5 |
 | M-03 | Session maintenue après désactivation du compte | Moyen | Confirmée | Accès résiduel | `src/middleware.ts:60` | Vérifier `is_active` | 6 |
 | M-04 | Mots de passe compromis autorisés, pas de MFA | Moyen | Confirmée | Prise de compte | Config Supabase Auth | Activer HIBP + MFA | 5 |
 | M-05 | Auto-affectation possible sur un ticket (RLS récursive) | Moyen | **À confirmer** | Contournement de cloisonnement | `20260803090200_rls.sql:178` | Restreindre écriture | 6 |
 | M-06 | Suppression planifiée irréversible des fiches (> 14 j) | Moyen | Confirmée (code) | Perte de données et de preuve | `purge-media/route.ts` | Sauvegarde + revue | 4 |
 | M-07 | `service_role` utilisé bien au-delà du périmètre documenté | Moyen | Confirmée | Risque d'erreur future | `src/lib/supabase/admin.ts` | Corriger doc + revue | 7 |
-| L-01 | Page `/test-clic` publique en production | Faible | Confirmée | Surface inutile | `src/app/test-clic/` | Supprimer | 3 |
+| L-01 | ✅ **CORRIGÉ 25/08** — Page `/test-clic` publique | ~~Faible~~ | Vérifié | Surface inutile | Page supprimée | Appliquée | — |
 | L-02 | Comparaison non constante du `CRON_SECRET` | Faible | Confirmée | Théorique | `purge-media/route.ts:47` | `timingSafeEqual` | 8 |
 | L-03 | Extension `citext` dans le schéma `public` | Faible | Confirmée | Défense en profondeur | Linter Supabase | Déplacer | 9 |
 | I-01 | Absence de protection de branche et de revue | Info | Confirmée | Qualité | Dépôt Git | Protéger `main` | 7 |
@@ -204,7 +204,20 @@ troisième établissent l'absence de régression — c'était le risque principa
 
 ## H-01 — Falsification du statut d'un ticket, y compris la validation client
 
-- **Gravité : Élevé** — **Confiance : confirmée** (mesurée en base)
+> ## ✅ CORRIGÉ le 25 août 2026
+>
+> Migration `supabase/migrations/20260825090000_lock_ticket_transitions.sql`, appliquée
+> en production. Un trigger interdit, **aux seules requêtes faites au nom d'un utilisateur
+> authentifié** (`auth.uid()` non nul), le changement de `client_id` ainsi que l'entrée
+> dans `approved_by_client` **comme la sortie** — retirer une validation acquise corrompt
+> la preuve autant que d'en fabriquer une.
+>
+> Aucun parcours applicatif n'est touché : toutes les écritures de statut passent par la
+> clé service-role (`createSupabaseAdminClient`), pour laquelle `auth.uid()` est nul.
+>
+> Le constat est conservé ci-dessous : il documente la cause racine.
+
+- **Gravité initiale : Élevé** — **Confiance : confirmée** (mesurée en base)
 - **Composant :** policy `client_tickets_update`
 
 ### Preuve
@@ -249,7 +262,26 @@ contributeur non éditorial via un trigger de transition, ou séparer la policy 
 
 ## H-02 — Dépendances vulnérables (4 CVE de gravité haute)
 
-- **Gravité : Élevé** — **Confiance : confirmée** (`npm audit --omit=dev`)
+> ## ✅ CORRIGÉ le 25 août 2026
+>
+> `npm audit --omit=dev` ne signale plus **aucune** vulnérabilité.
+>
+> Correctif retenu : `postcss` monté en 8.5.26 et `sharp` en 0.35.3 par `overrides`,
+> **sans passer à Next 16**. Les CVE sont dans ces deux bibliothèques, pas dans Next :
+> un saut majeur de framework aurait ajouté un risque de régression sans rien corriger
+> de plus. `npm run build` passe, `next/image` compris.
+>
+> **Réponse à la question B-8, restée ouverte à l'audit** — *un fichier déposé par un
+> client atteint-il `sharp` ?* **Non.** Aucun `remotePatterns` n'est configuré dans
+> `next.config.ts`, donc `next/image` ne peut optimiser aucune image distante ; et le
+> seul composant affichant un média client (`PublicationChecklist.tsx:133`) porte
+> l'attribut `unoptimized`. La gravité réelle de cette CVE pour ce projet était donc
+> faible — ce que l'audit ne pouvait pas trancher sans cette vérification.
+>
+> Restent 5 vulnérabilités en dépendances de **développement** (`vite`, `vitest`), non
+> déployées. Leur correctif impose une montée majeure de `vitest` : à traiter séparément.
+
+- **Gravité initiale : Élevé** — **Confiance : confirmée** (`npm audit --omit=dev`)
 
 ### Preuve
 
@@ -286,7 +318,26 @@ Montée de version de Next.js, avec recette de non-régression. Vérifier en par
 
 ## H-03 — Limitation de débit inopérante en production
 
-- **Gravité : Élevé** — **Confiance : confirmée** (code + modèle d'exécution Vercel)
+> ## ✅ CORRIGÉ le 25 août 2026
+>
+> Migration `20260825100000_shared_rate_limit.sql` + réécriture de
+> `src/lib/security/rate-limit.ts`. Le compteur vit désormais en base
+> (`consume_rate_limit`), partagé entre instances et persistant au recyclage.
+> L'atomicité vient d'un `insert … on conflict do update` sous verrou de ligne.
+>
+> `MemoryRateLimitStore` demeure pour les tests et le développement.
+> Deux tests ont été ajoutés (`tests/unit/security.test.ts`) : relais fidèle de la
+> décision de la base, et repli **passant** si la base est indisponible — sans base,
+> l'application ne peut de toute façon rien servir, et un repli bloquant fermerait le
+> portail aux clients légitimes pendant l'incident.
+>
+> **Un défaut a été trouvé et corrigé pendant la mise au point** : plafonner le compteur
+> à `limite` rendait « pile à la limite » et « au-delà » indistinguables, si bien que
+> plus rien n'était jamais refusé. Le plafond est à `limite + 1`. Vérifié en base :
+> 3 appels passants, puis refus avec `retry_after` — et compteurs bien indépendants
+> d'une clé à l'autre.
+
+- **Gravité initiale : Élevé** — **Confiance : confirmée** (code + modèle d'exécution Vercel)
 - **Composant :** `src/lib/security/rate-limit.ts:59` (`MemoryRateLimitStore`)
 
 ### Preuve
@@ -326,7 +377,11 @@ Remplacer le magasin par Upstash Redis ou une table Postgres. L'interface
 
 ## M-01 — Route de diagnostic publique
 
-- **Gravité : Moyen** — **Confiance : confirmée**
+> ## ✅ CORRIGÉ le 25 août 2026 — `src/app/api/diagnostic/` supprimée.
+> La page `/test-clic` (`L-01`) l'a été également, et `test-clic` retiré du `matcher`
+> de `src/middleware.ts`. Les deux portaient déjà la mention « temporaire ».
+
+- **Gravité initiale : Moyen** — **Confiance : confirmée**
 - **Composant :** `src/app/api/diagnostic/route.ts` (exclue du middleware, `force-dynamic`)
 
 Accessible sans authentification, elle divulgue : le marqueur de build déployé, la

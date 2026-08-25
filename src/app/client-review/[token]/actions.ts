@@ -113,7 +113,7 @@ export async function approveItem(
   });
   if (!parsed.success) return { ok: false, message: "Demande invalide." };
 
-  if (!rateLimit("approval", link.context.linkId).allowed) {
+  if (!(await rateLimit("approval", link.context.linkId)).allowed) {
     return { ok: false, message: "Trop d'actions successives. Réessayez dans un instant." };
   }
 
@@ -176,7 +176,7 @@ export async function approveAll(
   // Le client agit : la fiche est chez lui, quel que soit son marquage interne.
   await ensureSheetIsWithClient(link.context.sheetId);
 
-  if (!rateLimit("approval", link.context.linkId).allowed) {
+  if (!(await rateLimit("approval", link.context.linkId)).allowed) {
     return { ok: false, message: "Trop d'actions successives. Réessayez dans un instant." };
   }
 
@@ -293,7 +293,7 @@ export async function createTicket(
   // Le client agit : la fiche est chez lui, quel que soit son marquage interne.
   await ensureSheetIsWithClient(link.context.sheetId);
 
-  if (!rateLimit("ticketCreation", link.context.linkId).allowed) {
+  if (!(await rateLimit("ticketCreation", link.context.linkId)).allowed) {
     return {
       ok: false,
       message: "Trop de demandes envoyées coup sur coup. Réessayez dans quelques minutes.",
@@ -612,7 +612,7 @@ async function handleAttachment(
   const file = formData.get("attachment");
   if (!(file instanceof File) || file.size === 0) return;
 
-  if (!rateLimit("attachment", context.linkId).allowed) return;
+  if (!(await rateLimit("attachment", context.linkId)).allowed) return;
 
   const head = new Uint8Array(await file.slice(0, 12).arrayBuffer());
   const check = checkAttachment(
@@ -684,7 +684,7 @@ export async function createServiceRequest(
   const link = await requireLink(token);
   if (!link.ok) return link.result;
 
-  if (!rateLimit("ticketCreation", link.context.linkId).allowed) {
+  if (!(await rateLimit("ticketCreation", link.context.linkId)).allowed) {
     return { ok: false, message: "Trop de demandes successives. Réessayez dans un instant." };
   }
 
@@ -794,7 +794,7 @@ export async function rateSheet(token: string, formData: FormData): Promise<Acti
   const link = await requireLink(token);
   if (!link.ok) return link.result;
 
-  if (!rateLimit("approval", link.context.linkId).allowed) {
+  if (!(await rateLimit("approval", link.context.linkId)).allowed) {
     return { ok: false, message: "Trop d'actions successives. Réessayez dans un instant." };
   }
 

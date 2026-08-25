@@ -748,7 +748,12 @@ export function budgetSummary(input: BudgetInput): BudgetSummary {
 
   const alerts: BudgetAlert[] = [...ribAlerts];
 
-  if (!input.contractEndDate) {
+  /*
+   * En hybride, la gestion mensuelle est facturée à part et ne consomme pas
+   * l'enveloppe : celle-ci ne porte que du ponctuel, dont le rythme ne se
+   * déduit d'aucune date de fin. L'alerte n'aurait rien à signaler.
+   */
+  if (!input.contractEndDate && input.billingMode !== "hybride") {
     alerts.push({
       level: "critique",
       title: "Date de fin de gestion manquante",

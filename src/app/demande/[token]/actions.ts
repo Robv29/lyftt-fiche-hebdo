@@ -38,7 +38,7 @@ export async function submitClientRequest(
   const context = await resolveRequestLink(token);
   if (!context) return { ok: false, message: "Ce lien n'est plus valable. Contactez votre interlocuteur LYFTT." };
 
-  if (!rateLimit("ticketCreation", context.clientId).allowed) {
+  if (!(await rateLimit("ticketCreation", context.clientId)).allowed) {
     return { ok: false, message: "Trop de demandes successives. Réessayez dans un instant." };
   }
 

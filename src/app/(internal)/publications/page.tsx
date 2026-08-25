@@ -3,7 +3,6 @@ import { resolveMediaUrl } from "@/lib/media/signed-url";
 import { addDays, format, startOfISOWeek } from "date-fns";
 import { fr } from "date-fns/locale";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { ITEM_APPROVAL_STATUS_LABELS, MEDIA_FORMAT_LABELS, SOCIAL_NETWORK_LABELS, SOCIAL_NETWORKS, type ItemApprovalStatus, type MediaFormat, type SocialNetwork } from "@/lib/domain/types";
 import { PublicationChecklist, type DailyPublication } from "./PublicationChecklist";
 import { UnpublishedWeekPanel, type UnpublishedItem } from "./UnpublishedWeekPanel";
@@ -15,7 +14,6 @@ export default async function PublicationsPage({ searchParams }:{ searchParams:P
   const requested=(await searchParams).date; const date=/^\d{4}-\d{2}-\d{2}$/.test(requested??"") ? requested! : todayInParis();
   const supabase=await createSupabaseServerClient();
   const { data:rows }=await supabase.from("weekly_sheet_items").select(`id, scheduled_date, scheduled_time, format, networks, caption, hashtags, approval_status, published_at, media_downloaded_at, content_copied_at, collaboration_handle, collaboration_done_at, media_external_url, media_pending_note, published_networks, media_assets:media_asset_id ( kind, storage_path, file_name, preview_path, purged_at, preview_purged_at ), weekly_sheet_item_media ( position, media_assets ( kind, storage_path, file_name, preview_path, purged_at, preview_purged_at ) ), weekly_sheets!inner ( clients ( name, notes ) )`).eq("scheduled_date",date).eq("is_cancelled",false).order("scheduled_date",{ascending:true}).order("scheduled_time",{ascending:true});
-  const admin=createSupabaseAdminClient();
   const items:DailyPublication[]=await Promise.all((rows??[]).map(async(row)=>{
     const sheet=row.weekly_sheets as unknown as { clients:{name:string;notes:string|null}|null }|null;
     /*

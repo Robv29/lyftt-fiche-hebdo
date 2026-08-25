@@ -629,3 +629,17 @@ tbody tr { transition:background-color var(--motion-fast) var(--ease-out); }
   .card,.content-card,.field,.btn-secondary { border-color:#5f6978; }
   .text-ink-faint,.text-ink-soft { color:#394456!important; }
 }
+
+/*
+ * Pages légales publiques : la prose y est du texte suivi, pas des composants.
+ * Quelques règles suffisent — inutile d'embarquer un plugin de typographie
+ * pour trois pages.
+ */
+.legal-prose ul {
+  list-style: disc;
+  padding-left: 1.25rem;
+}
+
+.legal-prose li + li {
+  margin-top: 0.5rem;
+}

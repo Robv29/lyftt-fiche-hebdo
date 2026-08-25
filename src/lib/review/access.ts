@@ -120,12 +120,12 @@ export type ResolveResult =
 export async function resolveReviewLink(token: string): Promise<ResolveResult> {
   const { ipHash } = await callerFingerprint();
 
-  if (!rateLimit("linkAccess", ipHash).allowed) {
+  if (!(await rateLimit("linkAccess", ipHash)).allowed) {
     return { ok: false, reason: "rate_limited" };
   }
 
   if (!isWellFormedToken(token)) {
-    rateLimit("invalidToken", ipHash);
+    await rateLimit("invalidToken", ipHash);
     return { ok: false, reason: "malformed" };
   }
 
@@ -148,7 +148,7 @@ export async function resolveReviewLink(token: string): Promise<ResolveResult> {
   );
 
   if (!validation.valid || !link) {
-    if (!link) rateLimit("invalidToken", ipHash);
+    if (!link) await rateLimit("invalidToken", ipHash);
     if (link) await logReviewEvent(link.id, "access_denied", { reason: validation.reason });
     return { ok: false, reason: validation.reason ?? "not_found" };
   }

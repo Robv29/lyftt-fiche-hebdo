@@ -14,9 +14,36 @@ non destructives de l'état réel en base (`information_schema`, `pg_policies`, 
 
 ---
 
-## Niveau de risque global : **MOYEN** (initialement ÉLEVÉ)
+## Niveau de risque global : **FAIBLE À MOYEN** (initialement ÉLEVÉ)
 
-## Décision recommandée : **lancement sous conditions**
+## Décision recommandée : **lancement**, le volet juridique restant à compléter
+
+> ### ✅ Mise à jour du 25 août 2026 — `H-01`, `H-02`, `H-03`, `M-01`, `L-01` sont **CORRIGÉS**
+>
+> Second lot appliqué et déployé. Détail en `02-securite-technique.md` :
+>
+> - **`H-01`** — un trigger interdit désormais aux utilisateurs authentifiés de changer
+>   le `client_id` d'un ticket ou de poser/retirer `approved_by_client`. La preuve de
+>   validation contractuelle ne peut plus être fabriquée ni effacée.
+> - **`H-02`** — `npm audit --omit=dev` ne signale plus **aucune** vulnérabilité.
+>   Traité par `overrides` (`postcss` 8.5.26, `sharp` 0.35.3) **sans passer à Next 16** :
+>   les CVE étaient dans ces bibliothèques, pas dans le framework.
+> - **`H-03`** — le compteur de limitation de débit vit en base, partagé entre instances.
+>   Un défaut de plafonnement, trouvé en cours de mise au point, aurait rendu la limite
+>   inopérante : corrigé et vérifié en base.
+> - **`M-01` / `L-01`** — `/api/diagnostic` et `/test-clic` supprimées.
+> - **RGPD** — le portail client renvoyait vers `lyftt.fr/politique-de-confidentialite`,
+>   **qui répond 404** (le domaine présente en outre un certificat TLS invalide) : les
+>   clients n'avaient accès à **aucune** information sur le traitement de leurs données.
+>   Une politique de confidentialité complète est désormais servie par l'application
+>   elle-même, et le portail y renvoie.
+>
+> 343 tests passants, `tsc --noEmit` et `eslint` sans erreur, `npm run build` réussi.
+>
+> **Ce qui reste :** les **mentions légales** (page rédigée mais incomplète, non liée —
+> elle attend les informations d'identification de l'éditeur), le **droit à l'image**
+> (`T4`), les **durées de conservation** à arrêter (notamment le **RIB**), et les
+> constats `M-02` à `M-07`.
 
 > ### ✅ Mise à jour du 24 août 2026 — `C-01` est **CORRIGÉ**
 >
@@ -32,7 +59,6 @@ non destructives de l'état réel en base (`information_schema`, `pg_policies`, 
 > - 340 tests passants, `tsc --noEmit` sans erreur, données inchangées.
 >
 > **Le blocage sur la création de nouveaux comptes d'équipe est levé.**
-> Les constats `H-01` à `H-03` restent ouverts et conditionnent la suite.
 
 La correction s'est révélée simple, comme anticipé : il ne s'agissait pas de remettre
 en cause l'architecture.

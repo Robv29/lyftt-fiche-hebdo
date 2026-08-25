@@ -131,6 +131,20 @@ describe("synthèse budgétaire", () => {
     expect(summary.monthsRemaining).toBe(0);
   });
 
+  /*
+   * En hybride la gestion mensuelle est facturée à part : l'enveloppe ne porte
+   * que du ponctuel, dont le rythme ne dépend d'aucune date de fin. L'alerte
+   * n'aurait rien à signaler — elle ne doit donc pas se déclencher.
+   */
+  it("ne réclame pas de date de fin à un client hybride", () => {
+    const summary = budgetSummary({ ...base, billingMode: "hybride", contractEndDate: null });
+    expect(summary.alerts.some((a) => a.title.includes("Date de fin"))).toBe(false);
+
+    // Le financement, lui, continue de la réclamer.
+    const finance = budgetSummary({ ...base, billingMode: "financement", contractEndDate: null });
+    expect(finance.alerts.some((a) => a.title.includes("Date de fin"))).toBe(true);
+  });
+
   it("alerte quand le budget n'est pas renseigné", () => {
     const summary = budgetSummary({ ...base, annualBudgetCents: 0 });
     expect(summary.alerts.some((a) => a.title === "Budget non renseigné")).toBe(true);

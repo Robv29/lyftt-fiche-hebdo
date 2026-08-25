@@ -16,7 +16,7 @@ plusieurs conclusions de cet audit, notamment celles marquées « À confirmer �
 | B-5 | Vercel Analytics / Speed Insights activés dans le tableau de bord ? | Activables **sans modification du code** ; changeraient la conclusion « aucun traceur » | `03-rgpd-cookies.md` §4 |
 | B-6 | Réglages Supabase Auth : complexité des mots de passe, limitation des tentatives, durée des jetons | Non lisibles depuis le dépôt | `M-04` |
 | B-7 | Qui détient l'accès au tableau de bord Supabase et Vercel ? MFA activée sur ces comptes ? | Un accès console contourne toutes les protections applicatives | Risque équivalent à `C-01` |
-| B-8 | `next/image` est-il utilisé sur des sources distantes non fiables ? | Détermine si un fichier client atteint `sharp` | Gravité réelle de `H-02` |
+| B-8 | ✅ **RÉSOLU 25/08 — non.** Aucun `remotePatterns` dans `next.config.ts`, et le seul média client affiché porte `unoptimized`. Aucun fichier client n'atteint `sharp` | — | Gravité réelle de `H-02` : faible |
 
 ---
 
@@ -27,7 +27,7 @@ plusieurs conclusions de cet audit, notamment celles marquées « À confirmer �
 | R-1 | DPA signés avec **Vercel**, **Supabase**, **Resend** | Art. 28.3 — obligatoire |
 | R-2 | Localisation d'hébergement de **Resend** | Transfert hors EEE éventuel (chap. V) |
 | R-3 | Registre des traitements existant, s'il y en a un | Art. 30 |
-| R-4 | Contenu réel de `lyftt.fr/politique-de-confidentialite` | Le portail y renvoie ; contenu non vérifiable depuis le dépôt |
+| R-4 | ✅ **RÉSOLU 25/08 — la page n'existe pas** (404, et certificat TLS invalide sur le domaine). Une politique de confidentialité est désormais servie par l'application, vers laquelle le portail renvoie | — |
 | R-5 | Durées de conservation **voulues** (comptes, contacts, RIB, contenus) | Aucune n'est définie hors la purge à 14 j |
 | R-6 | Le contrat client prévoit-il la **validation tacite** ? | Sa validité juridique en dépend entièrement |
 | R-7 | Procédure existante de recueil du droit à l'image | Traitement T4, non encadré |

@@ -1,9 +1,14 @@
 /**
  * §19 — Limitation des tentatives sur le portail client.
  *
- * Implémentation en mémoire, suffisante pour un déploiement mono-instance.
- * Sur plusieurs instances, remplacer le magasin par Redis en gardant la même
- * interface `RateLimitStore`.
+ * Le compteur vit en base (`consume_rate_limit`), et non dans la mémoire du
+ * processus : sur Vercel chaque fonction serverless est une instance distincte,
+ * recyclée sans préavis, si bien qu'un compteur en mémoire est cloisonné par
+ * instance et repart de zéro à froid — la limite annoncée n'était alors qu'une
+ * limite *par instance* (H-03).
+ *
+ * `MemoryRateLimitStore` reste l'implémentation de repli : tests unitaires et
+ * développement sans clé service-role.
  */
 
 export interface RateLimitRule {
@@ -42,14 +47,14 @@ interface Bucket {
 }
 
 export interface RateLimitStore {
-  consume(key: string, rule: RateLimitRule, now: number): RateLimitResult;
+  consume(key: string, rule: RateLimitRule, now: number): Promise<RateLimitResult>;
 }
 
 export class MemoryRateLimitStore implements RateLimitStore {
   private readonly buckets = new Map<string, Bucket>();
   private lastSweep = 0;
 
-  consume(key: string, rule: RateLimitRule, now: number = Date.now()): RateLimitResult {
+  async consume(key: string, rule: RateLimitRule, now: number = Date.now()): Promise<RateLimitResult> {
     this.sweep(now);
 
     const bucket = this.buckets.get(key);
@@ -91,17 +96,83 @@ export class MemoryRateLimitStore implements RateLimitStore {
   }
 }
 
-const globalStore = new MemoryRateLimitStore();
+type RpcRow = {
+  allowed: boolean;
+  remaining: number;
+  reset_at: string;
+  retry_after_seconds: number;
+};
 
-export function rateLimit(
+/**
+ * Compteur partagé, porté par `public.consume_rate_limit`.
+ *
+ * L'atomicité est garantie côté base par `insert … on conflict do update`,
+ * qui s'exécute sous verrou de ligne : deux instances concurrentes ne peuvent
+ * pas s'écraser mutuellement.
+ */
+export class SupabaseRateLimitStore implements RateLimitStore {
+  constructor(private readonly createClient: () => { rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: unknown }> }) {}
+
+  async consume(key: string, rule: RateLimitRule, now: number = Date.now()): Promise<RateLimitResult> {
+    const { data, error } = await this.createClient().rpc("consume_rate_limit", {
+      p_key: key,
+      p_limit: rule.limit,
+      p_window_ms: rule.windowMs,
+    });
+
+    if (error || !Array.isArray(data) || data.length === 0) {
+      /*
+       * Repli passant, et non bloquant : sans base, l'application ne peut de
+       * toute façon ni résoudre un lien ni lire une fiche — il n'y a plus rien
+       * à protéger, alors qu'un repli bloquant fermerait le portail aux
+       * clients légitimes le temps de l'incident. L'erreur est journalisée
+       * pour que la panne reste visible.
+       */
+      console.error("[rate-limit] compteur partagé indisponible, repli passant", error);
+      return { allowed: true, remaining: rule.limit, resetAt: now + rule.windowMs, retryAfterSeconds: 0 };
+    }
+
+    const row = data[0] as RpcRow;
+    return {
+      allowed: row.allowed,
+      remaining: row.remaining,
+      resetAt: new Date(row.reset_at).getTime(),
+      retryAfterSeconds: row.retry_after_seconds,
+    };
+  }
+}
+
+const memoryStore = new MemoryRateLimitStore();
+let defaultStore: RateLimitStore | null = null;
+
+/*
+ * `@/lib/supabase/admin` est marqué `server-only` : il est chargé
+ * dynamiquement, pour que ce module reste importable par les tests unitaires.
+ */
+async function resolveStore(): Promise<RateLimitStore> {
+  if (defaultStore) return defaultStore;
+
+  if (process.env.NODE_ENV === "test" || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    defaultStore = memoryStore;
+    return defaultStore;
+  }
+
+  const { createSupabaseAdminClient } = await import("@/lib/supabase/admin");
+  defaultStore = new SupabaseRateLimitStore(createSupabaseAdminClient);
+  return defaultStore;
+}
+
+export async function rateLimit(
   name: RateLimitName,
   identifier: string,
-  store: RateLimitStore = globalStore,
+  store?: RateLimitStore,
   now: number = Date.now(),
-): RateLimitResult {
-  return store.consume(`${name}:${identifier}`, RATE_LIMITS[name], now);
+): Promise<RateLimitResult> {
+  const resolved = store ?? (await resolveStore());
+  return resolved.consume(`${name}:${identifier}`, RATE_LIMITS[name], now);
 }
 
 export function resetRateLimits(): void {
-  globalStore.reset();
+  memoryStore.reset();
+  defaultStore = null;
 }
