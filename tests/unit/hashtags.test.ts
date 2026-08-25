@@ -46,16 +46,23 @@ describe("bibliothèque de hashtags LYFTT", () => {
 });
 
 describe("hashtags de métier", () => {
-  it("ne porte aucun nom de ville", () => {
+  it("ne porte aucun nom propre géographique", () => {
     /*
-     * Ces listes servent des clients répartis sur des communes différentes :
-     * un hashtag de ville y serait faux pour la plupart d'entre eux.
+     * Ces listes servent des clients répartis sur des territoires différents :
+     * un hashtag de lieu y serait faux pour la plupart d'entre eux.
+     *
+     * La règle a longtemps été vérifiée pour les seules **villes**, ce qui a
+     * laissé passer « #Occitanie » et « #DestinationOccitanie » dans les treize
+     * typologies. Elle couvre désormais les communes, les départements, les
+     * régions et les cours d'eau.
      */
-    // Le nom doit former un mot entier : « Agencement » n'est pas « Agen ».
-    const villes = /(Toulouse|Montauban|Castres|Albi|Agen|Paris|Bordeaux)(?![a-z])/;
+    // Le nom doit former un mot entier : « Agencement » n'est pas « Agen »,
+    // et « Lotissement » n'est pas « Lot ».
+    const lieux =
+      /(Toulouse|Montauban|Castres|Albi|Agen|Paris|Bordeaux|Occitanie|Aquitaine|Bretagne|Provence|Garonne|Tarn|Ariege|Aveyron|Gers|Herault|Lot|Aude|Gard|Lozere|Pyrenees|Dordogne|Ariège)(?![a-z])/i;
     for (const type of LYFTT_CLIENT_TYPE_IDS) {
       for (const hashtag of hashtagsForClientType(type)) {
-        expect(hashtag, `${type} : ${hashtag}`).not.toMatch(villes);
+        expect(hashtag, `${type} : ${hashtag}`).not.toMatch(lieux);
       }
     }
   });
