@@ -12,6 +12,7 @@ import {
   PUBLICATION_TYPE_LABELS,
   SOCIAL_NETWORK_LABELS,
 } from "@/lib/domain/types";
+import { Portal } from "@/components/Portal";
 
 /** §5 — Consultation de la fiche, validation et demandes de modification. */
 export function ReviewBoard({ token, sheet }: { token: string; sheet: ReviewSheet }) {
@@ -145,89 +146,91 @@ export function ReviewBoard({ token, sheet }: { token: string; sheet: ReviewShee
         que des 4 et des 5, dont on n'apprend rien.
       */}
       {askRating && (
-        <div className="fixed inset-0 z-50 grid place-items-center p-4" role="presentation">
-          <button
-            type="button"
-            className="absolute inset-0 cursor-default bg-[#123f73]/45 backdrop-blur-[2px]"
-            aria-label="Fermer"
-            onClick={() => setAskRating(false)}
-          />
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="rating-title"
-            className="relative w-full max-w-md rounded-[24px] bg-white p-6 shadow-[0_24px_70px_rgba(17,63,115,.28)]"
-          >
-            {thanked ? (
-              <div className="text-center">
-                <span className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-state-approved/10 text-2xl text-state-approved" aria-hidden="true">
-                  ✓
-                </span>
-                <h2 className="mt-4 font-semibold">Merci pour votre retour</h2>
-                <p className="mt-1 text-sm text-ink-soft">Il nous aide à préparer la semaine prochaine.</p>
-                <button type="button" className="btn-primary mt-5 w-full" onClick={() => setAskRating(false)}>
-                  Fermer
-                </button>
-              </div>
-            ) : (
-              <>
-                <h2 id="rating-title" className="text-lg font-semibold">Vos publications vous ont-elles plu ?</h2>
-                <p className="mt-1 text-sm text-ink-soft">
-                  Une réponse en un geste, pour ajuster la semaine prochaine.
-                </p>
-
-                <div className="mt-5 grid gap-2 sm:grid-cols-3">
-                  {[1, 2, 3].map((value) => (
-                    <button
-                      key={value}
-                      type="button"
-                      className={`choice-chip justify-center ${score === value ? "border-[#1468ff] bg-[#f0f6ff] font-semibold" : ""}`}
-                      onClick={() => setScore(value)}
-                    >
-                      {SATISFACTION_LABELS[value]}
-                    </button>
-                  ))}
+        <Portal>
+          <div className="fixed inset-0 z-50 grid place-items-center p-4" role="presentation">
+            <button
+              type="button"
+              className="absolute inset-0 cursor-default bg-[#123f73]/45 backdrop-blur-[2px]"
+              aria-label="Fermer"
+              onClick={() => setAskRating(false)}
+            />
+            <section
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="rating-title"
+              className="relative w-full max-w-md rounded-[24px] bg-white p-6 shadow-[0_24px_70px_rgba(17,63,115,.28)]"
+            >
+              {thanked ? (
+                <div className="text-center">
+                  <span className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-state-approved/10 text-2xl text-state-approved" aria-hidden="true">
+                    ✓
+                  </span>
+                  <h2 className="mt-4 font-semibold">Merci pour votre retour</h2>
+                  <p className="mt-1 text-sm text-ink-soft">Il nous aide à préparer la semaine prochaine.</p>
+                  <button type="button" className="btn-primary mt-5 w-full" onClick={() => setAskRating(false)}>
+                    Fermer
+                  </button>
                 </div>
+              ) : (
+                <>
+                  <h2 id="rating-title" className="text-lg font-semibold">Vos publications vous ont-elles plu ?</h2>
+                  <p className="mt-1 text-sm text-ink-soft">
+                    Une réponse en un geste, pour ajuster la semaine prochaine.
+                  </p>
 
-                {/* Le commentaire n'est demandé que si quelque chose a manqué. */}
-                {score !== null && score < 3 && (
-                  <div className="mt-4">
-                    <label className="label" htmlFor="rating-comment">Qu&apos;est-ce qui a manqué ?</label>
-                    <textarea
-                      id="rating-comment"
-                      name="comment"
-                      rows={3}
-                      maxLength={1000}
-                      className="field"
-                      placeholder="Ce qui vous a gêné, en une phrase suffit."
-                    />
+                  <div className="mt-5 grid gap-2 sm:grid-cols-3">
+                    {[1, 2, 3].map((value) => (
+                      <button
+                        key={value}
+                        type="button"
+                        className={`choice-chip justify-center ${score === value ? "border-[#1468ff] bg-[#f0f6ff] font-semibold" : ""}`}
+                        onClick={() => setScore(value)}
+                      >
+                        {SATISFACTION_LABELS[value]}
+                      </button>
+                    ))}
                   </div>
-                )}
 
-                <div className="mt-5 grid gap-2 sm:grid-cols-2">
-                  <button type="button" className="btn-secondary" onClick={() => setAskRating(false)}>
-                    Plus tard
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-primary"
-                    disabled={pending || score === null}
-                    onClick={() => {
-                      if (score === null) return;
-                      const formData = new FormData();
-                      formData.set("score", String(score));
-                      const comment = document.querySelector<HTMLTextAreaElement>("#rating-comment")?.value;
-                      if (comment) formData.set("comment", comment);
-                      run(() => rateSheet(token, formData), undefined, () => setThanked(true));
-                    }}
-                  >
-                    {pending ? "Envoi…" : "Envoyer"}
-                  </button>
-                </div>
-              </>
-            )}
-          </section>
-        </div>
+                  {/* Le commentaire n'est demandé que si quelque chose a manqué. */}
+                  {score !== null && score < 3 && (
+                    <div className="mt-4">
+                      <label className="label" htmlFor="rating-comment">Qu&apos;est-ce qui a manqué ?</label>
+                      <textarea
+                        id="rating-comment"
+                        name="comment"
+                        rows={3}
+                        maxLength={1000}
+                        className="field"
+                        placeholder="Ce qui vous a gêné, en une phrase suffit."
+                      />
+                    </div>
+                  )}
+
+                  <div className="mt-5 grid gap-2 sm:grid-cols-2">
+                    <button type="button" className="btn-secondary" onClick={() => setAskRating(false)}>
+                      Plus tard
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      disabled={pending || score === null}
+                      onClick={() => {
+                        if (score === null) return;
+                        const formData = new FormData();
+                        formData.set("score", String(score));
+                        const comment = document.querySelector<HTMLTextAreaElement>("#rating-comment")?.value;
+                        if (comment) formData.set("comment", comment);
+                        run(() => rateSheet(token, formData), undefined, () => setThanked(true));
+                      }}
+                    >
+                      {pending ? "Envoi…" : "Envoyer"}
+                    </button>
+                  </div>
+                </>
+              )}
+            </section>
+          </div>
+        </Portal>
       )}
     </section>
   );
