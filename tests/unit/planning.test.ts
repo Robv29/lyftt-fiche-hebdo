@@ -10,6 +10,7 @@ import {
   publicationDatesForWeek,
   normalizeWeekdays,
 } from "../../src/lib/domain/planning";
+import { planningHrefForBucket } from "../../src/app/(internal)/fiches/planning-tab";
 
 describe("planning hebdomadaire", () => {
   const now = new Date("2026-08-04T10:00:00Z");
@@ -201,5 +202,35 @@ describe("satisfaction client", () => {
     });
     // Sans fiche validée, le taux de réponse n'a pas de dénominateur.
     expect(satisfactionSummary({ scores: [], eligible: 0 }).responseRate).toBeNull();
+  });
+});
+
+/*
+ * Retour depuis une fiche vers le planning.
+ *
+ * Le lien pointait sur `/fiches` en dur : revenir d'une fiche ouverte depuis
+ * « Semaine prochaine » rebasculait sur « Cette semaine ». Ces cas verrouillent
+ * le comportement attendu, y compris pour les périodes sans onglet propre.
+ */
+describe("onglet de retour au planning", () => {
+  it("renvoie sur l'onglet de la période de la fiche", () => {
+    expect(planningHrefForBucket("next")).toBe("/fiches?tab=next");
+    expect(planningHrefForBucket("past")).toBe("/fiches?tab=past");
+  });
+
+  it("ne nomme pas l'onglet par défaut dans l'URL", () => {
+    expect(planningHrefForBucket("current")).toBe("/fiches");
+  });
+
+  it("rabat une période lointaine sur la semaine prochaine, faute d'onglet à elle", () => {
+    expect(planningHrefForBucket("later")).toBe("/fiches?tab=next");
+  });
+
+  it("s'accorde avec la période calculée pour une fiche", () => {
+    const lundiProchain = "2026-08-31";
+    const dimancheProchain = "2026-09-06";
+    const bucket = planningBucketForPeriod(lundiProchain, dimancheProchain, new Date("2026-08-26T12:00:00Z"));
+    expect(bucket).toBe("next");
+    expect(planningHrefForBucket(bucket)).toBe("/fiches?tab=next");
   });
 });

@@ -15,7 +15,8 @@ import {
 import { DEFAULT_TEMPLATES } from "@/lib/domain/templates";
 import { SendPanel } from "./SendPanel";
 import { SheetContentEditor } from "./SheetContentEditor";
-import { sheetCompletion } from "@/lib/domain/planning";
+import { planningBucketForPeriod, sheetCompletion } from "@/lib/domain/planning";
+import { planningHrefForBucket } from "../planning-tab";
 import { resolveMediaUrl } from "@/lib/media/signed-url";
 import { resolveClientLogoUrl } from "@/lib/media/client-logo";
 import { canEditSheetContent, editRequiresRevalidation } from "@/lib/domain/sheet-status";
@@ -190,10 +191,15 @@ export default async function SheetDetailPage({
     isCancelled: item.is_cancelled,
   })));
 
+  // Retour sur l'onglet de la période de la fiche, et non « Cette semaine ».
+  const backHref = planningHrefForBucket(
+    planningBucketForPeriod(sheet.period_start, sheet.period_end),
+  );
+
   return (
     <div className="space-y-6">
       <div>
-        <Link href="/fiches" className="text-sm text-ink-soft hover:text-ink">
+        <Link href={backHref} className="text-sm text-ink-soft hover:text-ink">
           ← Fiches
         </Link>
         <div className="mt-2 flex min-w-0 items-center gap-3">
