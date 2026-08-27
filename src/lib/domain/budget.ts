@@ -875,12 +875,27 @@ export function budgetSummary(input: BudgetInput): BudgetSummary {
   };
 }
 
+/**
+ * Montant en euros, centimes affichés seulement s'il y en a.
+ *
+ * L'arrondi à l'euro rendait les centimes invisibles partout : une prestation
+ * saisie à 249,90 € était bien enregistrée au centime, mais s'affichait
+ * « 250 € » — au point de faire croire que le champ les refusait. Un total de
+ * plusieurs lignes pouvait dériver de quelques euros sans que rien ne
+ * l'explique à l'écran.
+ *
+ * Les montants ronds — l'immense majorité de la carte — gardent leur écriture
+ * courte : « 350 € », pas « 350,00 € ».
+ */
 export function formatEuros(cents: number): string {
+  const rounded = Math.round(cents);
+  const whole = rounded % 100 === 0;
   return new Intl.NumberFormat("fr-FR", {
     style: "currency",
     currency: "EUR",
-    maximumFractionDigits: 0,
-  }).format(Math.round(cents) / 100);
+    minimumFractionDigits: whole ? 0 : 2,
+    maximumFractionDigits: whole ? 0 : 2,
+  }).format(rounded / 100);
 }
 
 function formatDay(date: string): string {

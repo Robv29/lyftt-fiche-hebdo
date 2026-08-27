@@ -15,6 +15,7 @@ import {
   findService,
   isShootingLine,
   envelopeLines,
+  formatEuros,
   lineTotalCents,
   isCustomService,
   CUSTOM_SERVICE_KEY,
@@ -887,5 +888,42 @@ describe("prorata du premier mois de gestion", () => {
     // Puis septembre en entier, daté du 1er.
     expect(months[1]!.dueOn).toBe("2026-09-01");
     expect(months[1]!.amountCents).toBe(30_000);
+  });
+});
+
+/*
+ * Affichage des montants.
+ *
+ * Les centimes étaient arrondis à l'euro partout : une prestation saisie à
+ * 249,90 € s'affichait « 250 € », au point de faire croire que le champ les
+ * refusait alors qu'ils étaient bien enregistrés.
+ */
+describe("écriture des montants", () => {
+  it("montre les centimes quand il y en a", () => {
+    expect(formatEuros(24_990)).toContain("249,90");
+  });
+
+  it("garde l'écriture courte pour un montant rond", () => {
+    // La carte est presque entièrement en montants ronds : « 350,00 € »
+    // partout alourdirait chaque écran pour rien.
+    expect(formatEuros(35_000)).not.toContain(",");
+    expect(formatEuros(35_000)).toContain("350");
+  });
+
+  it("n'invente pas de centimes sur un total rond", () => {
+    expect(formatEuros(lineTotalCents({
+      id: "1", serviceKey: CUSTOM_SERVICE_KEY, label: "Ponctuel",
+      billing: "ponctuel", unitPriceCents: 12_500, quantity: 4, months: null,
+      performedOn: "2026-08-27",
+    }))).not.toContain(",");
+  });
+
+  it("propage les centimes dans un total", () => {
+    // 249,90 € trois fois : 749,70 €, et non 750 €.
+    expect(formatEuros(lineTotalCents({
+      id: "1", serviceKey: CUSTOM_SERVICE_KEY, label: "Ponctuel",
+      billing: "ponctuel", unitPriceCents: 24_990, quantity: 3, months: null,
+      performedOn: "2026-08-27",
+    }))).toContain("749,70");
   });
 });
