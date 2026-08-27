@@ -7,6 +7,7 @@ import {
   BILLING_MODE_LABELS,
   CATEGORY_LABELS,
   SERVICE_CATALOGUE,
+  isCustomService,
   classifyShootings,
   findService,
   formatEuros,
@@ -35,7 +36,7 @@ import { addBudgetLine, deleteMonthInvoice, removeBudgetLine, removeClientRib, s
 
 type EditorLine = BudgetLine & { note: string | null; forfaitIncluded: boolean | null };
 
-const CATEGORY_ORDER: ServiceDefinition["category"][] = ["entree", "plat", "dessert"];
+const CATEGORY_ORDER: ServiceDefinition["category"][] = ["entree", "plat", "dessert", "sur_mesure"];
 
 /** Jour et mois, pour situer une période sans alourdir la phrase. */
 function formatShortFr(date: string): string {
@@ -91,6 +92,7 @@ export function BudgetEditor({
   const [serviceKey, setServiceKey] = useState<string>(SERVICE_CATALOGUE[0]!.key);
 
   const service = SERVICE_CATALOGUE.find((item) => item.key === serviceKey)!;
+  const custom = isCustomService(serviceKey);
   // Une enveloppe existe dès qu'une part est financée.
   const financed = mode !== "comptant";
   const hybrid = mode === "hybride";
@@ -327,7 +329,10 @@ export function BudgetEditor({
                     <optgroup key={category} label={CATEGORY_LABELS[category]}>
                       {SERVICE_CATALOGUE.filter((item) => item.category === category).map((item) => (
                         <option key={item.key} value={item.key}>
-                          {item.label} — {formatEuros(item.unitPriceCents)} {item.unitLabel}
+                          {/* La prestation libre n'a pas de tarif : afficher « 0 € » ferait croire qu'elle est offerte. */}
+                          {isCustomService(item.key)
+                            ? `${item.label} — prix libre`
+                            : `${item.label} — ${formatEuros(item.unitPriceCents)} ${item.unitLabel}`}
                         </option>
                       ))}
                     </optgroup>
@@ -336,11 +341,66 @@ export function BudgetEditor({
                 <p className="mt-1 text-xs text-ink-faint">{service.description}</p>
               </div>
 
+              {/*
+                Prestation libre : ces deux champs remplacent ce que le
+                catalogue fournit d'ordinaire. Ils n'apparaissent que pour elle,
+                pour ne pas laisser croire qu'on peut retarifer la carte.
+              */}
+              {custom && (
+                <>
+                  <div className="sm:col-span-2">
+                    <label className="label" htmlFor="customLabel">Description de la prestation</label>
+                    <input
+                      id="customLabel"
+                      name="customLabel"
+                      maxLength={120}
+                      required
+                      className="field"
+                      placeholder="Captation d’un événement, refonte d’un visuel…"
+                    />
+                    <p className="mt-1 text-xs text-ink-faint">
+                      C’est ce libellé qui figurera sur l’addition du client : écrivez-le pour être
+                      relu dans six mois.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="label" htmlFor="customPriceEuros">Prix unitaire (€ HT)</label>
+                    <input
+                      id="customPriceEuros"
+                      name="customPriceEuros"
+                      type="number"
+                      min="0"
+                      step="1"
+                      required
+                      className="field"
+                      placeholder="250"
+                    />
+                  </div>
+                </>
+              )}
+
               <div>
                 <label className="label" htmlFor="quantity">
-                  Quantité <span className="font-normal text-ink-faint">({service.unitLabel})</span>
+                  {custom ? "Fréquence sur l’année" : "Quantité"}{" "}
+                  <span className="font-normal text-ink-faint">({service.unitLabel})</span>
                 </label>
-                <input id="quantity" name="quantity" type="number" min="0.5" step="0.5" defaultValue="1" required className="field"/>
+                <input
+                  id="quantity"
+                  name="quantity"
+                  type="number"
+                  min={custom ? 1 : 0.5}
+                  step={custom ? 1 : 0.5}
+                  defaultValue="1"
+                  required
+                  className="field"
+                />
+                {custom && (
+                  <p className="mt-1 text-xs text-ink-faint">
+                    Nombre de fois dans l’année. Le total de la ligne est le prix multiplié par
+                    cette fréquence.
+                  </p>
+                )}
               </div>
 
               {service.billing === "mensuel" ? (

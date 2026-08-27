@@ -16,6 +16,8 @@ import {
   isShootingLine,
   envelopeLines,
   lineTotalCents,
+  isCustomService,
+  CUSTOM_SERVICE_KEY,
   isManagementMonth,
   MANAGEMENT_MONTH_KEY,
   monthsBetween,
@@ -762,5 +764,57 @@ describe("RIB manquant", () => {
   it("se taît dès que le RIB est déposé, et reste muet si l'on n'en sait rien", () => {
     expect(budgetSummary({ ...base, billingMode: "comptant", ribOnFile: true }).alerts).toEqual([]);
     expect(budgetSummary({ ...base, billingMode: "comptant" }).alerts).toEqual([]);
+  });
+});
+
+/*
+ * Prestation libre.
+ *
+ * Seule ligne dont le libellé et le prix ne viennent pas du catalogue : sa
+ * quantité se lit comme une fréquence sur l'année, et le total doit suivre
+ * cette lecture sans traitement particulier.
+ */
+describe("prestation sur mesure", () => {
+  it("se distingue des prestations de la carte", () => {
+    expect(isCustomService(CUSTOM_SERVICE_KEY)).toBe(true);
+    expect(isCustomService("strategie")).toBe(false);
+    expect(isCustomService(MANAGEMENT_MONTH_KEY)).toBe(false);
+  });
+
+  it("figure au catalogue, à tarif nul et hors des catégories de la carte", () => {
+    const service = findService(CUSTOM_SERVICE_KEY);
+    expect(service).toBeDefined();
+    // Le tarif n'est qu'un défaut de formulaire : le prix réel est saisi.
+    expect(service!.unitPriceCents).toBe(0);
+    expect(service!.category).toBe("sur_mesure");
+  });
+
+  it("multiplie le prix saisi par la fréquence annuelle", () => {
+    const ligne = {
+      id: "1",
+      serviceKey: CUSTOM_SERVICE_KEY,
+      label: "Captation d’un événement",
+      billing: "ponctuel" as const,
+      unitPriceCents: 25_000,
+      quantity: 4,
+      months: null,
+      performedOn: "2026-08-25",
+    };
+    // 250 € quatre fois dans l'année.
+    expect(lineTotalCents(ligne)).toBe(100_000);
+  });
+
+  it("ne pèse rien tant que la fréquence est d'une seule fois", () => {
+    const ligne = {
+      id: "1",
+      serviceKey: CUSTOM_SERVICE_KEY,
+      label: "Audit ponctuel",
+      billing: "ponctuel" as const,
+      unitPriceCents: 25_000,
+      quantity: 1,
+      months: null,
+      performedOn: "2026-08-25",
+    };
+    expect(lineTotalCents(ligne)).toBe(25_000);
   });
 });

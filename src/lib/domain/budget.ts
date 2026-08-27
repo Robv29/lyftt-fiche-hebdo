@@ -37,7 +37,7 @@ export interface ServiceDefinition {
   key: string;
   label: string;
   /** Regroupement commercial, repris de la carte LYFTT. */
-  category: "entree" | "plat" | "dessert";
+  category: "entree" | "plat" | "dessert" | "sur_mesure";
   billing: ServiceBilling;
   /** Prix unitaire en centimes, hors taxes. */
   unitPriceCents: number;
@@ -53,6 +53,18 @@ export interface ServiceDefinition {
  * Les prix sont **recopiés** sur chaque ligne au moment de l'ajout. Une
  * révision tarifaire ne doit jamais réécrire une addition déjà établie.
  */
+/**
+ * Clé des prestations libres, hors carte.
+ *
+ * Une ligne portant cette clé tient son libellé et son prix de la saisie, pas
+ * du catalogue : c'est la seule du lot dont le tarif n'est pas prédéfini.
+ */
+export const CUSTOM_SERVICE_KEY = "sur_mesure";
+
+export function isCustomService(serviceKey: string): boolean {
+  return serviceKey === CUSTOM_SERVICE_KEY;
+}
+
 export const SERVICE_CATALOGUE: readonly ServiceDefinition[] = [
   {
     key: "strategie",
@@ -191,12 +203,32 @@ export const SERVICE_CATALOGUE: readonly ServiceDefinition[] = [
     unitLabel: "par mois",
     description: "Articles, photos, réponses aux avis.",
   },
+  /*
+   * Ligne libre : tout ce que la carte ne prévoit pas.
+   *
+   * Contrairement aux autres entrées, son libellé et son prix ne sont pas
+   * recopiés du catalogue mais saisis à l'ajout — le tarif nul ci-dessous
+   * n'est qu'un défaut de formulaire, jamais un prix appliqué. La quantité s'y
+   * lit comme une **fréquence sur l'année** : une prestation à 250 € revenant
+   * quatre fois dans l'année pèse 1 000 € sur l'addition, ce que le calcul
+   * existant produit déjà sans rien changer.
+   */
+  {
+    key: CUSTOM_SERVICE_KEY,
+    label: "Prestation sur mesure",
+    category: "sur_mesure",
+    billing: "ponctuel",
+    unitPriceCents: 0,
+    unitLabel: "fois par an",
+    description: "Décrivez la prestation, fixez son prix et sa fréquence sur l'année.",
+  },
 ];
 
 export const CATEGORY_LABELS: Record<ServiceDefinition["category"], string> = {
   entree: "Prestations ponctuelles",
   plat: "Production hebdomadaire",
   dessert: "Accompagnement mensuel",
+  sur_mesure: "Sur mesure",
 };
 
 export function findService(key: string): ServiceDefinition | undefined {

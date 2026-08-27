@@ -7,7 +7,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sanitizeText } from "@/lib/security/sanitize";
 import { checkAttachment, safeFileName } from "@/lib/security/attachments";
 import { logRibAccess } from "@/lib/internal/rib-audit";
-import { addMonths, findService, formatEuros, isShootingLine, MANAGEMENT_MONTH_KEY, SHOOTING_FORFAIT_KEY } from "@/lib/domain/budget";
+import { addMonths, findService, isCustomService, formatEuros, isShootingLine, MANAGEMENT_MONTH_KEY, SHOOTING_FORFAIT_KEY } from "@/lib/domain/budget";
 
 export interface BudgetActionResult {
   ok: boolean;
@@ -75,6 +75,13 @@ const lineSchema = z.object({
   billedDirectly: z.boolean(),
   /** Shooting compris dans le forfait, vendu en plus, ou sans objet. */
   forfaitIncluded: z.enum(["oui", "non"]).optional(),
+  /*
+   * Prestation libre : le libellé et le prix viennent de la saisie, non du
+   * catalogue. Optionnels ici, exigés plus bas pour la seule ligne sur mesure —
+   * les rendre obligatoires dans le schéma casserait toutes les autres.
+   */
+  customLabel: z.string().trim().max(120, "Description trop longue (120 caractères maximum).").optional(),
+  customPriceEuros: z.coerce.number().min(0, "Le prix ne peut pas être négatif.").max(1_000_000).optional(),
 });
 
 export async function addBudgetLine(formData: FormData): Promise<BudgetActionResult> {
@@ -91,6 +98,8 @@ export async function addBudgetLine(formData: FormData): Promise<BudgetActionRes
     note: formData.get("note") ?? undefined,
     billedDirectly: formData.get("billedDirectly") === "on",
     forfaitIncluded: formData.get("forfaitIncluded") ?? undefined,
+    customLabel: formData.get("customLabel") ?? undefined,
+    customPriceEuros: formData.get("customPriceEuros") || undefined,
   });
   if (!parsed.success) {
     return { ok: false, message: parsed.error.issues[0]?.message ?? "Formulaire invalide." };
@@ -98,6 +107,21 @@ export async function addBudgetLine(formData: FormData): Promise<BudgetActionRes
 
   const service = findService(parsed.data.serviceKey);
   if (!service) return { ok: false, message: "Prestation inconnue." };
+
+  /*
+   * Prestation libre : description et prix sont saisis, et rien ne les
+   * remplace. Une ligne sans description arriverait sur l'addition du client
+   * sous le nom générique du catalogue, illisible dans six mois.
+   */
+  const custom = isCustomService(service.key);
+  const customLabel = parsed.data.customLabel ? sanitizeText(parsed.data.customLabel, 120) : "";
+  if (custom && !customLabel) {
+    return { ok: false, message: "Décrivez la prestation sur mesure." };
+  }
+  if (custom && parsed.data.customPriceEuros === undefined) {
+    return { ok: false, message: "Indiquez le prix de la prestation sur mesure." };
+  }
+  const customPriceCents = Math.round((parsed.data.customPriceEuros ?? 0) * 100);
 
   /*
    * Un shooting compris dans le forfait ne se facture pas une seconde fois :
@@ -117,9 +141,9 @@ export async function addBudgetLine(formData: FormData): Promise<BudgetActionRes
      * Libellé et prix figés à l'ajout : une révision tarifaire ne doit pas
      * réécrire une addition déjà établie avec le client.
      */
-    label: service.label,
+    label: custom ? customLabel : service.label,
     billing: service.billing,
-    unit_price_cents: included ? 0 : service.unitPriceCents,
+    unit_price_cents: custom ? customPriceCents : included ? 0 : service.unitPriceCents,
     quantity: parsed.data.quantity,
     forfait_included: forfaitIncluded,
     months: service.billing === "mensuel" ? parsed.data.months ?? 1 : null,
@@ -138,8 +162,8 @@ export async function addBudgetLine(formData: FormData): Promise<BudgetActionRes
     message: included
       ? `${service.label} inscrit à 0 € : compris dans le forfait.`
       : parsed.data.billedDirectly
-        ? `${service.label} ajouté et à facturer au client.`
-        : `${service.label} ajouté à l’enveloppe.`,
+        ? `${custom ? customLabel : service.label} ajouté et à facturer au client.`
+        : `${custom ? customLabel : service.label} ajouté à l’enveloppe.`,
   };
 }
 
