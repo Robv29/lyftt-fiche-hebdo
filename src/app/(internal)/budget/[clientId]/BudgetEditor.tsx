@@ -238,12 +238,13 @@ export function BudgetEditor({
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <label className="label" htmlFor="budgetEuros">Budget accordé (€ HT)</label>
+              {/* Pas de 0,01 : un pas de 10 refusait jusqu'à 6 005 €. */}
               <input
                 id="budgetEuros"
                 name="budgetEuros"
                 type="number"
                 min="0"
-                step="10"
+                step="0.01"
                 className="field"
                 defaultValue={initialBudgetCents ? initialBudgetCents / 100 : ""}
                 placeholder="6000"
@@ -366,15 +367,16 @@ export function BudgetEditor({
 
                   <div>
                     <label className="label" htmlFor="customPriceEuros">Prix unitaire (€ HT)</label>
+                    {/* Pas de 0,01 : un pas entier refusait 249,90 €. */}
                     <input
                       id="customPriceEuros"
                       name="customPriceEuros"
                       type="number"
                       min="0"
-                      step="1"
+                      step="0.01"
                       required
                       className="field"
-                      placeholder="250"
+                      placeholder="249,90"
                     />
                   </div>
                 </>
