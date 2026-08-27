@@ -424,6 +424,7 @@ export const BASE_MONTHLY_FEE_CENTS = 5_000;
 export function cadenceMonthlyCostCents(
   cadence: MonthlyCadence,
   shooting?: ShootingPlan | null,
+  custom?: CustomMonthlyService | null,
 ): number {
   const perWeek = (monthly: number | undefined) => Math.max(0, Number(monthly ?? 0)) / 4;
   return BASE_MONTHLY_FEE_CENTS + Math.round(
@@ -431,7 +432,35 @@ export function cadenceMonthlyCostCents(
     + perWeek(cadence.video) * priceOf("video")
     + perWeek(cadence.story) * priceOf("story")
     + perWeek(cadence.visual) * priceOf("visuel"),
-  ) + shootingMonthlyCostCents(shooting ?? null);
+  ) + shootingMonthlyCostCents(shooting ?? null)
+    + Math.max(0, custom?.priceCents ?? 0);
+}
+
+/**
+ * Prestation sur mesure vendue dans la formule mensuelle.
+ *
+ * La carte ne couvre que des prestations prévues ; ce qui est négocié en plus —
+ * un post LinkedIn une semaine sur deux, une newsletter — n'avait pas de place
+ * dans la formule et n'entrait donc ni dans le coût mensuel, ni dans les mois de
+ * gestion inscrits à l'addition.
+ *
+ * Une seule par client, comme le forfait shooting : ce qui se cumule au-delà
+ * relève des lignes ponctuelles de l'addition.
+ */
+export interface CustomMonthlyService {
+  label: string;
+  priceCents: number;
+}
+
+export function parseCustomMonthly(value: unknown): CustomMonthlyService | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as { label?: unknown; priceCents?: unknown };
+  const label = typeof raw.label === "string" ? raw.label.trim() : "";
+  const priceCents = Math.round(Number(raw.priceCents));
+  // Sans nom, la ligne serait illisible sur une facture ; sans prix, elle ne
+  // change rien. Dans les deux cas il n'y a pas de prestation à retenir.
+  if (!label || !Number.isFinite(priceCents) || priceCents <= 0) return null;
+  return { label, priceCents };
 }
 
 /**
@@ -659,6 +688,8 @@ export interface BudgetInput {
   cadence: MonthlyCadence;
   /** Shooting vendu dans la formule, lissé sur sa période. */
   shooting?: ShootingPlan | null;
+  /** Prestation sur mesure vendue dans la formule mensuelle. */
+  customMonthly?: CustomMonthlyService | null;
   /** Début de gestion, repris de la fiche client. */
   contractStartDate: string | null;
   /** Fin de gestion, reprise de la fiche client. */
@@ -703,7 +734,11 @@ export function budgetSummary(input: BudgetInput): BudgetSummary {
   const charged = envelopeLines(input.lines, input.billingMode);
   const lineCents = totalCents(charged);
   const budgetCents = Math.max(0, input.annualBudgetCents);
-  const monthlyCadenceCostCents = cadenceMonthlyCostCents(input.cadence, input.shooting ?? null);
+  const monthlyCadenceCostCents = cadenceMonthlyCostCents(
+    input.cadence,
+    input.shooting ?? null,
+    input.customMonthly ?? null,
+  );
 
   /*
    * Chaque mois de gestion écoulé est inscrit à l'addition dès qu'il s'achève.

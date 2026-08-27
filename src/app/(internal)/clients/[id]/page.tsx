@@ -10,6 +10,7 @@ import { normalizeWeekdays } from "@/lib/domain/planning";
 import { DeleteClient } from "./DeleteClient";
 import {
   formatEuros,
+  parseCustomMonthly,
   parseShootingPlan,
   shootingMonthlyCostCents,
   shootingPlanSummary,
@@ -41,6 +42,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
     publicationWeekdays?: number[];
     monthlyCadence?: { photo?: number; video?: number; story?: number; visual?: number };
     shootingPlan?: unknown;
+    customMonthlyService?: unknown;
   } = {};
   try { settings = typeof client.notes === "string" ? JSON.parse(client.notes) : {}; } catch { settings = {}; }
   const rawClientType = settings.brandProfile?.clientType;
@@ -61,6 +63,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
   };
   const publicationWeekdays=normalizeWeekdays(settings.publicationWeekdays ?? []);
   const shooting = parseShootingPlan(settings.shootingPlan);
+  const customMonthly = parseCustomMonthly(settings.customMonthlyService);
 
   /*
    * Volume de ce qu'une suppression emporterait. Annoncer « définitif » sans
@@ -108,7 +111,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
         keywords:settings.brandProfile?.keywords ?? "",
       },
       networks:networks.length ? networks : ["instagram","facebook"],
-      cadence, publicationWeekdays, shooting,
+      cadence, publicationWeekdays, shooting, customMonthly,
       validation:{ deadlineWeekday:client.validation_deadline_weekday, deadlineTime:String(client.validation_deadline_time), approvalPolicy:client.approval_policy as "explicit_required"|"tacit_allowed", tacitNotice:client.tacit_approval_notice ?? "Sans retour avant cette échéance, les contenus seront considérés comme validés, selon les modalités prévues ensemble.", whatsappGroup:client.whatsapp_group_name ?? "", postSignature:client.post_signature ?? "" },
       customHashtags,
     }} managers={(managers ?? []).map((manager)=>({id:manager.id,name:manager.full_name}))}/></div></header>

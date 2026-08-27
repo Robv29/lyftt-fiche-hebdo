@@ -10,7 +10,7 @@ import {
   SHOOTING_LINE_KEYS,
   isShootingLine,
   budgetSummary,
-  parseShootingPlan,
+  parseCustomMonthly, parseShootingPlan,
   shootingPlanSummary,
   shootingSchedule,
   type BillingMode,
@@ -202,7 +202,7 @@ export default async function DashboardPage() {
     }
 
     budgetIssues = producible.filter((client) => {
-      const settings = clientSettings(client.notes) as { monthlyCadence?: MonthlyCadence; shootingPlan?: unknown };
+      const settings = clientSettings(client.notes) as { monthlyCadence?: MonthlyCadence; shootingPlan?: unknown; customMonthlyService?: unknown };
       const budget = budgetByClient.get(client.id);
       const summary = budgetSummary({
         billingMode: (budget?.billing_mode ?? "comptant") as BillingMode,
@@ -210,6 +210,7 @@ export default async function DashboardPage() {
         lines: linesByClient.get(client.id) ?? [],
         cadence: settings.monthlyCadence ?? {},
         shooting: parseShootingPlan(settings.shootingPlan),
+        customMonthly: parseCustomMonthly(settings.customMonthlyService),
         // Un RIB manquant se compte comme un dossier à régulariser.
         ribOnFile: Boolean(budget?.rib_storage_path),
         contractStartDate: client.contract_start_date,

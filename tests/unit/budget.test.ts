@@ -17,6 +17,7 @@ import {
   envelopeLines,
   formatEuros,
   lineTotalCents,
+  parseCustomMonthly,
   isCustomService,
   CUSTOM_SERVICE_KEY,
   isManagementMonth,
@@ -925,5 +926,44 @@ describe("écriture des montants", () => {
       billing: "ponctuel", unitPriceCents: 24_990, quantity: 3, months: null,
       performedOn: "2026-08-27",
     }))).toContain("749,70");
+  });
+});
+
+/*
+ * Prestation sur mesure vendue dans la formule mensuelle.
+ *
+ * Ce qui est négocié hors carte — un post LinkedIn une semaine sur deux — n'avait
+ * pas de place dans la formule : ni dans le coût mensuel affiché, ni dans les
+ * mois de gestion inscrits à l'addition.
+ */
+describe("prestation sur mesure mensuelle", () => {
+  it("s'ajoute au coût mensuel de la formule", () => {
+    const cadence = { photo: 4, video: 4 };
+    const sans = cadenceMonthlyCostCents(cadence, null, null);
+    const avec = cadenceMonthlyCostCents(cadence, null, { label: "LinkedIn", priceCents: 11_000 });
+    expect(avec - sans).toBe(11_000);
+  });
+
+  it("ne retient rien sans nom : la ligne serait illisible sur une facture", () => {
+    expect(parseCustomMonthly({ label: "  ", priceCents: 11_000 })).toBeNull();
+  });
+
+  it("ne retient rien sans prix : la ligne ne changerait rien", () => {
+    expect(parseCustomMonthly({ label: "LinkedIn", priceCents: 0 })).toBeNull();
+    expect(parseCustomMonthly({ label: "LinkedIn" })).toBeNull();
+  });
+
+  it("refuse un prix négatif", () => {
+    expect(parseCustomMonthly({ label: "LinkedIn", priceCents: -500 })).toBeNull();
+  });
+
+  it("accepte les centimes", () => {
+    expect(parseCustomMonthly({ label: "LinkedIn", priceCents: 11_050 }))
+      .toEqual({ label: "LinkedIn", priceCents: 11_050 });
+  });
+
+  it("laisse le coût inchangé quand il n'y a pas de prestation", () => {
+    const cadence = { photo: 4, video: 4 };
+    expect(cadenceMonthlyCostCents(cadence, null, null)).toBe(cadenceMonthlyCostCents(cadence));
   });
 });

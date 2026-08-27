@@ -333,6 +333,28 @@ export function ClientAdmin({
                 </div>
               </div>
             </div>
+
+            {/*
+              Prestation hors carte vendue dans la formule mensuelle. Elle entre
+              dans le coût mensuel comme le reste, donc dans les mois de gestion
+              inscrits à l'addition.
+            */}
+            <div className="mt-4 rounded-2xl border border-[#d8e4f8] bg-[#f7faff] p-4">
+              <p className="label">Prestation sur mesure dans la formule</p>
+              <p className="mt-1 text-xs text-ink-faint">Facultatif. Ce qui est vendu chaque mois hors carte : un post LinkedIn une semaine sur deux, une newsletter…</p>
+              <div className="mt-3 grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="label" htmlFor="customServiceLabel">Description</label>
+                  <input id="customServiceLabel" name="customServiceLabel" maxLength={120} placeholder="Post vidéo 1 semaine sur deux // LinkedIn" {...fieldProps(fieldErrors,"customServiceLabel")}/>
+                  <FieldError errors={fieldErrors} name="customServiceLabel"/>
+                </div>
+                <div>
+                  <label className="label" htmlFor="customServicePriceEuros">Prix mensuel (€ HT)</label>
+                  <input id="customServicePriceEuros" name="customServicePriceEuros" type="number" min="0" step="0.01" placeholder="110" {...fieldProps(fieldErrors,"customServicePriceEuros")}/>
+                  <FieldError errors={fieldErrors} name="customServicePriceEuros"/>
+                </div>
+              </div>
+            </div>
           </fieldset>
 
           <fieldset>

@@ -13,8 +13,7 @@ import {
   formatEuros,
   shootingMonthlyCostCents,
   shootingsPerYear,
-  type ShootingPlan,
-} from "@/lib/domain/budget";
+  type ShootingPlan, type CustomMonthlyService } from "@/lib/domain/budget";
 import {
   hashtagsForClientType,
   LYFTT_CLIENT_TYPES,
@@ -45,6 +44,8 @@ export interface EditableClient {
   cadence: { photo: number; video: number; story: number; visual: number };
   /** Forfait shooting vendu dans la formule, s'il y en a un. */
   shooting: ShootingPlan | null;
+  /** Prestation hors carte vendue dans la formule mensuelle. */
+  customMonthly: CustomMonthlyService | null;
   publicationWeekdays: number[];
   validation: {
     deadlineWeekday: number;
@@ -296,6 +297,36 @@ export function ClientEditor({ initial, managers }: { initial: EditableClient; m
                           required={Boolean(shootingService)}
                           onChange={(event) => setShootingEveryMonths(event.target.value)}
                         />
+                      </div>
+                    </div>
+                    <div className="mt-4 border-t border-[#d8e4f8] pt-4">
+                      <p className="label">Prestation sur mesure dans la formule</p>
+                      <p className="mt-1 text-xs text-ink-faint">Ce qui est vendu chaque mois hors carte. Laissez vide s&apos;il n&apos;y en a pas.</p>
+                      <div className="mt-3 grid gap-4 sm:grid-cols-2">
+                        <div>
+                          <label className="label" htmlFor="edit-custom-label">Description</label>
+                          <input
+                            id="edit-custom-label"
+                            name="customServiceLabel"
+                            maxLength={120}
+                            className="field bg-white"
+                            placeholder="Post vidéo 1 semaine sur deux // LinkedIn"
+                            defaultValue={initial.customMonthly?.label ?? ""}
+                          />
+                        </div>
+                        <div>
+                          <label className="label" htmlFor="edit-custom-price">Prix mensuel (€ HT)</label>
+                          <input
+                            id="edit-custom-price"
+                            name="customServicePriceEuros"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            className="field bg-white"
+                            placeholder="110"
+                            defaultValue={initial.customMonthly ? initial.customMonthly.priceCents / 100 : ""}
+                          />
+                        </div>
                       </div>
                     </div>
                     {shootingPlan && (

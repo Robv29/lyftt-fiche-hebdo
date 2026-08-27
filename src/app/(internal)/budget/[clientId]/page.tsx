@@ -5,7 +5,7 @@ import { billableLines, budgetSummary, type BillingMode, type BudgetLine } from 
 import { todayInParis } from "@/lib/domain/client-lifecycle";
 import type { MonthlyCadence } from "@/lib/domain/planning";
 import { BudgetEditor } from "./BudgetEditor";
-import { cadenceFromNotes, shootingPlanFromNotes, syncManagementMonths } from "@/lib/budget/management-months";
+import { cadenceFromNotes, customMonthlyFromNotes, shootingPlanFromNotes, syncManagementMonths } from "@/lib/budget/management-months";
 import { invoiceMonths, type InvoiceStatus } from "@/lib/domain/invoicing";
 import { resolveMediaUrl } from "@/lib/media/signed-url";
 import { logRibAccess } from "@/lib/internal/rib-audit";
@@ -54,6 +54,7 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
       contractEndDate: client.contract_end_date,
       cadence: cadenceFromNotes(client.notes),
       shooting: shootingPlanFromNotes(client.notes),
+      customMonthly: customMonthlyFromNotes(client.notes),
     });
   }
 
@@ -104,6 +105,7 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
 
   const cadence = settings.monthlyCadence ?? {};
   const shooting = shootingPlanFromNotes(client.notes);
+  const customMonthly = customMonthlyFromNotes(client.notes);
   const today = todayInParis();
   const summary = budgetSummary({
     billingMode: mode,
@@ -111,6 +113,7 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
     lines,
     cadence,
     shooting,
+    customMonthly,
     ribOnFile: Boolean(budget?.rib_storage_path),
     contractStartDate: client.contract_start_date,
     contractEndDate: client.contract_end_date,

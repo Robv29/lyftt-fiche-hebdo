@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { Icon } from "@/components/Icon";
-import { BILLING_MODE_LABELS, billableLines, budgetSummary, formatEuros, parseShootingPlan, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
+import { BILLING_MODE_LABELS, billableLines, budgetSummary, formatEuros, parseCustomMonthly, parseShootingPlan, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
 import { clientLifecycle, todayInParis } from "@/lib/domain/client-lifecycle";
 import type { MonthlyCadence } from "@/lib/domain/planning";
 import { invoiceMonths, pendingInvoiceCount, type InvoiceStatus } from "@/lib/domain/invoicing";
@@ -100,7 +100,7 @@ export default async function BudgetPage() {
   }, today).canProduce);
 
   const rows = managed.map((client) => {
-    let settings: { monthlyCadence?: MonthlyCadence; shootingPlan?: unknown } = {};
+    let settings: { monthlyCadence?: MonthlyCadence; shootingPlan?: unknown; customMonthlyService?: unknown } = {};
     try {
       settings = typeof client.notes === "string" ? JSON.parse(client.notes) : {};
     } catch {
@@ -115,6 +115,7 @@ export default async function BudgetPage() {
       lines: linesByClient.get(client.id) ?? [],
       cadence: settings.monthlyCadence ?? {},
       shooting: parseShootingPlan(settings.shootingPlan),
+      customMonthly: parseCustomMonthly(settings.customMonthlyService),
       ribOnFile,
       contractStartDate: client.contract_start_date,
       contractEndDate: client.contract_end_date,

@@ -18,6 +18,8 @@ import {
   SHOOTING_PLAN_SERVICES,
   parseShootingPlan,
   type ShootingPlan,
+  parseCustomMonthly,
+  type CustomMonthlyService,
 } from "@/lib/domain/budget";
 
 export interface ClientActionResult {
@@ -96,6 +98,16 @@ const clientSchema = z.object({
     .min(1, "Le shooting revient au minimum chaque mois.")
     .max(24, "Périodicité trop longue (24 mois maximum).")
     .optional(),
+  /*
+   * Prestation sur mesure vendue dans la formule mensuelle : ce qui est négocié
+   * hors carte — un post LinkedIn une semaine sur deux, une newsletter. Le nom
+   * et le prix vont ensemble, comme le shooting et sa périodicité.
+   */
+  customServiceLabel: z.string().trim().max(120, "Description trop longue (120 caractères maximum).").optional(),
+  customServicePriceEuros: z.coerce.number()
+    .min(0, "Le prix ne peut pas être négatif.")
+    .max(100_000, "Prix trop élevé.")
+    .optional(),
 }).superRefine((input, context) => {
   if (input.shootingService && !input.shootingEveryMonths) {
     context.addIssue({
@@ -104,7 +116,32 @@ const clientSchema = z.object({
       message: "Indiquez tous les combien de mois ce shooting est vendu.",
     });
   }
+  // Un nom sans prix ne facture rien ; un prix sans nom serait illisible sur
+  // l'addition du client. L'un sans l'autre est toujours une saisie inachevée.
+  if (input.customServiceLabel && !input.customServicePriceEuros) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["customServicePriceEuros"],
+      message: "Indiquez le prix mensuel de cette prestation.",
+    });
+  }
+  if (!input.customServiceLabel && input.customServicePriceEuros) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["customServiceLabel"],
+      message: "Nommez la prestation pour qu'elle soit lisible sur l'addition.",
+    });
+  }
 });
+
+/** Prestation sur mesure telle qu'elle sera stockée dans les réglages. */
+function customMonthlyFromInput(input: z.infer<typeof clientSchema>): CustomMonthlyService | null {
+  if (!input.customServiceLabel || !input.customServicePriceEuros) return null;
+  return parseCustomMonthly({
+    label: sanitizeText(input.customServiceLabel, 120),
+    priceCents: Math.round(input.customServicePriceEuros * 100),
+  });
+}
 
 /** Forfait shooting tel qu'il sera stocké dans les réglages du client. */
 function shootingPlanFromInput(input: z.infer<typeof clientSchema>): ShootingPlan | null {
@@ -149,6 +186,8 @@ function clientFormValues(formData: FormData) {
     shootingService: formData.get("shootingService") ?? "",
     // Champ laissé vide quand aucun shooting n'est vendu : pas de valeur, pas d'erreur.
     shootingEveryMonths: formData.get("shootingEveryMonths") || undefined,
+    customServiceLabel: formData.get("customServiceLabel") ?? undefined,
+    customServicePriceEuros: formData.get("customServicePriceEuros") || undefined,
   };
 }
 
@@ -236,6 +275,7 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
       visual: input.visualPerMonth,
     },
     shootingPlan: shootingPlanFromInput(input),
+    customMonthlyService: customMonthlyFromInput(input),
   });
 
   // Un slug déjà pris est suffixé plutôt que de faire échouer la création.

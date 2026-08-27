@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { logRibAccess } from "@/lib/internal/rib-audit";
 import { decideMediaRetention, formatBytes } from "@/lib/domain/media-retention";
-import { cadenceFromNotes, syncManagementMonths } from "@/lib/budget/management-months";
+import { cadenceFromNotes, customMonthlyFromNotes, shootingPlanFromNotes, syncManagementMonths } from "@/lib/budget/management-months";
 
 /**
  * Entretien planifié : validations tacites, puis purge des médias.
@@ -91,6 +91,14 @@ async function handle(request: NextRequest) {
         contractStartDate: client.contract_start_date,
         contractEndDate: client.contract_end_date,
         cadence: cadenceFromNotes(client.notes),
+        /*
+         * Le forfait shooting manquait ici alors que l'écran budget le passe :
+         * un mois inscrit par cette tâche valait moins cher que le même mois
+         * inscrit en ouvrant la fiche du client. Le montant dépendait de qui
+         * était passé le premier.
+         */
+        shooting: shootingPlanFromNotes(client.notes),
+        customMonthly: customMonthlyFromNotes(client.notes),
       });
     } catch (error) {
       // Un budget en échec ne doit pas empêcher la purge des médias.

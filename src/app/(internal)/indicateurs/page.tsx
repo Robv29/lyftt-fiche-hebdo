@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
-import { budgetPenalty, budgetSummary, shootingTally, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
+import { budgetPenalty, budgetSummary, parseCustomMonthly, parseShootingPlan, shootingTally, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
 import { healthActions, healthScore, HEALTH_TARGET, type HealthAction, type HealthPillar } from "@/lib/domain/health-score";
 import { clientLifecycle, todayInParis } from "@/lib/domain/client-lifecycle";
 import type { MonthlyCadence } from "@/lib/domain/planning";
@@ -72,7 +72,7 @@ async function budgetHealth(
 
   const withIssue = managed.filter((client) => {
     if (!client.contract_start_date) return true;
-    let settings: { monthlyCadence?: MonthlyCadence } = {};
+    let settings: { monthlyCadence?: MonthlyCadence; shootingPlan?: unknown; customMonthlyService?: unknown } = {};
     try { settings = client.notes ? JSON.parse(client.notes as string) : {}; } catch { settings = {}; }
     const budget = budgetByClient.get(client.id as string);
     const summary = budgetSummary({
@@ -80,6 +80,10 @@ async function budgetHealth(
       annualBudgetCents: budget?.budget_cents ?? 0,
       lines: linesByClient.get(client.id as string) ?? [],
       cadence: settings.monthlyCadence ?? {},
+      // Le forfait shooting et le supplément mensuel manquaient : le coût
+      // mensuel servant aux alertes était inférieur au coût réel.
+      shooting: parseShootingPlan(settings.shootingPlan),
+      customMonthly: parseCustomMonthly(settings.customMonthlyService),
       contractStartDate: client.contract_start_date as string | null,
       contractEndDate: client.contract_end_date as string | null,
       today,

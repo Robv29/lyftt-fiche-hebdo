@@ -5,8 +5,10 @@ import {
   MANAGEMENT_MONTH_KEY,
   cadenceMonthlyCostCents,
   dueManagementMonths,
+  parseCustomMonthly,
   parseShootingPlan,
   reconcileManagementMonths,
+  type CustomMonthlyService,
   type ShootingPlan,
 } from "@/lib/domain/budget";
 import { todayInParis } from "@/lib/domain/client-lifecycle";
@@ -34,10 +36,16 @@ export async function syncManagementMonths(
     cadence: MonthlyCadence;
     /** Forfait shooting vendu, lissé sur sa période. */
     shooting?: ShootingPlan | null;
+    /** Prestation sur mesure vendue dans la formule mensuelle. */
+    customMonthly?: CustomMonthlyService | null;
   },
   today: string = todayInParis(),
 ): Promise<number> {
-  const monthlyCostCents = cadenceMonthlyCostCents(client.cadence, client.shooting ?? null);
+  const monthlyCostCents = cadenceMonthlyCostCents(
+    client.cadence,
+    client.shooting ?? null,
+    client.customMonthly ?? null,
+  );
   const expected = dueManagementMonths({
     contractStartDate: client.contractStartDate,
     contractEndDate: client.contractEndDate,
@@ -128,6 +136,16 @@ export function shootingPlanFromNotes(notes: string | null): ShootingPlan | null
   }
 }
 
+/** Prestation sur mesure de la formule mensuelle, lue dans les réglages. */
+export function customMonthlyFromNotes(notes: string | null): CustomMonthlyService | null {
+  try {
+    const settings = typeof notes === "string" ? JSON.parse(notes) : {};
+    return parseCustomMonthly(settings?.customMonthlyService);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Même synchronisation, pour tout un portefeuille.
  *
@@ -157,6 +175,7 @@ export async function syncAllManagementMonths(
             contractEndDate: client.contract_end_date,
             cadence: cadenceFromNotes(client.notes),
             shooting: shootingPlanFromNotes(client.notes),
+            customMonthly: customMonthlyFromNotes(client.notes),
           }, today);
         } catch {
           // Un client en échec ne doit pas vider l'écran des autres.
