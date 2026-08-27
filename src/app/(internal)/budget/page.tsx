@@ -124,6 +124,7 @@ export default async function BudgetPage() {
     const toInvoice = pendingInvoiceCount(invoiceMonths(
       billableLines(linesByClient.get(client.id) ?? [], mode),
       invoiceStatusByClient.get(client.id) ?? {},
+      client.contract_start_date as string | null,
     ));
     /*
      * Sans date de début, aucun mois n'est dû : le consommé reste à zéro et,

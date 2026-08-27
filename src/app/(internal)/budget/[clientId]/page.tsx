@@ -95,7 +95,12 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
   );
   const mode = (budget?.billing_mode ?? "comptant") as BillingMode;
   // En financement, seules les prestations refusées par l'organisme se facturent.
-  const months = invoiceMonths(billableLines(lines, mode), invoiceStatuses);
+  // Le début de gestion borne le rattachement : rien ne se facture avant lui.
+  const months = invoiceMonths(
+    billableLines(lines, mode),
+    invoiceStatuses,
+    client.contract_start_date as string | null,
+  );
 
   const cadence = settings.monthlyCadence ?? {};
   const shooting = shootingPlanFromNotes(client.notes);

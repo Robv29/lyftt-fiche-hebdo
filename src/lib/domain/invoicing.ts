@@ -57,18 +57,56 @@ export function monthLabel(month: string): string {
 }
 
 /**
- * Regroupe les prestations par mois de réalisation, du plus récent au plus
+ * Mois de facturation d'une prestation.
+ *
+ * Rien ne se facture avant que la gestion ait commencé. Une prestation
+ * préparée en amont — le cas courant : on garnit l'addition d'un client dont
+ * la gestion démarre le mois suivant — porte la date du jour de sa saisie, et
+ * tombait donc sur le mois en cours. Elle rejoint désormais le mois de
+ * démarrage.
+ *
+ * La date de la ligne reste celle de la prestation : c'est le rattachement
+ * comptable qui est décalé, pas la trace de ce qui a été fait.
+ */
+function invoiceMonthFor(
+  line: BudgetLine,
+  contractStartDate: string | null,
+  statuses: Record<string, InvoiceStatus>,
+): string {
+  const month = monthKey(line.performedOn);
+  if (!contractStartDate) return month;
+
+  const start = monthKey(contractStartDate);
+  if (month >= start) return month;
+
+  /*
+   * Une facture partie chez le client ne se recalcule pas.
+   *
+   * Reporter une prestation déjà facturée en viderait le montant et gonflerait
+   * celui d'un autre mois : l'addition ne correspondrait plus au prélèvement.
+   * Le report ne vaut donc que tant que le mois d'origine est encore ouvert —
+   * même règle que la réconciliation des mois de gestion.
+   */
+  const settled = statuses[month];
+  if (settled === "faite" || settled === "prelevement_programme") return month;
+
+  return start;
+}
+
+/**
+ * Regroupe les prestations par mois de facturation, du plus récent au plus
  * ancien : c'est le mois en cours qu'on complète, et les précédents qu'on
  * facture.
  */
 export function invoiceMonths(
   lines: BudgetLine[],
   statuses: Record<string, InvoiceStatus> = {},
+  contractStartDate: string | null = null,
 ): InvoiceMonth[] {
   const grouped = new Map<string, BudgetLine[]>();
 
   for (const line of lines) {
-    const key = monthKey(line.performedOn);
+    const key = invoiceMonthFor(line, contractStartDate, statuses);
     const bucket = grouped.get(key) ?? [];
     bucket.push(line);
     grouped.set(key, bucket);

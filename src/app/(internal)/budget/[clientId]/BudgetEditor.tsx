@@ -98,7 +98,20 @@ export function BudgetEditor({
   const hybrid = mode === "hybride";
   // Refus de prise en charge : la prestation part en facturation directe.
   const [billedDirectly, setBilledDirectly] = useState(false);
-  const [performedOn, setPerformedOn] = useState(() => new Date().toISOString().slice(0, 10));
+  /*
+   * Date proposée : le début de gestion tant qu'il est à venir, aujourd'hui
+   * sinon.
+   *
+   * Garnir l'addition d'un client dont la gestion démarre le mois prochain est
+   * le cas courant, et la date du jour y range la prestation dans le mois en
+   * cours. Le rattachement comptable est déjà borné par le début de gestion
+   * (`invoiceMonths`), mais autant que la date affichée dise la même chose que
+   * la facture.
+   */
+  const [performedOn, setPerformedOn] = useState(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    return contractStartDate && contractStartDate > today ? contractStartDate : today;
+  });
 
   /*
    * Décision proposée pour un shooting : la période tranche.
