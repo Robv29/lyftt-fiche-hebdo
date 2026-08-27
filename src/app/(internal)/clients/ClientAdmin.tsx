@@ -68,6 +68,8 @@ interface ClientRow {
   managerName: string;
   logoUrl: string | null;
   cadenceLabel: string;
+  /** Montant mensuel de la formule, en centimes. Nul hors direction. */
+  monthlyCostCents: number | null;
   contractStartDate: string | null;
   contractEndDate: string | null;
   pauseStartDate: string | null;
@@ -559,6 +561,16 @@ export function ClientAdmin({
                     {client.deadlineTime.slice(0, 5).replace(":", " h ")}
                   </p>
                   <p className="mt-2 text-xs text-ink-soft">{client.managerName} · {client.cadenceLabel}</p>
+                  {/*
+                    Montant mensuel de l'abonnement : le rythme vendu ne disait
+                    pas ce qu'il rapporte, et c'est la question qui vient juste
+                    après en regardant une carte client.
+                  */}
+                  {client.monthlyCostCents !== null && (
+                    <p className="mt-1.5 text-xs font-semibold text-[#0b5e9f]">
+                      {formatEuros(client.monthlyCostCents)} par mois
+                    </p>
+                  )}
                   </div>
                 </div>
 

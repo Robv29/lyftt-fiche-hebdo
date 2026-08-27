@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { ClientAdmin } from "./ClientAdmin";
 import { resolveClientLogoUrl } from "@/lib/media/client-logo";
+import { cadenceMonthlyCostCents, parseShootingPlan } from "@/lib/domain/budget";
 
 export default async function ClientsPage() {
   const profile = await getCurrentProfile();
@@ -18,10 +19,21 @@ export default async function ClientsPage() {
     <ClientAdmin clients={await Promise.all((clients ?? []).map(async (c) => {
       const contact = (c.client_contacts as unknown as { first_name:string; last_name:string|null; phone:string|null }[])?.[0];
       const assignments = (c.client_assignments as unknown as { role:string; profiles:{full_name:string}|null }[]) ?? [];
-      let settings: { monthlyCadence?: { photo?:number; video?:number; story?:number; visual?:number } } = {};
+      let settings: { monthlyCadence?: { photo?:number; video?:number; story?:number; visual?:number }; shootingPlan?: unknown } = {};
       try { settings = typeof c.notes === "string" ? JSON.parse(c.notes) : {}; } catch { settings = {}; }
       const cadence = settings.monthlyCadence ?? {};
-      return { id:c.id, name:c.name, isActive:c.is_active, deadlineWeekday:c.validation_deadline_weekday, deadlineTime:c.validation_deadline_time, approvalPolicy:c.approval_policy, contactName:contact ? `${contact.first_name} ${contact.last_name ?? ""}`.trim() : null, managerName:assignments.find((assignment)=>assignment.role==="community_manager")?.profiles?.full_name ?? "Non assigné", contractStartDate:c.contract_start_date, contractEndDate:c.contract_end_date, pauseStartDate:c.pause_start_date, pauseEndDate:c.pause_end_date, logoUrl:await resolveClientLogoUrl(c.logo_url), cadenceLabel:`${Number(cadence.photo??0)} photo · ${Number(cadence.video??0)} vidéo · ${Number(cadence.story??0)} story · ${Number(cadence.visual??0)} visuel` };
+      /*
+       * Montant mensuel de la formule : forfait de base, rythme vendu, et
+       * shooting du forfait lissé sur sa période. C'est ce que le client règle
+       * chaque mois, la donnée qui manquait le plus sur cette carte.
+       *
+       * Réservé à la direction, comme tout l'écran budget : un montant lisible
+       * par toute l'équipe n'était pas le choix fait jusqu'ici.
+       */
+      const monthlyCostCents = profile.role === "super_admin"
+        ? cadenceMonthlyCostCents(cadence, parseShootingPlan(settings.shootingPlan))
+        : null;
+      return { id:c.id, name:c.name, isActive:c.is_active, deadlineWeekday:c.validation_deadline_weekday, deadlineTime:c.validation_deadline_time, approvalPolicy:c.approval_policy, contactName:contact ? `${contact.first_name} ${contact.last_name ?? ""}`.trim() : null, managerName:assignments.find((assignment)=>assignment.role==="community_manager")?.profiles?.full_name ?? "Non assigné", contractStartDate:c.contract_start_date, contractEndDate:c.contract_end_date, pauseStartDate:c.pause_start_date, pauseEndDate:c.pause_end_date, logoUrl:await resolveClientLogoUrl(c.logo_url), cadenceLabel:`${Number(cadence.photo??0)} photo · ${Number(cadence.video??0)} vidéo · ${Number(cadence.story??0)} story · ${Number(cadence.visual??0)} visuel`, monthlyCostCents };
     }))} managers={(managers ?? []).map((m) => ({ id:m.id, name:m.full_name }))}/>
   </div>;
 }
