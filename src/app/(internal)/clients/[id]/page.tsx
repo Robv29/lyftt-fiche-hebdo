@@ -124,6 +124,18 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
             <div><strong className="text-sm">Shooting du forfait</strong><p className="mt-1 text-xs text-ink-faint">{shooting ? shootingPlanSummary(shooting) : "Aucun shooting vendu dans la formule"}</p></div>
             {shooting && <span className="text-xs font-semibold text-[#0b5e9f]">{formatEuros(shootingMonthlyCostCents(shooting))} / mois lissés</span>}
           </div>
+          {/*
+            Vente additionnelle : elle ne se compte pas en volume hebdomadaire
+            non plus, mais elle pèse chaque mois sur la facture. L'écran disait
+            le rythme vendu sans jamais dire ce qui s'y ajoute.
+          */}
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-[#f7faff] p-4">
+            <div className="min-w-0">
+              <strong className="text-sm">Vente additionnelle</strong>
+              <p className="mt-1 text-xs text-ink-faint">{customMonthly ? customMonthly.label : "Aucune prestation vendue en plus de la formule"}</p>
+            </div>
+            {customMonthly && <span className="shrink-0 text-xs font-semibold text-[#0b5e9f]">{formatEuros(customMonthly.priceCents)} / mois</span>}
+          </div>
         </section>
         <section className="card overflow-hidden"><div className="flex items-center justify-between border-b px-4 py-4 sm:px-6 sm:py-5"><div><p className="eyebrow">Historique</p><h2 className="mt-1 font-semibold">Fiches hebdomadaires</h2></div><Link href="/fiches" className="mobile-inline-btn min-h-11 shrink-0 px-2 text-xs font-semibold text-[#1468ff]">Tout voir</Link></div>{sheets.length ? <ul className="divide-y">{sheets.slice(0,6).map(s=><li key={s.id}><Link href={`/fiches/${s.id}`} className="grid grid-cols-[40px_1fr_auto] items-center gap-3 px-4 py-4 hover:bg-canvas sm:px-6"><span className="grid h-10 w-10 place-items-center rounded-xl bg-canvas text-xs font-bold">S{s.iso_week}</span><div className="min-w-0"><strong className="text-sm">Semaine {s.iso_week}</strong><p className="text-xs text-ink-faint">{s.weekly_sheet_items.length} contenu{s.weekly_sheet_items.length>1?"s":""}</p><span className="mt-1 inline-flex max-w-full rounded-full bg-canvas px-2 py-0.5 text-[10px] text-ink-soft sm:hidden">{sheetStatusLabel(s.status)}</span></div><span className="hidden items-center gap-2 sm:flex"><span className="badge bg-canvas text-ink-soft">{sheetStatusLabel(s.status)}</span><Icon name="arrow" className="h-4 w-4 text-ink-faint"/></span><Icon name="arrow" className="h-4 w-4 text-ink-faint sm:hidden"/></Link></li>)}</ul> : <p className="p-8 text-center text-sm text-ink-faint">Aucune fiche créée pour ce client.</p>}</section>
         <section className="card p-6"><p className="eyebrow">Bibliothèque</p><h2 className="mt-1 font-semibold">Hashtags récents</h2>{tags.length ? <div className="mt-4 flex flex-wrap gap-2">{tags.map(t=><span key={t} className="rounded-lg bg-[#f0f3f7] px-2.5 py-1.5 text-xs text-ink-soft">{t}</span>)}</div> : <p className="mt-4 text-sm text-ink-faint">Aucun hashtag enregistré.</p>}</section>
