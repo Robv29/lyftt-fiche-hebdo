@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   INVOICE_STATUS_LABELS,
+  invoiceMonthFor,
   invoiceMonths,
   isInvoiceSettled,
   monthKey,
@@ -183,5 +184,39 @@ describe("report et factures déjà établies", () => {
       "2026-06-01",
     );
     expect(months[0]!.month).toBe("2026-06-01");
+  });
+});
+
+/*
+ * La règle est partagée, pas recopiée.
+ *
+ * L'écran de facturation groupée regroupait par mois de son côté, sans passer
+ * par `invoiceMonths` : corriger l'un laissait l'autre ranger une prestation au
+ * mois de sa saisie. E-MOVE MANAGEMENT restait affiché en août alors que sa
+ * gestion démarre le 1er septembre.
+ */
+describe("invoiceMonthFor, partagée par les écrans", () => {
+  it("reporte au mois de démarrage", () => {
+    expect(invoiceMonthFor(line("2026-08-27", 11_000), "2026-09-01", {})).toBe("2026-09-01");
+  });
+
+  it("ne touche pas ce qui suit le démarrage", () => {
+    expect(invoiceMonthFor(line("2026-10-12", 11_000), "2026-09-01", {})).toBe("2026-10-01");
+  });
+
+  it("s'arrête devant une facture déjà établie", () => {
+    expect(invoiceMonthFor(line("2026-05-22", 45_000), "2026-06-01", { "2026-05-01": "faite" }))
+      .toBe("2026-05-01");
+  });
+
+  it("sans date de démarrage, garde le mois de la prestation", () => {
+    expect(invoiceMonthFor(line("2026-08-27", 11_000), null, {})).toBe("2026-08-01");
+  });
+
+  it("donne le même mois que le regroupement complet", () => {
+    // Les deux chemins doivent répondre la même chose : c'est leur divergence
+    // qui avait laissé E-MOVE en août.
+    const l = line("2026-08-27", 11_000);
+    expect(invoiceMonths([l], {}, "2026-09-01")[0]!.month).toBe(invoiceMonthFor(l, "2026-09-01", {}));
   });
 });

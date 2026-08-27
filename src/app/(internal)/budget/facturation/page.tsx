@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { billableLines, lineTotalCents, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
-import { monthKey, monthLabel, type InvoiceStatus } from "@/lib/domain/invoicing";
+import { invoiceMonthFor, monthKey, monthLabel, type InvoiceStatus } from "@/lib/domain/invoicing";
 import { InvoiceRun, type MonthDossier } from "./InvoiceRun";
 
 export const dynamic = "force-dynamic";
@@ -29,7 +29,7 @@ export default async function InvoicingPage() {
 
   const [{ data: clients }, { data: budgets }, { data: lines }, { data: invoices }] =
     await Promise.all([
-      supabase.from("clients").select("id, name").order("name"),
+      supabase.from("clients").select("id, name, contract_start_date").order("name"),
       supabase.from("client_budgets").select("client_id, billing_mode"),
       supabase
         .from("client_budget_lines")
@@ -46,10 +46,26 @@ export default async function InvoicingPage() {
     (budgets ?? []).map((row) => [row.client_id as string, (row.billing_mode ?? "comptant") as BillingMode]),
   );
   const nameById = new Map((clients ?? []).map((row) => [row.id as string, row.name as string]));
+  // Début de gestion : rien ne se facture avant lui.
+  const startById = new Map(
+    (clients ?? []).map((row) => [row.id as string, (row.contract_start_date as string | null) ?? null]),
+  );
 
   const statusByKey = new Map<string, InvoiceStatus>();
+  /*
+   * Statuts regroupés par client : le report d'une prestation au mois de
+   * démarrage s'arrête devant une facture déjà établie, et il faut donc
+   * pouvoir interroger l'état du mois d'origine.
+   */
+  const statusesByClient = new Map<string, Record<string, InvoiceStatus>>();
   for (const row of invoices ?? []) {
-    statusByKey.set(`${row.client_id}|${row.period_month}`, row.status as InvoiceStatus);
+    const clientId = row.client_id as string;
+    const month = row.period_month as string;
+    const status = row.status as InvoiceStatus;
+    statusByKey.set(`${clientId}|${month}`, status);
+    const forClient = statusesByClient.get(clientId) ?? {};
+    forClient[monthKey(month)] = status;
+    statusesByClient.set(clientId, forClient);
   }
 
   // Mois → client → prestations du mois.
@@ -76,7 +92,13 @@ export default async function InvoicingPage() {
     // La règle de facturation vit dans le domaine : un seul endroit à corriger.
     if (billableLines([line], modeByClient.get(clientId) ?? "comptant").length === 0) continue;
 
-    const month = monthKey(row.performed_on as string);
+    // Même règle que les écrans budget : rien ne se facture avant le début de
+    // gestion, sauf si le mois d'origine porte déjà une facture établie.
+    const month = invoiceMonthFor(
+      line,
+      startById.get(clientId) ?? null,
+      statusesByClient.get(clientId) ?? {},
+    );
     const clientsOfMonth = byMonth.get(month) ?? new Map<string, BudgetLine[]>();
     const list = clientsOfMonth.get(clientId) ?? [];
     list.push(line);

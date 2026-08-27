@@ -59,6 +59,11 @@ export function monthLabel(month: string): string {
 /**
  * Mois de facturation d'une prestation.
  *
+ * Exportée : l'écran de facturation groupée regroupe lui-même par mois, sans
+ * passer par `invoiceMonths`. Deux regroupements écrits séparément avaient
+ * déjà divergé — celui-ci continuait de ranger une prestation au mois de sa
+ * saisie après que l'autre eut été corrigé.
+ *
  * Rien ne se facture avant que la gestion ait commencé. Une prestation
  * préparée en amont — le cas courant : on garnit l'addition d'un client dont
  * la gestion démarre le mois suivant — porte la date du jour de sa saisie, et
@@ -68,7 +73,7 @@ export function monthLabel(month: string): string {
  * La date de la ligne reste celle de la prestation : c'est le rattachement
  * comptable qui est décalé, pas la trace de ce qui a été fait.
  */
-function invoiceMonthFor(
+export function invoiceMonthFor(
   line: BudgetLine,
   contractStartDate: string | null,
   statuses: Record<string, InvoiceStatus>,
