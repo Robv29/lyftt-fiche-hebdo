@@ -241,9 +241,20 @@ export default async function DashboardPage() {
    * Retard de validation : la seule urgence de cet écran qui se compte, et
    * celle qui décide si l'on relance aujourd'hui ou non.
    */
-  const overdueSheets = sheets.filter((sheet) =>
+  const overdueSheets = awaitingClient.filter((sheet) =>
     sheet.validation_deadline_at
     && deadlineState(new Date(sheet.validation_deadline_at)).isOverdue).length;
+
+  /*
+   * Plafond de la liste : la page ne doit jamais s'allonger.
+   *
+   * Huit tient exactement dans les deux colonnes, sur quatre rangées. Les
+   * fiches arrivent triées par échéance : ce sont donc les plus urgentes qui
+   * restent, et le lien mène au planning pour les autres.
+   */
+  const AWAITING_SHOWN = 8;
+  const awaitingShown = awaitingClient.slice(0, AWAITING_SHOWN);
+  const awaitingHidden = awaitingClient.length - awaitingShown.length;
   const greetingDate = new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Paris" }).format(new Date());
   const publicationProgress = publications.length ? Math.round((published / publications.length) * 100) : 100;
 
@@ -297,10 +308,11 @@ export default async function DashboardPage() {
           </div>
           <div className="flex items-center gap-2">
             {overdueSheets > 0 && <span className="badge bg-state-changes/10 text-state-changes">{overdueSheets} en retard</span>}
-            <span className="badge bg-[#e8f2ff] text-[#0b5e9f]">{sheets.length}</span>
+            <span className="badge bg-[#e8f2ff] text-[#0b5e9f]">{awaitingClient.length}</span>
+            <Link href="/fiches" className="text-xs font-semibold text-[#0b63ad] hover:text-[#07487f]">Tout voir →</Link>
           </div>
         </div>
-        {sheets.length === 0 ? (
+        {awaitingClient.length === 0 ? (
           <p className="px-5 py-6 text-center text-sm text-ink-faint">Aucune validation en attente.</p>
         ) : (
           /*
@@ -309,7 +321,7 @@ export default async function DashboardPage() {
             avec le message de rappel déjà prêt.
           */
           <ul className="grid divide-y divide-line xl:grid-cols-2 xl:divide-x">
-            {sheets.map((sheet) => {
+            {awaitingShown.map((sheet) => {
               const client = sheet.clients as unknown as { name: string } | null;
               const deadline = sheet.validation_deadline_at ? deadlineState(new Date(sheet.validation_deadline_at)) : null;
               return <li key={sheet.id} className="flex items-center gap-2 px-5 py-3 transition-colors hover:bg-[#f7fafe]">
@@ -329,6 +341,14 @@ export default async function DashboardPage() {
               </li>;
             })}
           </ul>
+        )}
+        {awaitingHidden > 0 && (
+          <Link
+            href="/fiches"
+            className="block border-t border-line px-5 py-2.5 text-center text-xs font-semibold text-[#0b63ad] hover:bg-[#f7fafe]"
+          >
+            {awaitingHidden} autre{awaitingHidden > 1 ? "s" : ""} fiche{awaitingHidden > 1 ? "s" : ""} en attente — voir le planning →
+          </Link>
         )}
       </section>
 

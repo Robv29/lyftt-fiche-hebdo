@@ -372,6 +372,8 @@
     .dashboard-hero-metrics>a { padding:7px 9px; }
     .dashboard-page .section-card-header { padding:9px 16px; }
     .dashboard-page #validations li { padding-top:8px; padding-bottom:8px; }
+    /* Le pied « voir le planning » ne doit pas être ce qui fait déborder. */
+    .dashboard-page #validations>a:last-child { padding-top:7px; padding-bottom:7px; }
   }
 
   /* Même correction que le tableau de bord : les indicateurs défilent. */
