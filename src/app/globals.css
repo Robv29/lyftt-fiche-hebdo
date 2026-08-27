@@ -340,28 +340,39 @@
     min-height:0;
     display:grid;
     grid-template-rows:auto auto minmax(0,1fr);
-    gap:14px;
+    gap:12px;
   }
-  .dashboard-hero { padding:18px 24px; border-radius:22px; }
-  .dashboard-hero h1 { margin-top:4px; font-size:clamp(1.65rem,2.3vw,2.15rem); }
-  .dashboard-hero p.mt-2 { margin-top:4px; }
-  .dashboard-hero-metrics { margin-top:16px; gap:9px; }
-  .dashboard-hero-metrics>div { padding:10px 12px; border-radius:14px; }
-  .dashboard-kpis-heading { margin-bottom:8px; }
-  .dashboard-kpis-heading h2 { margin-top:2px; font-size:1rem; }
-  .dashboard-kpi-grid { gap:10px; }
-  .dashboard-stat { padding:12px 14px; border-radius:16px; }
-  .dashboard-stat .metric-icon { width:34px; height:34px; border-radius:10px; }
-  .dashboard-stat-label { margin-top:9px; }
-  .dashboard-stat-value { font-size:25px; }
-  .dashboard-stat-detail { margin-top:4px; font-size:10px; }
-  .dashboard-bottom { min-height:0; gap:14px; }
+  .dashboard-hero { padding:16px 22px; border-radius:22px; }
+  .dashboard-hero h1 { font-size:clamp(1.25rem,1.8vw,1.6rem); }
+  /* Deux rangées de quatre : plus lisibles que huit colonnes étroites. */
+  .dashboard-hero-metrics { margin-top:14px; gap:8px; }
+  .dashboard-hero-metrics>a { padding:9px 10px; border-radius:14px; }
+  .dashboard-hero-metrics>a p:first-child { font-size:10px; }
+  .dashboard-hero-metrics>a span:last-of-type { font-size:1.05rem; }
+  .dashboard-bottom { min-height:0; gap:12px; }
   .dashboard-bottom>* { min-height:0; }
   .dashboard-bottom .section-card { overflow:hidden; }
   .dashboard-bottom .section-card-header { padding:11px 16px; }
   .dashboard-bottom .section-card-header h2 { margin-top:2px; font-size:.875rem; }
   .dashboard-bottom li a { padding:9px 16px; }
   .dashboard-bottom li a .h-10 { width:34px; height:34px; border-radius:10px; }
+
+  /*
+   * Écrans courts — portables 768 px et fenêtres réduites.
+   *
+   * Le tableau de bord tient tout juste sur 900 px ; en dessous, une trentaine
+   * de pixels manquaient et faisaient apparaître une barre de défilement pour
+   * quelques lignes. On resserre plutôt que de laisser l'écran se couper : la
+   * promesse de cette page est qu'un coup d'œil suffit.
+   */
+  @media (max-height: 830px) {
+    .dashboard-page { gap:10px; }
+    .dashboard-hero { padding:12px 20px; }
+    .dashboard-hero-metrics { margin-top:10px; gap:6px; }
+    .dashboard-hero-metrics>a { padding:7px 9px; }
+    .dashboard-page .section-card-header { padding:9px 16px; }
+    .dashboard-page #validations li { padding-top:8px; padding-bottom:8px; }
+  }
 
   /* Même correction que le tableau de bord : les indicateurs défilent. */
   .insights-page {

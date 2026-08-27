@@ -237,85 +237,88 @@ export default async function DashboardPage() {
    */
   const awaitingClient = sheets.filter((sheet) =>
     ["sent_to_client", "partially_approved", "awaiting_revalidation"].includes(sheet.status));
+  /*
+   * Retard de validation : la seule urgence de cet écran qui se compte, et
+   * celle qui décide si l'on relance aujourd'hui ou non.
+   */
+  const overdueSheets = sheets.filter((sheet) =>
+    sheet.validation_deadline_at
+    && deadlineState(new Date(sheet.validation_deadline_at)).isOverdue).length;
   const greetingDate = new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Paris" }).format(new Date());
   const publicationProgress = publications.length ? Math.round((published / publications.length) * 100) : 100;
 
   return (
     <div className="dashboard-page">
-      <section className="dashboard-hero relative overflow-hidden rounded-[26px] bg-gradient-to-br from-[#157bc3] via-[#1166a8] to-[#0b4f88] p-6 text-white shadow-[0_22px_52px_rgba(11,79,136,.20)] sm:p-8">
+      {/*
+        En-tête et indicateurs réunis.
+        Ils occupaient deux blocs empilés — un bandeau de bienvenue, puis quatre
+        grandes cartes — soit près de la moitié de l'écran avant d'arriver à ce
+        qui demande une action. Les huit chiffres tiennent dans le bandeau, et
+        chacun mène à l'écran correspondant : un compteur qu'on ne peut pas
+        ouvrir n'est qu'une décoration.
+      */}
+      <section className="dashboard-hero relative overflow-hidden rounded-[26px] bg-gradient-to-br from-[#157bc3] via-[#1166a8] to-[#0b4f88] p-5 text-white shadow-[0_22px_52px_rgba(11,79,136,.20)] sm:p-6">
         <span aria-hidden="true" className="absolute -right-16 -top-24 h-72 w-72 rounded-full bg-white/[.07]" />
         <span aria-hidden="true" className="absolute -bottom-32 left-16 h-64 w-64 rounded-full bg-[#6bc1ff]/10" />
-        <div className="relative flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <p className="text-xs font-semibold capitalize text-white/70">{greetingDate}</p>
-            <h1 className="mt-2 text-[clamp(1.8rem,3vw,2.55rem)] font-semibold leading-tight tracking-[-.04em]">Bonjour {profile?.full_name?.split(" ")[0]}</h1>
-            <p className="mt-2 max-w-xl text-sm leading-relaxed text-white/75">Votre production, vos validations et les retours clients réunis dans une seule vue.</p>
+        <div className="relative flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-[clamp(1.3rem,2vw,1.7rem)] font-semibold leading-tight tracking-[-.03em]">
+              Bonjour {profile?.full_name?.split(" ")[0]}
+            </h1>
+            <p className="mt-0.5 text-xs capitalize text-white/65">{greetingDate}</p>
           </div>
-          <Link href="/fiches" className="btn w-fit border border-white/20 bg-white/10 text-white shadow-none backdrop-blur-sm hover:bg-white/20"><Icon name="calendar" className="h-4 w-4"/>Ouvrir le planning</Link>
+          <Link href="/fiches" className="btn w-fit shrink-0 border border-white/20 bg-white/10 text-white shadow-none backdrop-blur-sm hover:bg-white/20"><Icon name="calendar" className="h-4 w-4"/>Ouvrir le planning</Link>
         </div>
 
-        <div className="dashboard-hero-metrics relative mt-7 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <HeroMetric icon="layers" label="Fiches à préparer" value={toPrepare} />
-          <HeroMetric icon="check" label="Validations en attente" value={awaitingClient.length} />
+        <div className="dashboard-hero-metrics relative mt-4 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+          <HeroMetric icon="check" label="Validations en attente" value={awaitingClient.length} href="#validations" tone={awaitingClient.length ? "alert" : "calm"} />
+          <HeroMetric icon="clock" label="Fiches à renvoyer" value={toResend.length} href="/fiches" tone={toResend.length ? "alert" : "calm"} />
+          <HeroMetric icon="message" label="Nouveaux retours" value={newTickets.length} href="/retours" tone={newTickets.length ? "alert" : "calm"} />
+          <HeroMetric icon="layers" label="Fiches à préparer" value={toPrepare} href="/fiches?tab=next" />
+          <HeroMetric icon="layers" label="Corrections production" value={production.length} href="/production" />
+          <HeroMetric icon="send" label="Publications du jour" value={`${published}/${publications.length}`} href="/publications" detail={`${publicationProgress} %`} />
           {isAdmin
-            ? <HeroMetric icon="euro" label="Budgets à régulariser" value={budgetIssues} />
-            : <HeroMetric icon="warning" label="Tickets prioritaires" value={urgent.length} />}
-          <HeroMetric icon="send" label="Publications aujourd’hui" value={publications.length} />
+            ? <HeroMetric icon="euro" label="Budgets à régulariser" value={budgetIssues} href="/budget" tone={budgetIssues ? "alert" : "calm"} />
+            : <HeroMetric icon="warning" label="Tickets prioritaires" value={urgent.length} href="/retours" tone={urgent.length ? "alert" : "calm"} />}
+          <HeroMetric icon="users" label="Clients en gestion" value={producible.length} href="/clients" />
         </div>
       </section>
 
-      <section className="dashboard-kpis" aria-labelledby="dashboard-metrics">
-        <div className="dashboard-kpis-heading mb-4 flex items-end justify-between gap-3">
-          <div><p className="eyebrow">Pilotage</p><h2 id="dashboard-metrics" className="mt-1 text-lg font-semibold">L’essentiel en un regard</h2></div>
-          <span className="text-xs text-ink-faint">{producible.length} clients en gestion</span>
-        </div>
-        <div className="dashboard-kpi-grid grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <Stat icon="message" label="Nouveaux retours" value={newTickets.length} tone={newTickets.length ? "danger" : "blue"} detail="à qualifier" />
-          <Stat icon="layers" label="Corrections production" value={production.length} tone="violet" detail="photo ou vidéo" />
-          <Stat icon="send" label="Contenus publiés" value={`${published}/${publications.length}`} tone="success" detail={`${publicationProgress}% de la journée`} />
-          <Stat icon="clock" label="Fiches à renvoyer" value={toResend.length} tone="warning" detail="nouvelle version prête" />
-        </div>
-      </section>
-
-      <div className="dashboard-bottom grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,.65fr)]">
-        <section className="section-card">
-          <div className="section-card-header">
-            <div><p className="eyebrow">File d’intervention</p><h2 className="mt-1 font-semibold">Retours clients à traiter</h2></div>
-            <Link href="/retours" className="text-xs font-semibold text-[#0b63ad] hover:text-[#07487f]">Tout voir →</Link>
+      {/*
+        Validations en attente, juste sous l'en-tête.
+        C'est le seul bloc d'où part une action vers le client — relancer — et
+        il était relégué en bas de la colonne de droite, sous les shootings.
+      */}
+      <section className="section-card" id="validations">
+        <div className="section-card-header">
+          <div>
+            <p className="eyebrow">Validation</p>
+            <h2 className="mt-1 font-semibold">Fiches en attente de validation client</h2>
           </div>
-          {tickets.length === 0 ? (
-            <div className="flex min-h-44 flex-col items-center justify-center px-5 py-8 text-center"><span className="empty-state-icon"><Icon name="check" className="h-5 w-5"/></span><strong className="mt-3 text-sm">Tout est à jour</strong><p className="mt-1 text-xs text-ink-faint">Aucun retour client ne demande votre attention.</p></div>
-          ) : (
-            <ul className="divide-y divide-line">
-              {tickets.slice(0, 3).map((ticket) => {
-                const client = ticket.clients as unknown as { name: string } | null;
-                return <li key={ticket.id}><Link href={`/retours/${ticket.id}`} className="group grid gap-2 px-5 py-4 transition-colors hover:bg-[#f7fafe] sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-                  <div className="flex min-w-0 items-center gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#e8f2ff] text-xs font-bold text-[#0b4f88]">{(client?.name ?? "CL").slice(0,2).toUpperCase()}</span><div className="min-w-0"><strong className="block truncate text-sm">{client?.name ?? "Client"}</strong><p className="mt-0.5 truncate text-xs text-ink-faint">{getTicketTypeDefinition(ticket.ticket_type).label} · {ticket.ticket_number}</p></div></div>
-                  <div className="flex items-center gap-2 pl-[52px] sm:pl-0">{ticket.priority !== "normal" && <span className="badge bg-state-changes/10 text-state-changes">{ticketPriorityLabel(ticket.priority)}</span>}<span className="badge bg-canvas text-ink-soft">{ticketStatusLabel(ticket.status)}</span><Icon name="arrow" className="h-4 w-4 text-ink-faint transition-transform group-hover:translate-x-0.5"/></div>
-                </Link></li>;
-              })}
-            </ul>
-          )}
-        </section>
-
-        <div className="space-y-6">
-          {/* Rien à afficher tant qu'aucun shooting n'arrive à échéance. */}
-          <ShootingReminders rows={shootingRows}/>
-
-          <section className="section-card">
-            <div className="section-card-header"><div><p className="eyebrow">Validation</p><h2 className="mt-1 font-semibold">Fiches en attente</h2></div><span className="badge bg-[#e8f2ff] text-[#0b5e9f]">{sheets.length}</span></div>
-            {/*
-              La liste complète, dans un cadre qui défile : tronquer à trois
-              cachait les fiches suivantes sans aucun indice de leur existence.
-              « Relancer » ouvre la fiche avec le message de rappel déjà prêt.
-            */}
-            {sheets.length === 0 ? <p className="px-5 py-8 text-center text-sm text-ink-faint">Aucune validation en attente.</p> : <ul className="max-h-[420px] divide-y divide-line overflow-y-auto">{sheets.map((sheet) => {
+          <div className="flex items-center gap-2">
+            {overdueSheets > 0 && <span className="badge bg-state-changes/10 text-state-changes">{overdueSheets} en retard</span>}
+            <span className="badge bg-[#e8f2ff] text-[#0b5e9f]">{sheets.length}</span>
+          </div>
+        </div>
+        {sheets.length === 0 ? (
+          <p className="px-5 py-6 text-center text-sm text-ink-faint">Aucune validation en attente.</p>
+        ) : (
+          /*
+            Deux colonnes sur grand écran : sept fiches sur une seule colonne
+            repoussaient le reste hors de l'écran. « Relancer » ouvre la fiche
+            avec le message de rappel déjà prêt.
+          */
+          <ul className="grid divide-y divide-line xl:grid-cols-2 xl:divide-x">
+            {sheets.map((sheet) => {
               const client = sheet.clients as unknown as { name: string } | null;
               const deadline = sheet.validation_deadline_at ? deadlineState(new Date(sheet.validation_deadline_at)) : null;
-              return <li key={sheet.id} className="flex items-center gap-2 px-5 py-4 transition-colors hover:bg-[#f7fafe]">
+              return <li key={sheet.id} className="flex items-center gap-2 px-5 py-3 transition-colors hover:bg-[#f7fafe]">
                 <Link href={`/fiches/${sheet.id}`} className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-3"><strong className="truncate text-sm">{client?.name ?? "Client"}</strong><span className={`text-[11px] font-semibold ${deadline?.isOverdue ? "text-state-changes" : "text-ink-faint"}`}>{deadline?.label ?? `S${sheet.iso_week}`}</span></div>
-                  <p className="mt-1 truncate text-xs text-ink-faint">Semaine {sheet.iso_week} · {sheetStatusLabel(sheet.status)}</p>
+                  <div className="flex items-center justify-between gap-3">
+                    <strong className="truncate text-sm">{client?.name ?? "Client"}</strong>
+                    <span className={`shrink-0 text-[11px] font-semibold ${deadline?.isOverdue ? "text-state-changes" : "text-ink-faint"}`}>{deadline?.label ?? `S${sheet.iso_week}`}</span>
+                  </div>
+                  <p className="mt-0.5 truncate text-xs text-ink-faint">Semaine {sheet.iso_week} · {sheetStatusLabel(sheet.status)}</p>
                 </Link>
                 <Link
                   href={`/fiches/${sheet.id}?relance=1`}
@@ -324,20 +327,69 @@ export default async function DashboardPage() {
                   Relancer
                 </Link>
               </li>;
-            })}</ul>}
-          </section>
+            })}
+          </ul>
+        )}
+      </section>
 
-        </div>
+      <div className="dashboard-bottom grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(300px,.65fr)]">
+        <section className="section-card">
+          <div className="section-card-header">
+            <div><p className="eyebrow">File d’intervention</p><h2 className="mt-1 font-semibold">Retours clients à traiter</h2></div>
+            <Link href="/retours" className="text-xs font-semibold text-[#0b63ad] hover:text-[#07487f]">Tout voir →</Link>
+          </div>
+          {tickets.length === 0 ? (
+            <div className="flex flex-col items-center justify-center px-5 py-5 text-center"><span className="empty-state-icon"><Icon name="check" className="h-5 w-5"/></span><strong className="mt-2 text-sm">Tout est à jour</strong><p className="mt-1 text-xs text-ink-faint">Aucun retour client ne demande votre attention.</p></div>
+          ) : (
+            <ul className="divide-y divide-line">
+              {tickets.slice(0, 4).map((ticket) => {
+                const client = ticket.clients as unknown as { name: string } | null;
+                return <li key={ticket.id}><Link href={`/retours/${ticket.id}`} className="group grid gap-2 px-5 py-3 transition-colors hover:bg-[#f7fafe] sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                  <div className="flex min-w-0 items-center gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#e8f2ff] text-xs font-bold text-[#0b4f88]">{(client?.name ?? "CL").slice(0,2).toUpperCase()}</span><div className="min-w-0"><strong className="block truncate text-sm">{client?.name ?? "Client"}</strong><p className="mt-0.5 truncate text-xs text-ink-faint">{getTicketTypeDefinition(ticket.ticket_type).label} · {ticket.ticket_number}</p></div></div>
+                  <div className="flex items-center gap-2 pl-[48px] sm:pl-0">{ticket.priority !== "normal" && <span className="badge bg-state-changes/10 text-state-changes">{ticketPriorityLabel(ticket.priority)}</span>}<span className="badge bg-canvas text-ink-soft">{ticketStatusLabel(ticket.status)}</span><Icon name="arrow" className="h-4 w-4 text-ink-faint transition-transform group-hover:translate-x-0.5"/></div>
+                </Link></li>;
+              })}
+            </ul>
+          )}
+        </section>
+
+        {/* Rien à afficher tant qu'aucun shooting n'arrive à échéance. */}
+        <ShootingReminders rows={shootingRows}/>
       </div>
     </div>
   );
 }
 
-function HeroMetric({ icon, label, value }: { icon: string; label: string; value: number }) {
-  return <div className="flex items-center gap-3 rounded-2xl border border-white/15 bg-white/[.09] p-4 backdrop-blur-sm"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/15"><Icon name={icon} className="h-4 w-4"/></span><div><p className="text-[11px] text-white/65">{label}</p><p className="mt-0.5 text-2xl font-semibold tracking-[-.03em]">{value}</p></div></div>;
-}
-
-function Stat({ icon, label, value, detail, tone }: { icon: string; label: string; value: string | number; detail: string; tone: "blue" | "success" | "warning" | "danger" | "violet" }) {
-  const tones = { blue:"bg-[#e8f2ff] text-[#1176d3]", success:"bg-[#e8f8f1] text-[#128359]", warning:"bg-[#fff4e5] text-[#a75b00]", danger:"bg-[#ffedef] text-[#ce3540]", violet:"bg-[#f1edff] text-[#6f50c9]" };
-  return <article className="dashboard-stat metric-card lift-card"><div className="flex items-start justify-between gap-3"><span className={`metric-icon ${tones[tone]}`}><Icon name={icon} className="h-5 w-5"/></span><span className="text-[11px] font-semibold text-ink-faint">Temps réel</span></div><p className="dashboard-stat-label mt-5 text-[13px] font-medium text-ink-soft">{label}</p><p className="dashboard-stat-value mt-1 text-[30px] font-semibold leading-none tracking-[-.04em]">{value}</p><p className="dashboard-stat-detail mt-2 text-xs text-ink-faint">{detail}</p></article>;
+/**
+ * Chiffre du bandeau, cliquable.
+ *
+ * `tone="alert"` cercle le compteur quand il porte quelque chose à faire : sur
+ * huit chiffres alignés, celui qui appelle une action doit se distinguer sans
+ * qu'on lise les huit libellés.
+ */
+function HeroMetric({ icon, label, value, href, detail, tone = "plain" }: {
+  icon: string;
+  label: string;
+  value: number | string;
+  href: string;
+  detail?: string;
+  tone?: "plain" | "alert" | "calm";
+}) {
+  return (
+    <Link
+      href={href}
+      className={`flex items-center gap-2.5 rounded-2xl border p-3 backdrop-blur-sm transition-colors hover:bg-white/[.16] ${
+        tone === "alert" ? "border-white/40 bg-white/[.16]" : "border-white/15 bg-white/[.09]"
+      }`}
+    >
+      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-white/15"><Icon name={icon} className="h-4 w-4"/></span>
+      <div className="min-w-0">
+        <p className="truncate text-[11px] text-white/65">{label}</p>
+        <p className="mt-0.5 flex items-baseline gap-1.5">
+          <span className="text-xl font-semibold tracking-[-.03em]">{value}</span>
+          {detail && <span className="text-[10px] text-white/55">{detail}</span>}
+        </p>
+      </div>
+    </Link>
+  );
 }
