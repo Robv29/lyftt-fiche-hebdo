@@ -152,6 +152,50 @@ function shootingPlanFromInput(input: z.infer<typeof clientSchema>): ShootingPla
   });
 }
 
+/**
+ * Réglages du client tels qu'ils sont stockés dans `notes`.
+ *
+ * Une seule construction pour la création et la modification : les deux blocs
+ * étaient recopiés, et un réglage ajouté d'un côté manquait de l'autre. C'est
+ * arrivé avec la prestation sur mesure — enregistrée à la création, perdue à
+ * chaque modification.
+ *
+ * La modification conserve le profil de marque existant, d'où le paramètre :
+ * elle enrichit ce qui est là plutôt que de le remplacer.
+ */
+function clientSettings(
+  input: z.infer<typeof clientSchema>,
+  hashtags: { baseHashtags: string[]; customHashtags: string[]; recommendedHashtags: string[] },
+  existingBrandProfile: Record<string, unknown> = {},
+) {
+  return {
+    defaultNetworks: input.networks,
+    brandProfile: {
+      ...existingBrandProfile,
+      clientType: input.clientType,
+      activity: sanitizeText(input.activity, 120),
+      website: input.website,
+      city: sanitizeText(input.city, 100),
+      postalCode: input.postalCode,
+      audience: sanitizeText(input.audience, 300),
+      tone: input.brandTone,
+      keywords: sanitizeText(input.keywords, 1000),
+    },
+    baseHashtags: hashtags.baseHashtags,
+    customHashtags: hashtags.customHashtags,
+    recommendedHashtags: hashtags.recommendedHashtags,
+    publicationWeekdays: normalizeWeekdays(input.publicationWeekdays),
+    monthlyCadence: {
+      photo: input.photoPerMonth,
+      video: input.videoPerMonth,
+      story: input.storyPerMonth,
+      visual: input.visualPerMonth,
+    },
+    shootingPlan: shootingPlanFromInput(input),
+    customMonthlyService: customMonthlyFromInput(input),
+  };
+}
+
 function clientFormValues(formData: FormData) {
   return {
     name: formData.get("name"),
@@ -248,35 +292,10 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
   if (!hashtags) {
     return { ok: false, message: "Les 5 hashtags client doivent être différents entre eux et des hashtags métier." };
   }
-  const { baseHashtags, customHashtags, recommendedHashtags } = hashtags;
 
   const admin = createSupabaseAdminClient();
 
-  const notes = JSON.stringify({
-    defaultNetworks: input.networks,
-    brandProfile: {
-      clientType: input.clientType,
-      activity: sanitizeText(input.activity, 120),
-      website: input.website,
-      city: sanitizeText(input.city, 100),
-      postalCode: input.postalCode,
-      audience: sanitizeText(input.audience, 300),
-      tone: input.brandTone,
-      keywords: sanitizeText(input.keywords, 1000),
-    },
-    baseHashtags,
-    customHashtags,
-    recommendedHashtags,
-    publicationWeekdays: normalizeWeekdays(input.publicationWeekdays),
-    monthlyCadence: {
-      photo: input.photoPerMonth,
-      video: input.videoPerMonth,
-      story: input.storyPerMonth,
-      visual: input.visualPerMonth,
-    },
-    shootingPlan: shootingPlanFromInput(input),
-    customMonthlyService: customMonthlyFromInput(input),
-  });
+  const notes = JSON.stringify(clientSettings(input, hashtags));
 
   // Un slug déjà pris est suffixé plutôt que de faire échouer la création.
   let slug = slugify(input.name);
@@ -414,32 +433,7 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
     ? currentNotes.brandProfile as Record<string, unknown>
     : {};
 
-  const notes = {
-    ...currentNotes,
-    defaultNetworks: input.networks,
-    brandProfile: {
-      ...existingBrandProfile,
-      clientType: input.clientType,
-      activity: sanitizeText(input.activity, 120),
-      website: input.website,
-      city: sanitizeText(input.city, 100),
-      postalCode: input.postalCode,
-      audience: sanitizeText(input.audience, 300),
-      tone: input.brandTone,
-      keywords: sanitizeText(input.keywords, 1000),
-    },
-    baseHashtags: hashtags.baseHashtags,
-    customHashtags: hashtags.customHashtags,
-    recommendedHashtags: hashtags.recommendedHashtags,
-    publicationWeekdays: normalizeWeekdays(input.publicationWeekdays),
-    monthlyCadence: {
-      photo: input.photoPerMonth,
-      video: input.videoPerMonth,
-      story: input.storyPerMonth,
-      visual: input.visualPerMonth,
-    },
-    shootingPlan: shootingPlanFromInput(input),
-  };
+  const notes = { ...currentNotes, ...clientSettings(input, hashtags, existingBrandProfile) };
 
   const { error: clientError } = await admin.from("clients").update({
     name: sanitizeText(input.name, 120),
