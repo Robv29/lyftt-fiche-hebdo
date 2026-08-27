@@ -195,8 +195,15 @@ function PublishPanel({item,pending,locked,onPublished,onNetwork,onCollaboration
 
 function PublicationCard({item,pending,onDownload,onCopy,onPublished,onNetwork,onCollaboration}:{item:DailyPublication;pending:boolean;onDownload:()=>void;onCopy:()=>void;onPublished:(published:boolean)=>void;onNetwork:(network:SocialNetwork,on:boolean)=>void;onCollaboration:(done:boolean)=>void}) {
   const mediaDone=!item.mediaRequired||Boolean(item.mediaDownloadedAt); const contentDone=Boolean(item.contentCopiedAt); const done=Boolean(item.publishedAt);
-  // Publier un contenu que le client n'a pas validé est le risque que tout le
-  // module cherche à éliminer : les actions restent bloquées jusque-là.
+  /*
+   * Publier un contenu que le client n'a pas validé est le risque que tout le
+   * module cherche à éliminer : cocher « publié » reste donc bloqué jusque-là.
+   *
+   * Télécharger le média, en revanche, ne publie rien : c'est de la
+   * préparation, et l'interdire obligeait à attendre la validation pour
+   * commencer à travailler — parfois le matin même de la publication. Le
+   * téléchargement est donc ouvert, la publication non.
+   */
   const locked=!item.approved&&!done;
   return <article className={`card lift-card overflow-hidden transition-colors ${done?"border-state-approved/30 bg-[#fbfffd]":locked?"border-state-progress/30":""}`}>
     <header className="flex flex-wrap items-start justify-between gap-3 border-b p-5"><div><div className="flex items-center gap-2"><h3 className="font-semibold">{item.clientName}</h3><span className="text-xs font-medium text-ink-faint">{item.scheduledTime?.slice(0,5)??"Heure libre"}</span>{done&&<span className="badge gap-1 bg-[#e8f8f1] text-state-approved"><Icon name="check" className="h-3 w-3"/>Publié</span>}</div><p className="mt-1 text-xs text-ink-faint">{item.formatLabel} · {item.networks.join(", ")}</p></div><span className={`badge ${item.approved?"bg-[#e8f8f1] text-state-approved":"bg-[#fff4e5] text-state-progress"}`}>{item.approvalLabel}</span></header>
@@ -204,7 +211,7 @@ function PublicationCard({item,pending,onDownload,onCopy,onPublished,onNetwork,o
       <MediaPreview item={item}/>
       <div className="min-w-0"><p className="line-clamp-6 whitespace-pre-wrap text-sm leading-relaxed">{item.caption||"Texte vide"}</p>{item.hashtags.length>0&&<p className="mt-3 break-words text-xs leading-relaxed text-[#0b63ad]">{item.hashtags.join(" ")}</p>}</div>
     </div>
-    <div className="border-t bg-[#fbfcfe] p-4">{locked&&<p className="mb-3 rounded-xl bg-[#fff4e5] px-3 py-2 text-xs leading-relaxed text-[#8a5700]">En attente de validation client. Le média et le texte se débloqueront dès que le client aura validé cette publication.</p>}<div className="grid gap-2 sm:grid-cols-2"><button type="button" className={mediaDone?"btn-secondary border-state-approved/30 text-state-approved":"btn-secondary"} disabled={pending||locked||(!item.mediaUrl&&item.mediaRequired)} onClick={onDownload}>{mediaDone?<Icon name="check" className="h-4 w-4"/>:<Icon name="download" className="h-4 w-4"/>}{mediaDone?"Média téléchargé":item.mediaRequired?(item.gallery.length>1?`Télécharger les ${item.gallery.length} images`:"Télécharger le média"):"Aucun média requis"}</button><button type="button" className={contentDone?"btn-secondary border-state-approved/30 text-state-approved":"btn-primary"} disabled={pending||locked} onClick={onCopy}>{contentDone?<Icon name="check" className="h-4 w-4"/>:<Icon name="copy" className="h-4 w-4"/>}{contentDone?"Texte copié":"Copier texte + hashtags"}</button></div>
+    <div className="border-t bg-[#fbfcfe] p-4">{locked&&<p className="mb-3 rounded-xl bg-[#fff4e5] px-3 py-2 text-xs leading-relaxed text-[#8a5700]">En attente de validation client. Le média est téléchargeable pour préparer, mais la publication reste bloquée tant que le client n&apos;a pas validé.</p>}<div className="grid gap-2 sm:grid-cols-2"><button type="button" className={mediaDone?"btn-secondary border-state-approved/30 text-state-approved":"btn-secondary"} disabled={pending||(!item.mediaUrl&&item.mediaRequired)} onClick={onDownload}>{mediaDone?<Icon name="check" className="h-4 w-4"/>:<Icon name="download" className="h-4 w-4"/>}{mediaDone?"Média téléchargé":item.mediaRequired?(item.gallery.length>1?`Télécharger les ${item.gallery.length} images`:"Télécharger le média"):"Aucun média requis"}</button><button type="button" className={contentDone?"btn-secondary border-state-approved/30 text-state-approved":"btn-primary"} disabled={pending||locked} onClick={onCopy}>{contentDone?<Icon name="check" className="h-4 w-4"/>:<Icon name="copy" className="h-4 w-4"/>}{contentDone?"Texte copié":"Copier texte + hashtags"}</button></div>
 
       <PublishPanel item={item} pending={pending} locked={locked} onPublished={onPublished} onNetwork={onNetwork} onCollaboration={onCollaboration}/>
     </div>
