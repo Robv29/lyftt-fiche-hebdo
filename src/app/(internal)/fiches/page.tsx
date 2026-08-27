@@ -2,6 +2,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { formatPeriod } from "@/lib/domain/deadline";
 import {
   civilDaysBefore,
+  contentBucketStatuses,
   planningBucketForPeriod,
   planningWeekRange,
   sheetCompletion,
@@ -43,15 +44,19 @@ interface PlanningSheet {
   client_tickets: PlanningTicket[];
 }
 
-function completionForSheet(sheet: PlanningSheet) {
-  return sheetCompletion(sheet.weekly_sheet_items.map((item) => ({
+function completionItems(sheet: PlanningSheet) {
+  return sheet.weekly_sheet_items.map((item) => ({
     caption: item.caption,
     hashtags: item.hashtags,
     format: item.format,
     mediaAssetId: item.media_asset_id,
     mediaExternalUrl: item.media_external_url,
     isCancelled: item.is_cancelled,
-  })));
+  }));
+}
+
+function completionForSheet(sheet: PlanningSheet) {
+  return sheetCompletion(completionItems(sheet));
 }
 
 function hasHighPriorityChange(sheet: PlanningSheet): boolean {
@@ -80,6 +85,13 @@ function sheetEntry(sheet: PlanningSheet): PlanningEntry {
     percentage: completion.percentage,
     completed: completion.completed,
     total: completion.total,
+    /*
+     * Un pourcentage dit *combien* il reste, jamais *quoi*. Les familles de
+     * contenu répondent à la seconde question sans ouvrir la fiche — même
+     * découpage que la vue Production, pour ne pas avoir deux lectures du
+     * même état selon l'écran.
+     */
+    buckets: contentBucketStatuses(completionItems(sheet)),
     topic: sheet.topic,
   };
 }

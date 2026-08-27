@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Icon } from "@/components/Icon";
+import { CONTENT_BUCKETS, type ContentBucket } from "@/lib/domain/content-buckets";
+import type { BucketStatus } from "@/lib/domain/planning";
 import { SheetTopic } from "./SheetTopic";
 
 export type PlanningEntry =
@@ -19,6 +21,8 @@ export type PlanningEntry =
       percentage: number;
       completed: number;
       total: number;
+      /** État par famille de contenu : dit *quoi* manque, là où le pourcentage ne dit que *combien*. */
+      buckets: Record<ContentBucket, BucketStatus>;
       /** Sujet de la semaine, modifiable sur place — seulement affiché si `showTopic`. */
       topic: string | null;
     }
@@ -55,6 +59,52 @@ function ProgressBar({ percentage, label }: { percentage: number; label: string 
       <div className="h-1.5 overflow-hidden rounded-full bg-[#e8edf4]" role="progressbar" aria-label={`${label} : ${percentage}%`} aria-valuenow={percentage} aria-valuemin={0} aria-valuemax={100}>
         <span className={`block h-full origin-left rounded-full transition-transform duration-300 ${percentage === 100 ? "bg-state-approved" : "bg-[#1468ff]"}`} style={{ transform: `scaleX(${percentage / 100})` }}/>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Familles de contenu d'une fiche, en pastilles.
+ *
+ * Le pourcentage dit combien il reste à faire, jamais quoi : une fiche à 60 %
+ * peut attendre une vidéo comme trois légendes. Chaque famille présente sur la
+ * fiche prend donc sa couleur — pleine quand elle est prête, cerclée et barrée
+ * d'un « ! » quand il y manque quelque chose.
+ *
+ * Les familles absentes de la fiche ne sont pas affichées : une pastille grise
+ * « pas de story cette semaine » n'apprend rien et encombre une petite carte.
+ * Mêmes couleurs et mêmes états que la vue Production, pour qu'un même symbole
+ * ne veuille pas dire deux choses selon l'écran.
+ */
+function BucketDots({ buckets }: { buckets: Record<ContentBucket, BucketStatus> }) {
+  const shown = CONTENT_BUCKETS.filter((bucket) => buckets[bucket.key] !== "none");
+  if (shown.length === 0) return null;
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-1.5">
+      {shown.map((bucket) => {
+        const ready = buckets[bucket.key] === "ready";
+        return (
+          <span
+            key={bucket.key}
+            title={`${bucket.label} : ${ready ? "prêt" : "à compléter"}`}
+            className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold"
+            style={
+              ready
+                ? { background: bucket.accent, borderColor: bucket.accent, color: "#fff" }
+                : { background: bucket.bg, borderColor: bucket.accent, color: bucket.text }
+            }
+          >
+            <Icon name={ready ? "check" : "warning"} className="h-3 w-3"/>
+            {bucket.label}
+          </span>
+        );
+      })}
+      <span className="sr-only">
+        {shown.filter((bucket) => buckets[bucket.key] !== "ready").length === 0
+          ? "Toutes les familles de contenu sont prêtes."
+          : `À compléter : ${shown.filter((bucket) => buckets[bucket.key] !== "ready").map((bucket) => bucket.label).join(", ")}.`}
+      </span>
     </div>
   );
 }
@@ -136,14 +186,19 @@ export function PlanningSheetList({
                   <Icon name="arrow" className="mt-1 h-4 w-4 shrink-0 text-ink-faint"/>
                 </div>
 
+                <BucketDots buckets={entry.buckets}/>
+
                 {showProgress && entry.percentage < 100 && (
                   <div className="mt-4"><ProgressBar percentage={entry.percentage} label="Préparation de la fiche"/></div>
                 )}
 
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t pt-3 text-xs">
                   <span className={entry.validated ? "font-semibold text-state-approved" : "text-ink-soft"}>{entry.statusLabel}</span>
+                  {/* Le pourcentage s'affiche sur toutes les cartes, y compris à 100 % : son absence
+                      se lisait comme une donnée manquante plutôt que comme une fiche terminée. */}
                   <span className={entry.percentage === 100 ? "font-semibold text-state-approved" : "text-ink-faint"}>
-                    {entry.percentage === 100 ? "Fiche complète" : `${entry.completed}/${entry.total} éléments prêts`}
+                    <strong className={entry.percentage === 100 ? "" : "text-[#0759e6]"}>{entry.percentage} %</strong>
+                    {entry.percentage === 100 ? " · fiche complète" : ` · ${entry.completed}/${entry.total} éléments prêts`}
                   </span>
                 </div>
               </Link>
