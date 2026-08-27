@@ -89,3 +89,49 @@ describe("§4 — message d'accompagnement", () => {
     expect(whatsappLink("Coucou")).toBe("https://wa.me/?text=Coucou");
   });
 });
+
+/*
+ * Les deux liens, dans tous les tons.
+ *
+ * Seul le modèle « standard » portait le lien des demandes spéciales : changer
+ * de ton le faisait disparaître du message, et le client n'avait plus par où
+ * passer pour un devis ou une date de shooting. Rien ne le signalait, la
+ * vérification existante ne portant que sur les variables employées par un
+ * modèle, jamais sur celles qui lui manquaient.
+ *
+ * Ce test porte sur `DEFAULT_TEMPLATES` en entier : un ton ajouté plus tard
+ * sans le second lien échouera ici.
+ */
+describe("liens présents dans tous les modèles", () => {
+  const tons = Object.entries(DEFAULT_TEMPLATES);
+
+  it.each(tons)("le modèle « %s » porte le lien de validation", (_ton, body) => {
+    expect(body).toContain("{{review_link}}");
+  });
+
+  it.each(tons)("le modèle « %s » porte le lien des demandes spéciales", (_ton, body) => {
+    expect(body).toContain("{{request_link}}");
+  });
+
+  it("place le second lien avant la formule de politesse, pas après", () => {
+    // On ne prend pas congé avant de donner une information : le lien qui suit
+    // « Très belle journée » ne serait plus lu.
+    for (const [ton, body] of tons) {
+      const lien = body.lastIndexOf("{{request_link}}");
+      const signature = body.lastIndexOf("{{community_manager_name}}");
+      expect(lien, `${ton} : le lien doit précéder la signature`).toBeLessThan(signature);
+    }
+  });
+
+  it("rend les deux liens dans le message final, quel que soit le ton", () => {
+    for (const [ton, body] of tons) {
+      const rendu = renderTemplate(body, {
+        ...context,
+        review_link: "https://exemple.test/r/abc",
+        request_link: "https://exemple.test/r/abc/demandes",
+      });
+      expect(rendu.body, `${ton}`).toContain("https://exemple.test/r/abc/demandes");
+      expect(rendu.missing, `${ton}`).toEqual([]);
+    }
+  });
+});

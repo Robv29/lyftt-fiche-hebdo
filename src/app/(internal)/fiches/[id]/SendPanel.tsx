@@ -85,6 +85,18 @@ export function SendPanel({
   const body = draft ?? rendered.body;
   const complete = isRenderComplete(rendered) && Boolean(reviewUrl);
 
+  /*
+   * Le second lien porte tout ce qui ne concerne pas les publications de la
+   * semaine : devis, dates de shooting, services annexes. Un message parti sans
+   * lui renvoie le client au message libre, précisément ce que ce formulaire
+   * remplace.
+   *
+   * La vérification porte sur le texte réellement envoyé, brouillon compris :
+   * les modèles le contiennent tous, mais rien n'empêche de l'effacer en
+   * retouchant le message avant l'envoi.
+   */
+  const missingRequestLink = Boolean(reviewUrl) && !body.includes(`${reviewUrl}/demandes`);
+
   const run = (action: () => Promise<InternalActionResult>) => {
     startTransition(async () => {
       const result = await action();
@@ -208,6 +220,12 @@ export function SendPanel({
         {rendered.missing.length > 0 && (
           <p className="mt-2 text-xs text-state-changes">
             Informations manquantes : {rendered.missing.join(", ")}.
+          </p>
+        )}
+        {missingRequestLink && (
+          <p className="mt-2 text-xs text-state-progress">
+            Le lien « autre demande » ne figure pas dans ce message : le client n&apos;aura pas
+            par où passer pour un devis ou une date de shooting.
           </p>
         )}
 

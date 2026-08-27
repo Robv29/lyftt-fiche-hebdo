@@ -110,6 +110,9 @@ Prenez le temps de les regarder : si un texte ou une photo ne vous convient pas,
 
 Idéalement avant le {{validation_deadline}}, pour que nous ayons le temps d'ajuster.
 
+Et pour tout le reste — un devis, une date de shooting, votre site — c'est par ici :
+{{request_link}}
+
 Très belle journée,
 {{community_manager_name}} — LYFTT`,
 
@@ -122,6 +125,9 @@ Votre validation est nécessaire avant toute publication. Merci de la transmettr
 
 Sans validation de votre part, les contenus ne seront pas publiés.
 
+Pour toute autre demande — devis, date de shooting, site internet — utilisez ce second lien :
+{{request_link}}
+
 {{community_manager_name}} — LYFTT`,
 
   tacit_approval: `Bonjour {{contact_first_name}},
@@ -132,6 +138,9 @@ Merci de le consulter et de nous transmettre votre validation ou vos demandes de
 {{review_link}}
 
 Sans retour avant cette échéance, les contenus seront considérés comme validés, selon les modalités prévues ensemble.
+
+Pour toute autre demande — devis, date de shooting, site internet — utilisez ce second lien :
+{{request_link}}
 
 Merci et bonne journée.
 {{community_manager_name}} — LYFTT`,
@@ -145,6 +154,9 @@ Voici la version corrigée :
 
 Merci de nous confirmer que cela vous convient avant le {{validation_deadline}}.
 
+Pour toute demande sans lien avec ces contenus, utilisez ce second lien :
+{{request_link}}
+
 {{community_manager_name}} — LYFTT`,
 
   reminder: `Bonjour {{contact_first_name}},
@@ -153,6 +165,9 @@ Un petit rappel concernant le planning des contenus de la semaine {{publication_
 
 Merci de le consulter avant le {{validation_deadline}} :
 {{review_link}}
+
+Pour toute autre demande, c'est par ici :
+{{request_link}}
 
 {{community_manager_name}} — LYFTT`,
 
@@ -163,6 +178,9 @@ Le planning des contenus de la semaine {{publication_week}} est toujours en atte
 Merci de nous transmettre votre retour dès que possible pour que nous puissions publier dans les temps :
 {{review_link}}
 
+Pour toute autre demande, ce second lien reste à votre disposition :
+{{request_link}}
+
 {{community_manager_name}} — LYFTT`,
 
   new_version: `Bonjour {{contact_first_name}},
@@ -172,6 +190,9 @@ Une nouvelle version du planning de la semaine {{publication_week}} est disponib
 {{review_link}}
 
 Merci de votre retour avant le {{validation_deadline}}.
+
+Pour toute autre demande, utilisez ce second lien :
+{{request_link}}
 
 {{community_manager_name}} — LYFTT`,
 };
