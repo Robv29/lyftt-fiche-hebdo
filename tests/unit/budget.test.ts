@@ -818,3 +818,74 @@ describe("prestation sur mesure", () => {
     expect(lineTotalCents(ligne)).toBe(25_000);
   });
 });
+
+/*
+ * Prorata du premier mois de gestion — règle confirmée par la direction le
+ * 27 août 2026.
+ *
+ * Elle n'était écrite nulle part : le code l'appliquait déjà, mais rien ne la
+ * documentait ni ne la protégeait d'une réécriture. Ces cas la fixent, bornes
+ * comprises — c'est là que se jouent les erreurs de facturation.
+ */
+describe("prorata du premier mois de gestion", () => {
+  it("facture le mois entier pour un démarrage du 1er au 7", () => {
+    expect(monthStartFraction("2026-09-01")).toBe(1);
+    expect(monthStartFraction("2026-09-07")).toBe(1);
+  });
+
+  it("facture 75 % du 8 au 14", () => {
+    expect(monthStartFraction("2026-09-08")).toBe(0.75);
+    expect(monthStartFraction("2026-09-14")).toBe(0.75);
+  });
+
+  it("facture 50 % du 15 au 21", () => {
+    expect(monthStartFraction("2026-09-15")).toBe(0.5);
+    expect(monthStartFraction("2026-09-21")).toBe(0.5);
+  });
+
+  it("facture 25 % à partir du 22", () => {
+    expect(monthStartFraction("2026-09-22")).toBe(0.25);
+    expect(monthStartFraction("2026-09-30")).toBe(0.25);
+  });
+
+  it("rattache le premier mois au mois de départ, ni avant ni après", () => {
+    const months = dueManagementMonths({
+      contractStartDate: "2026-09-01",
+      contractEndDate: "2026-11-30",
+      monthlyCostCents: 30_000,
+      today: "2026-09-01",
+    });
+
+    // Une gestion qui démarre le 1er septembre est facturée en septembre, en
+    // entier, dès le premier jour — pas en août, pas en octobre.
+    expect(months[0]!.dueOn).toBe("2026-09-01");
+    expect(months[0]!.fraction).toBe(1);
+    expect(months[0]!.amountCents).toBe(30_000);
+    expect(months).toHaveLength(1);
+  });
+
+  it("n'inscrit rien avant que le mois de départ soit arrivé", () => {
+    // Au 27 août, une gestion qui démarre le 1er septembre n'a rien à facturer.
+    expect(dueManagementMonths({
+      contractStartDate: "2026-09-01",
+      contractEndDate: "2026-11-30",
+      monthlyCostCents: 30_000,
+      today: "2026-08-27",
+    })).toEqual([]);
+  });
+
+  it("rattache un démarrage en fin de mois à ce mois-là, au quart", () => {
+    const months = dueManagementMonths({
+      contractStartDate: "2026-08-31",
+      contractEndDate: "2026-10-31",
+      monthlyCostCents: 30_000,
+      today: "2026-09-01",
+    });
+
+    expect(months[0]!.dueOn).toBe("2026-08-31");
+    expect(months[0]!.amountCents).toBe(7_500);
+    // Puis septembre en entier, daté du 1er.
+    expect(months[1]!.dueOn).toBe("2026-09-01");
+    expect(months[1]!.amountCents).toBe(30_000);
+  });
+});
