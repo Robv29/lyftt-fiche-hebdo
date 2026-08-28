@@ -41,6 +41,29 @@ export interface WeekHistory {
   periodStart: string;
   periodEnd: string;
   events: HistoryEvent[];
+  /** Ce qui a accroché dans la semaine, et de quel côté. */
+  assessment: WeekAssessment;
+}
+
+/**
+ * Ce qui a accroché dans une semaine, et de quel côté.
+ *
+ * La qualification ne juge pas les intentions : elle constate des faits datés.
+ * Un motif est retenu seulement s'il repose sur une trace — une relance
+ * envoyée, une publication sortie après sa date, une coquille signalée. Une
+ * semaine sans motif d'aucun côté s'est déroulée sans accroc.
+ *
+ * Les deux côtés peuvent être servis en même temps : une semaine où nous avons
+ * laissé passer une coquille *et* où le client n'a pas validé à temps n'a pas à
+ * choisir un coupable.
+ */
+export interface WeekAssessment {
+  /** Ce qui nous revient : ce que nous aurions dû livrer autrement. */
+  lyftt: string[];
+  /** Ce qui revient au client : ce que nous attendions de lui. */
+  client: string[];
+  /** Vrai quand aucun motif n'est retenu de part et d'autre. */
+  clean: boolean;
 }
 
 export const HISTORY_EVENT_LABELS: Record<HistoryEventKind, string> = {
@@ -101,6 +124,8 @@ export interface ProductionRequestRow {
 
 export interface PublicationRow {
   published_at: string | null;
+  /** Date prévue au format `AAAA-MM-JJ`, pour juger d'un retard. */
+  scheduledDate: string;
   /** Date prévue, déjà mise en forme : le domaine n'a pas à connaître la locale. */
   scheduledLabel: string;
   formatLabel: string;
@@ -112,6 +137,8 @@ export interface SheetHistoryInput {
   periodStart: string;
   periodEnd: string;
   approvedAt: string | null;
+  /** Échéance de validation annoncée au client. */
+  deadlineAt?: string | null;
   versions: VersionRow[];
   dispatches: DispatchRow[];
   tickets: TicketRow[];
@@ -129,7 +156,7 @@ export interface SheetHistoryInput {
  * version. Les relances, elles, n'existent que comme messages — elles ne créent
  * pas de version.
  */
-export function buildWeekHistory(input: SheetHistoryInput): WeekHistory {
+export function buildWeekHistory(input: SheetHistoryInput, now: Date = new Date()): WeekHistory {
   const events: HistoryEvent[] = [];
 
   /*
@@ -238,7 +265,66 @@ export function buildWeekHistory(input: SheetHistoryInput): WeekHistory {
     periodStart: input.periodStart,
     periodEnd: input.periodEnd,
     events,
+    assessment: assessWeek(input, now),
   };
+}
+
+/**
+ * Types de retour qui constatent une faute de notre part.
+ *
+ * Une coquille ou une information erronée n'aurait pas dû sortir de chez nous.
+ * Un changement d'avis, un remplacement de photo ou un ajout de publication
+ * n'est pas une faute : c'est la vie d'une validation, et le compter contre
+ * nous rendrait la mesure inutilisable.
+ */
+const LYFTT_FAULT_TICKETS = new Set(["text_typo"]);
+
+function assessWeek(input: SheetHistoryInput, now: Date): WeekAssessment {
+  const lyftt: string[] = [];
+  const client: string[] = [];
+  const today = now.toISOString().slice(0, 10);
+  const weekIsOver = input.periodEnd < today;
+
+  const coquilles = input.tickets.filter((ticket) => LYFTT_FAULT_TICKETS.has(ticket.ticket_type)).length;
+  if (coquilles > 0) {
+    lyftt.push(`${coquilles} coquille${coquilles > 1 ? "s" : ""} signalée${coquilles > 1 ? "s" : ""}`);
+  }
+
+  const enRetard = input.publications.filter((publication) =>
+    publication.published_at && publication.published_at.slice(0, 10) > publication.scheduledDate).length;
+  if (enRetard > 0) {
+    lyftt.push(`${enRetard} publication${enRetard > 1 ? "s" : ""} sortie${enRetard > 1 ? "s" : ""} après la date prévue`);
+  }
+
+  /*
+   * Une publication non confirmée avant la fin de la semaine reste peut-être à
+   * cocher : on ne la compte qu'une fois la semaine close, sinon toute semaine
+   * en cours serait fautive.
+   */
+  if (weekIsOver) {
+    const jamaisPubliees = input.publications.filter((publication) => !publication.published_at).length;
+    if (jamaisPubliees > 0) {
+      lyftt.push(`${jamaisPubliees} publication${jamaisPubliees > 1 ? "s" : ""} jamais confirmée${jamaisPubliees > 1 ? "s" : ""}`);
+    }
+  }
+
+  const relances = input.dispatches.filter((d) => d.template_type === "reminder" || d.template_type === "overdue").length;
+  if (relances > 0) {
+    client.push(`${relances} relance${relances > 1 ? "s" : ""} nécessaire${relances > 1 ? "s" : ""}`);
+  }
+
+  if (input.deadlineAt) {
+    if (input.approvedAt && input.approvedAt > input.deadlineAt) {
+      client.push("validation après l'échéance");
+    }
+    // Sans validation ni échéance dépassée, rien à reprocher : le client a
+    // peut-être encore le temps.
+    if (!input.approvedAt && weekIsOver && input.deadlineAt < now.toISOString()) {
+      client.push("aucune validation");
+    }
+  }
+
+  return { lyftt, client, clean: lyftt.length === 0 && client.length === 0 };
 }
 
 /**

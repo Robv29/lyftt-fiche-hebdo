@@ -39,8 +39,32 @@ const dayShort = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "long
  * de lecture se retourne, et le compte affiché dit toujours ce qui est montré
  * — sans quoi un filtre actif se confond avec un client sans activité.
  */
+type Verdict = "clean" | "lyftt" | "client";
+
+const VERDICT_LABELS: Record<Verdict, string> = {
+  clean: "Sans accroc",
+  lyftt: "À notre charge",
+  client: "Côté client",
+};
+
+const VERDICT_CHIPS: Record<Verdict, string> = {
+  clean: "bg-[#e8f8f1] text-[#128359]",
+  lyftt: "bg-[#ffedef] text-[#ce3540]",
+  client: "bg-[#fff4e0] text-[#a15c00]",
+};
+
+/** Une semaine peut relever des deux côtés à la fois : elle n'a pas à choisir. */
+function verdictsOf(week: WeekHistory): Verdict[] {
+  if (week.assessment.clean) return ["clean"];
+  const verdicts: Verdict[] = [];
+  if (week.assessment.lyftt.length > 0) verdicts.push("lyftt");
+  if (week.assessment.client.length > 0) verdicts.push("client");
+  return verdicts;
+}
+
 export function HistoryView({ weeks, clientName }: { weeks: WeekHistory[]; clientName: string }) {
   const [families, setFamilies] = useState<HistoryFamily[]>([]);
+  const [verdicts, setVerdicts] = useState<Verdict[]>([]);
   const [newestFirst, setNewestFirst] = useState(true);
 
   const toggle = (family: HistoryFamily) =>
@@ -50,6 +74,7 @@ export function HistoryView({ weeks, clientName }: { weeks: WeekHistory[]; clien
 
   const visible = useMemo(() => {
     const kept = weeks
+      .filter((week) => verdicts.length === 0 || verdictsOf(week).some((v) => verdicts.includes(v)))
       .map((week) => ({
         ...week,
         events: families.length === 0
@@ -59,13 +84,44 @@ export function HistoryView({ weeks, clientName }: { weeks: WeekHistory[]; clien
       .filter((week) => week.events.length > 0);
 
     return newestFirst ? kept : [...kept].reverse();
-  }, [weeks, families, newestFirst]);
+  }, [weeks, families, verdicts, newestFirst]);
 
   const shown = visible.reduce((n, week) => n + week.events.length, 0);
   const total = weeks.reduce((n, week) => n + week.events.length, 0);
 
   return (
     <div className="space-y-4">
+      {/*
+        Classement d'abord : c'est la question qu'on se pose en ouvrant
+        l'historique d'un client — est-ce que ça s'est bien passé, et sinon de
+        quel côté.
+      */}
+      <div className="no-print flex flex-wrap items-center gap-2">
+        <span className="text-xs font-semibold text-ink-faint">Déroulement</span>
+        {(["clean", "lyftt", "client"] as Verdict[]).map((verdict) => {
+          const active = verdicts.includes(verdict);
+          const count = weeks.filter((week) => verdictsOf(week).includes(verdict)).length;
+          return (
+            <button
+              key={verdict}
+              type="button"
+              aria-pressed={active}
+              onClick={() => setVerdicts((c) => c.includes(verdict) ? c.filter((v) => v !== verdict) : [...c, verdict])}
+              className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
+                active ? "bg-[#1176d3] text-white" : `${VERDICT_CHIPS[verdict]} hover:brightness-95`
+              }`}
+            >
+              {VERDICT_LABELS[verdict]} · {count}
+            </button>
+          );
+        })}
+        {verdicts.length > 0 && (
+          <button type="button" className="text-xs font-semibold text-[#0b63ad] hover:underline" onClick={() => setVerdicts([])}>
+            Toutes
+          </button>
+        )}
+      </div>
+
       <div className="no-print flex flex-wrap items-center gap-2">
         {HISTORY_FAMILIES.map((family) => {
           const active = families.includes(family.key);
@@ -132,7 +188,10 @@ export function HistoryView({ weeks, clientName }: { weeks: WeekHistory[]; clien
                     </h2>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    {retours > 0 && <span className="badge bg-[#fff4e0] text-[#a15c00]">{retours} retour{retours > 1 ? "s" : ""}</span>}
+                    {verdictsOf(week).map((verdict) => (
+                      <span key={verdict} className={`badge ${VERDICT_CHIPS[verdict]}`}>{VERDICT_LABELS[verdict]}</span>
+                    ))}
+                    {retours > 0 && <span className="badge bg-canvas text-ink-soft">{retours} retour{retours > 1 ? "s" : ""}</span>}
                     {delay !== null
                       ? <span className="badge bg-[#e8f8f1] text-state-approved">Validée en {delay} h</span>
                       : <span className="badge bg-canvas text-ink-faint">Pas de validation</span>}
@@ -141,6 +200,22 @@ export function HistoryView({ weeks, clientName }: { weeks: WeekHistory[]; clien
                     </Link>
                   </div>
                 </div>
+
+                {/* Les motifs, en toutes lettres : un classement sans sa raison ne se conteste pas. */}
+                {!week.assessment.clean && (
+                  <div className="flex flex-wrap gap-x-6 gap-y-1 border-b border-line bg-[#fbfcfe] px-5 py-2.5 text-xs">
+                    {week.assessment.lyftt.length > 0 && (
+                      <p className="text-[#ce3540]">
+                        <strong className="font-semibold">À notre charge :</strong> {week.assessment.lyftt.join(", ")}
+                      </p>
+                    )}
+                    {week.assessment.client.length > 0 && (
+                      <p className="text-[#a15c00]">
+                        <strong className="font-semibold">Côté client :</strong> {week.assessment.client.join(", ")}
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 <div className="divide-y divide-line">
                   {days.map((day) => (

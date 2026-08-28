@@ -60,7 +60,7 @@ export default async function HistoriquePage({ searchParams }: { searchParams: P
        * (PGRST201), et l'écran affichait « aucune fiche » pour un client qui en
        * avait.
        */
-      .select(`id, iso_week, period_start, period_end, approved_at,
+      .select(`id, iso_week, period_start, period_end, approved_at, validation_deadline_at,
         weekly_sheet_versions!weekly_sheet_versions_weekly_sheet_id_fkey ( version_number, sent_to_client_at ),
         client_message_dispatches ( template_type, sent_at ),
         weekly_sheet_items ( published_at, scheduled_date, format, is_cancelled )`)
@@ -130,6 +130,7 @@ export default async function HistoriquePage({ searchParams }: { searchParams: P
     periodStart: sheet.period_start as string,
     periodEnd: sheet.period_end as string,
     approvedAt: sheet.approved_at as string | null,
+    deadlineAt: sheet.validation_deadline_at as string | null,
     versions: ((sheet.weekly_sheet_versions ?? []) as unknown as { version_number: number; sent_to_client_at: string | null }[]),
     dispatches: ((sheet.client_message_dispatches ?? []) as unknown as { template_type: string; sent_at: string }[]),
     tickets: (ticketsBySheet.get(sheet.id as string) ?? []).map((ticket) => ({
@@ -150,6 +151,7 @@ export default async function HistoriquePage({ searchParams }: { searchParams: P
       .filter((item) => !item.is_cancelled)
       .map((item) => ({
         published_at: item.published_at,
+        scheduledDate: item.scheduled_date,
         scheduledLabel: dayOnly.format(new Date(`${item.scheduled_date}T12:00:00Z`)),
         formatLabel: MEDIA_FORMAT_LABELS[item.format],
       })),

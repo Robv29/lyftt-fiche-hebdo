@@ -24,7 +24,7 @@ describe("historique d'une semaine", () => {
     const week = buildWeekHistory({
       ...base,
       approvedAt: "2026-08-26T14:00:00Z",
-      publications: [{ published_at: "2026-08-27T18:05:00Z", scheduledLabel: "27 août", formatLabel: "Photo" }],
+      publications: [{ published_at: "2026-08-27T18:05:00Z", scheduledDate: "2026-08-27", scheduledLabel: "27 août", formatLabel: "Photo" }],
       versions: [{ version_number: 1, sent_to_client_at: "2026-08-24T09:00:00Z" }],
     });
 
@@ -108,8 +108,8 @@ describe("historique d'une semaine", () => {
     const week = buildWeekHistory({
       ...base,
       publications: [
-        { published_at: "2026-08-27T18:05:00Z", scheduledLabel: "26 août", formatLabel: "Photo" },
-        { published_at: null, scheduledLabel: "28 août", formatLabel: "Vidéo" },
+        { published_at: "2026-08-27T18:05:00Z", scheduledDate: "2026-08-26", scheduledLabel: "26 août", formatLabel: "Photo" },
+        { published_at: null, scheduledDate: "2026-08-28", scheduledLabel: "28 août", formatLabel: "Vidéo" },
       ],
     });
 
@@ -215,6 +215,116 @@ describe("délai de validation", () => {
       ...base,
       versions: [{ version_number: 1, sent_to_client_at: "2026-08-24T09:00:00Z" }],
     }))).toBeNull();
+  });
+});
+
+describe("qualification d'une semaine", () => {
+  const maintenant = new Date("2026-09-07T10:00:00Z"); // semaine 35 close
+  const semaine = {
+    ...base,
+    periodStart: "2026-08-24",
+    periodEnd: "2026-08-30",
+    deadlineAt: "2026-08-25T12:00:00Z",
+    approvedAt: "2026-08-25T09:00:00Z",
+    versions: [{ version_number: 1, sent_to_client_at: "2026-08-24T09:00:00Z" }],
+  };
+
+  it("ne retient rien quand tout s'est déroulé comme prévu", () => {
+    const week = buildWeekHistory({
+      ...semaine,
+      publications: [{ published_at: "2026-08-26T18:00:00Z", scheduledDate: "2026-08-26", scheduledLabel: "26 août", formatLabel: "Photo" }],
+    }, maintenant);
+
+    expect(week.assessment.clean).toBe(true);
+    expect(week.assessment.lyftt).toEqual([]);
+    expect(week.assessment.client).toEqual([]);
+  });
+
+  it("nous impute une coquille signalée par le client", () => {
+    const week = buildWeekHistory({
+      ...semaine,
+      tickets: [{
+        id: "t1", title: "faute", ticket_type: "text_typo", typeLabel: "Coquille",
+        submitted_at: "2026-08-24T18:00:00Z", created_at: "2026-08-24T18:00:00Z",
+        resolved_at: null, due_at: null, weekly_sheet_item_id: "i1", category: "editorial",
+      }],
+    }, maintenant);
+
+    expect(week.assessment.lyftt).toContain("1 coquille signalée");
+    expect(week.assessment.clean).toBe(false);
+  });
+
+  it("ne nous impute pas un changement d'avis du client", () => {
+    // Remplacer une photo n'est pas une faute : c'est la vie d'une validation.
+    const week = buildWeekHistory({
+      ...semaine,
+      tickets: [{
+        id: "t1", title: "autre photo", ticket_type: "photo_replace", typeLabel: "Remplacement",
+        submitted_at: "2026-08-24T18:00:00Z", created_at: "2026-08-24T18:00:00Z",
+        resolved_at: null, due_at: null, weekly_sheet_item_id: "i1", category: "graphic",
+      }],
+    }, maintenant);
+
+    expect(week.assessment.lyftt).toEqual([]);
+  });
+
+  it("nous impute une publication sortie après sa date", () => {
+    const week = buildWeekHistory({
+      ...semaine,
+      publications: [{ published_at: "2026-08-28T18:00:00Z", scheduledDate: "2026-08-26", scheduledLabel: "26 août", formatLabel: "Photo" }],
+    }, maintenant);
+
+    expect(week.assessment.lyftt).toContain("1 publication sortie après la date prévue");
+  });
+
+  it("impute au client une relance devenue nécessaire", () => {
+    const week = buildWeekHistory({
+      ...semaine,
+      dispatches: [{ template_type: "reminder", sent_at: "2026-08-26T09:00:00Z" }],
+    }, maintenant);
+
+    expect(week.assessment.client).toContain("1 relance nécessaire");
+  });
+
+  it("impute au client une validation après l'échéance", () => {
+    const week = buildWeekHistory({
+      ...semaine,
+      approvedAt: "2026-08-27T09:00:00Z",
+    }, maintenant);
+
+    expect(week.assessment.client).toContain("validation après l'échéance");
+  });
+
+  it("sert les deux côtés quand les deux ont manqué", () => {
+    const week = buildWeekHistory({
+      ...semaine,
+      approvedAt: "2026-08-27T09:00:00Z",
+      tickets: [{
+        id: "t1", title: "faute", ticket_type: "text_typo", typeLabel: "Coquille",
+        submitted_at: "2026-08-24T18:00:00Z", created_at: "2026-08-24T18:00:00Z",
+        resolved_at: null, due_at: null, weekly_sheet_item_id: "i1", category: "editorial",
+      }],
+    }, maintenant);
+
+    expect(week.assessment.lyftt).toHaveLength(1);
+    expect(week.assessment.client).toHaveLength(1);
+  });
+
+  it("ne reproche pas une publication non confirmée tant que la semaine court", () => {
+    // Elle reste peut-être à cocher : toute semaine en cours serait fautive.
+    const enCours = buildWeekHistory({
+      ...semaine,
+      publications: [{ published_at: null, scheduledDate: "2026-08-26", scheduledLabel: "26 août", formatLabel: "Photo" }],
+    }, new Date("2026-08-27T10:00:00Z"));
+
+    expect(enCours.assessment.lyftt).toEqual([]);
+
+    const close = buildWeekHistory({
+      ...semaine,
+      publications: [{ published_at: null, scheduledDate: "2026-08-26", scheduledLabel: "26 août", formatLabel: "Photo" }],
+    }, maintenant);
+
+    expect(close.assessment.lyftt).toContain("1 publication jamais confirmée");
   });
 });
 
