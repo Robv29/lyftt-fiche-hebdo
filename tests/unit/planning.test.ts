@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isActionableOverdue,
   planningBucketForPeriod,
   planningWeekRange,
   selectHashtags,
@@ -232,5 +233,46 @@ describe("onglet de retour au planning", () => {
     const bucket = planningBucketForPeriod(lundiProchain, dimancheProchain, new Date("2026-08-26T12:00:00Z"));
     expect(bucket).toBe("next");
     expect(planningHrefForBucket(bucket)).toBe("/fiches?tab=next");
+  });
+});
+
+/*
+ * Retard mis en avant.
+ *
+ * Une échéance dépassée sur une semaine passée l'est irrémédiablement : la
+ * signaler en rouge noyait les retards qu'une relance ou une correction peut
+ * encore rattraper. Règle partagée par les fiches en attente, les tickets
+ * clients et la vue Production — les trois écrans doivent s'accorder.
+ */
+describe("retard sur lequel on peut encore agir", () => {
+  const maintenant = new Date("2026-08-27T10:00:00Z");
+  const semaineEnCours = { periodStart: "2026-08-24", periodEnd: "2026-08-30" };
+  const semainePassee = { periodStart: "2026-08-17", periodEnd: "2026-08-23" };
+  const semaineAVenir = { periodStart: "2026-08-31", periodEnd: "2026-09-06" };
+
+  it("signale un dépassement sur la semaine en cours", () => {
+    expect(isActionableOverdue({ dueAt: "2026-08-25T12:00:00Z", ...semaineEnCours }, maintenant)).toBe(true);
+  });
+
+  it("ne signale plus un dépassement sur une semaine passée", () => {
+    expect(isActionableOverdue({ dueAt: "2026-08-18T12:00:00Z", ...semainePassee }, maintenant)).toBe(false);
+  });
+
+  it("ne signale rien avant l'échéance", () => {
+    expect(isActionableOverdue({ dueAt: "2026-09-01T12:00:00Z", ...semaineAVenir }, maintenant)).toBe(false);
+  });
+
+  it("ne signale rien sans échéance", () => {
+    expect(isActionableOverdue({ dueAt: null, ...semaineEnCours }, maintenant)).toBe(false);
+  });
+
+  it("s'en tient à l'échéance quand aucune semaine n'est rattachée", () => {
+    // Rien ne permet alors de dire que l'objet appartient à une semaine révolue.
+    expect(isActionableOverdue({ dueAt: "2026-08-18T12:00:00Z" }, maintenant)).toBe(true);
+  });
+
+  it("s'accorde avec la période calculée pour la même semaine", () => {
+    expect(planningBucketForPeriod(semaineEnCours.periodStart, semaineEnCours.periodEnd, maintenant)).toBe("current");
+    expect(planningBucketForPeriod(semainePassee.periodStart, semainePassee.periodEnd, maintenant)).toBe("past");
   });
 });

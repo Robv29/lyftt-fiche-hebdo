@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isServiceRequest, isServiceRequestOverdue, serviceRequestAgeInDays } from "@/lib/domain/ticket-types";
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
+import { isActionableOverdue } from "@/lib/domain/planning";
 import { deadlineState } from "@/lib/domain/deadline";
 import { ticketDeadline, ticketSlaState } from "@/lib/domain/ticket-sla";
 import {
@@ -47,7 +48,7 @@ export default async function TicketsPage({
       `id, ticket_number, title, ticket_type, category, status, priority, due_at,
        submitted_at, updated_at, resolved_at, weekly_sheet_id,
        clients ( id, name ),
-       weekly_sheets ( iso_week ),
+       weekly_sheets ( iso_week, period_start, period_end ),
        client_ticket_assignments ( assignment_role, profiles ( full_name ) )`,
     )
     .order("submitted_at", { ascending: false })
@@ -135,7 +136,7 @@ export default async function TicketsPage({
         <ul className="space-y-3">
           {visibleTickets.map((ticket) => {
             const client = ticket.clients as unknown as { name: string } | null;
-            const week = ticket.weekly_sheets as unknown as { iso_week: number } | null;
+            const week = ticket.weekly_sheets as unknown as { iso_week: number; period_start: string | null; period_end: string | null } | null;
             const assignments = (ticket.client_ticket_assignments ?? []) as unknown as {
               assignment_role: string;
               profiles: { full_name: string } | null;
@@ -143,7 +144,16 @@ export default async function TicketsPage({
             // Tant que la correction n'est pas partie, c'est la promesse des
             // vingt heures qui court ; ensuite l'échéance n'apprend plus rien.
             const answered = answeredAt.get(ticket.id) ?? ticket.resolved_at;
-            const due = answered ? null : deadlineState(ticketDeadline(ticket.submitted_at));
+            const deadlineAt = answered ? null : ticketDeadline(ticket.submitted_at);
+            const due = deadlineAt ? deadlineState(deadlineAt) : null;
+            // Même règle que les fiches en attente : seule la semaine en cours
+            // porte l'alerte, une correction attendue sur une semaine publiée
+            // ne se rattrapant plus.
+            const urgent = isActionableOverdue({
+              dueAt: deadlineAt?.toISOString() ?? null,
+              periodStart: week?.period_start,
+              periodEnd: week?.period_end,
+            });
 
             return (
               <li key={ticket.id} className="card lift-card overflow-hidden">
@@ -172,9 +182,15 @@ export default async function TicketsPage({
                       <span className="badge bg-canvas text-ink-soft">
                         {ticketStatusLabel(ticket.status)}
                       </span>
+                      {/*
+                        Rouge seulement sur la semaine en cours : une correction
+                        attendue sur une semaine déjà publiée ne se rattrape
+                        plus, et la signaler noyait celles qui comptent encore.
+                        La mention reste, en gris.
+                      */}
                       {due && (
                         <span
-                          className={due.isOverdue ? "text-state-changes" : "text-ink-faint"}
+                          className={urgent ? "text-state-changes" : "text-ink-faint"}
                         >
                           {due.isOverdue ? `en retard de ${due.label.replace("en retard de ", "")}` : due.label}
                         </span>

@@ -72,6 +72,34 @@ export function planningBucketForPeriod(
   return "later";
 }
 
+/**
+ * Retard sur lequel on peut encore agir.
+ *
+ * Une échéance dépassée sur une semaine déjà passée l'est irrémédiablement :
+ * les publications sont derrière nous, et la signaler en rouge noie les retards
+ * qu'une relance ou une correction peut encore rattraper. Seule la semaine en
+ * cours est donc mise en avant — l'information reste affichée, sans l'alarme.
+ *
+ * Sans période rattachée, on s'en tient à l'échéance : rien ne permet de dire
+ * que l'objet appartient à une semaine révolue.
+ *
+ * Partagée par les fiches en attente de validation et les tickets clients : les
+ * deux écrans doivent s'accorder sur ce qu'ils appellent « en retard ».
+ */
+export function isActionableOverdue(
+  input: {
+    dueAt: string | null | undefined;
+    periodStart?: string | null;
+    periodEnd?: string | null;
+  },
+  now: Date = new Date(),
+): boolean {
+  if (!input.dueAt) return false;
+  if (new Date(input.dueAt).getTime() >= now.getTime()) return false;
+  if (!input.periodStart || !input.periodEnd) return true;
+  return planningBucketForPeriod(input.periodStart, input.periodEnd, now) === "current";
+}
+
 export interface CompletionItem {
   caption: string | null;
   hashtags: string[] | string | null;

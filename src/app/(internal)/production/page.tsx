@@ -1,5 +1,6 @@
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
+import { isActionableOverdue } from "@/lib/domain/planning";
 import { deadlineState, formatPeriod } from "@/lib/domain/deadline";
 import { ticketPriorityLabel, ticketStatusLabel, type MediaFormat } from "@/lib/domain/types";
 import { PageHeader } from "@/components/ui";
@@ -32,6 +33,7 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
       `id, ticket_number, title, description, ticket_type, category, status, priority, due_at,
        weekly_sheet_item_id, client_id,
        clients ( name ),
+       weekly_sheets ( period_start, period_end ),
        client_ticket_assignments!inner ( assignment_role, profile_id )`,
     )
     .in("category", ["graphic", "video"])
@@ -109,6 +111,13 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
   const corrections: TicketCorrectionRow[] = (tickets ?? []).map((ticket) => {
     const client = ticket.clients as unknown as { name: string } | null;
     const due = ticket.due_at ? deadlineState(new Date(ticket.due_at)) : null;
+    /*
+     * Même règle que les fiches en attente et les tickets clients : le retard
+     * n'est signalé que sur la semaine en cours. Une correction attendue sur
+     * une semaine déjà publiée ne se rattrape plus, et la marquer en rouge
+     * noyait celles qu'on peut encore livrer à temps.
+     */
+    const period = ticket.weekly_sheets as unknown as { period_start: string | null; period_end: string | null } | null;
     return {
       id: ticket.id as string,
       ticketNumber: ticket.ticket_number as string,
@@ -122,7 +131,11 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
       category: (ticket.category === "video" ? "video" : "graphic") as "graphic" | "video",
       priorityLabel: ticket.priority !== "normal" ? ticketPriorityLabel(ticket.priority) : null,
       dueLabel: due?.label ?? null,
-      overdue: Boolean(due?.isOverdue),
+      overdue: isActionableOverdue({
+        dueAt: ticket.due_at as string | null,
+        periodStart: period?.period_start,
+        periodEnd: period?.period_end,
+      }),
       hasItem: Boolean(ticket.weekly_sheet_item_id),
     };
   });

@@ -5,7 +5,7 @@ import { sheetStatusLabel, ticketStatusLabel, ticketPriorityLabel } from "@/lib/
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
 import { requiresProduction } from "@/lib/domain/routing";
 import { Icon } from "@/components/Icon";
-import { planningBucketForPeriod, planningWeekRange, sheetCompletion } from "@/lib/domain/planning";
+import { isActionableOverdue, planningWeekRange, sheetCompletion } from "@/lib/domain/planning";
 import {
   SHOOTING_LINE_KEYS,
   isShootingLine,
@@ -268,19 +268,17 @@ export default async function DashboardPage() {
    * derrière nous — et la signaler en rouge noyait les retards sur lesquels on
    * peut encore agir. L'information reste affichée, sans l'alerte.
    */
-  const isCurrentWeek = (sheet: { period_start?: string | null; period_end?: string | null }) =>
-    Boolean(sheet.period_start && sheet.period_end)
-    && planningBucketForPeriod(sheet.period_start as string, sheet.period_end as string) === "current";
-
-  const isActionableOverdue = (sheet: {
+  const sheetOverdue = (sheet: {
     period_start?: string | null;
     period_end?: string | null;
     validation_deadline_at?: string | null;
-  }) => Boolean(sheet.validation_deadline_at)
-    && deadlineState(new Date(sheet.validation_deadline_at as string)).isOverdue
-    && isCurrentWeek(sheet);
+  }) => isActionableOverdue({
+    dueAt: sheet.validation_deadline_at,
+    periodStart: sheet.period_start,
+    periodEnd: sheet.period_end,
+  });
 
-  const overdueSheets = awaitingClient.filter(isActionableOverdue).length;
+  const overdueSheets = awaitingClient.filter(sheetOverdue).length;
 
   /*
    * Plafond de la liste : la page ne doit jamais s'allonger.
@@ -365,7 +363,7 @@ export default async function DashboardPage() {
               const deadline = sheet.validation_deadline_at ? deadlineState(new Date(sheet.validation_deadline_at)) : null;
               const contact = lastContact(sheet);
               // Rouge seulement là où la relance peut encore changer quelque chose.
-              const urgent = isActionableOverdue(sheet);
+              const urgent = sheetOverdue(sheet);
               return <li key={sheet.id} className="flex items-center gap-2 px-5 py-3 transition-colors hover:bg-[#f7fafe]">
                 <Link href={`/fiches/${sheet.id}`} className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-3">
