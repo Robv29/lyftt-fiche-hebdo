@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildWeekHistory,
+  familyForKind,
+  groupEventsByDay,
   validationDelayHours,
   type SheetHistoryInput,
 } from "@/lib/domain/history";
@@ -213,5 +215,49 @@ describe("délai de validation", () => {
       ...base,
       versions: [{ version_number: 1, sent_to_client_at: "2026-08-24T09:00:00Z" }],
     }))).toBeNull();
+  });
+});
+
+describe("familles d'événements", () => {
+  it("range chaque nature dans la lecture attendue", () => {
+    // On remonte le fil d'un client par ce qui vient de nous, de lui, ou de
+    // ce qui est sorti — pas par la mécanique des tables.
+    expect(familyForKind("sheet_sent")).toBe("envois");
+    expect(familyForKind("reminder")).toBe("envois");
+    expect(familyForKind("client_feedback")).toBe("retours");
+    expect(familyForKind("special_request")).toBe("retours");
+    expect(familyForKind("production_delivered")).toBe("production");
+    expect(familyForKind("approved")).toBe("validations");
+    expect(familyForKind("published")).toBe("publications");
+  });
+});
+
+describe("groupement par jour", () => {
+  const events = [
+    { at: "2026-08-18T14:08:00Z", kind: "sheet_sent" as const, label: "Planning envoyé" },
+    { at: "2026-08-18T17:12:00Z", kind: "client_feedback" as const, label: "Retour client" },
+    { at: "2026-08-19T08:51:00Z", kind: "approved" as const, label: "Validation du client" },
+  ];
+
+  it("réunit les événements d'une même journée", () => {
+    const days = groupEventsByDay(events);
+    expect(days.map((d) => d.day)).toEqual(["2026-08-19", "2026-08-18"]);
+    expect(days[1]!.events).toHaveLength(2);
+  });
+
+  it("ordonne du plus récent au plus ancien par défaut, dans le jour comme entre les jours", () => {
+    const days = groupEventsByDay(events);
+    expect(days[1]!.events[0]!.at).toBe("2026-08-18T17:12:00Z");
+  });
+
+  it("sait remonter le temps dans l'autre sens", () => {
+    const days = groupEventsByDay(events, false);
+    expect(days.map((d) => d.day)).toEqual(["2026-08-18", "2026-08-19"]);
+    expect(days[0]!.events[0]!.at).toBe("2026-08-18T14:08:00Z");
+  });
+
+  it("ne perd aucun événement", () => {
+    const days = groupEventsByDay(events);
+    expect(days.reduce((n, d) => n + d.events.length, 0)).toBe(events.length);
   });
 });

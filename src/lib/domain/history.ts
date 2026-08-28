@@ -255,3 +255,60 @@ export function validationDelayHours(week: WeekHistory): number | null {
   const delta = new Date(approved.at).getTime() - new Date(sent.at).getTime();
   return delta < 0 ? null : Math.round(delta / 3_600_000);
 }
+
+/**
+ * Familles d'événements, telles qu'on filtre l'historique.
+ *
+ * On ne cherche pas « les relances » et « les retours » séparément quand on
+ * remonte le fil d'un client : on cherche ce qui vient de nous, ce qui vient
+ * de lui, ou ce qui est sorti. Les familles suivent cette lecture, pas la
+ * mécanique interne des tables.
+ */
+export type HistoryFamily = "envois" | "retours" | "production" | "validations" | "publications";
+
+export const HISTORY_FAMILIES: ReadonlyArray<{ key: HistoryFamily; label: string; kinds: HistoryEventKind[] }> = [
+  { key: "envois", label: "Envois et relances", kinds: ["sheet_sent", "sheet_resent", "reminder"] },
+  { key: "retours", label: "Retours clients", kinds: ["client_feedback", "feedback_resolved", "special_request"] },
+  { key: "production", label: "Production", kinds: ["production_requested", "production_delivered"] },
+  { key: "validations", label: "Validations", kinds: ["approved"] },
+  { key: "publications", label: "Publications", kinds: ["published"] },
+];
+
+const FAMILY_BY_KIND = HISTORY_FAMILIES.reduce<Record<HistoryEventKind, HistoryFamily>>((map, family) => {
+  for (const kind of family.kinds) map[kind] = family.key;
+  return map;
+}, {} as Record<HistoryEventKind, HistoryFamily>);
+
+export function familyForKind(kind: HistoryEventKind): HistoryFamily {
+  return FAMILY_BY_KIND[kind];
+}
+
+export interface HistoryDay {
+  /** Jour civil, `AAAA-MM-JJ`. */
+  day: string;
+  events: HistoryEvent[];
+}
+
+/**
+ * Événements regroupés par jour.
+ *
+ * Une semaine chargée alignait quinze lignes horodatées d'affilée : l'œil ne
+ * voyait plus où une journée finissait. Le jour devient le repère, l'heure
+ * seule reste sur chaque ligne.
+ */
+export function groupEventsByDay(events: HistoryEvent[], newestFirst = true): HistoryDay[] {
+  const byDay = new Map<string, HistoryEvent[]>();
+  for (const event of events) {
+    const day = event.at.slice(0, 10);
+    const list = byDay.get(day) ?? [];
+    list.push(event);
+    byDay.set(day, list);
+  }
+
+  return [...byDay.entries()]
+    .map(([day, list]) => ({
+      day,
+      events: [...list].sort((a, b) => (newestFirst ? b.at.localeCompare(a.at) : a.at.localeCompare(b.at))),
+    }))
+    .sort((a, b) => (newestFirst ? b.day.localeCompare(a.day) : a.day.localeCompare(b.day)));
+}

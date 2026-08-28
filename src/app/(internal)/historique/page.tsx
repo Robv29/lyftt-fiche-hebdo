@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
@@ -7,29 +6,12 @@ import { planningWeekRange } from "@/lib/domain/planning";
 import {
   buildWeekHistory,
   validationDelayHours,
-  type HistoryEventKind,
   type WeekHistory,
 } from "@/lib/domain/history";
 import { HistoryToolbar } from "./HistoryToolbar";
+import { HistoryView } from "./HistoryView";
 
 export const dynamic = "force-dynamic";
-
-/*
- * Couleur par nature d'événement : la chronologie se parcourt à la verticale,
- * et l'œil doit distinguer un envoi d'un retour sans lire chaque ligne.
- */
-const EVENT_TONES: Record<HistoryEventKind, string> = {
-  sheet_sent: "#1176d3",
-  sheet_resent: "#6d28d9",
-  reminder: "#e5484d",
-  client_feedback: "#f5a524",
-  feedback_resolved: "#14b8a6",
-  special_request: "#ec4899",
-  production_requested: "#8b5cf6",
-  production_delivered: "#0e7490",
-  approved: "#128359",
-  published: "#64748b",
-};
 
 /** Natures de commande, telles que l'enum `production_request_kind` les nomme. */
 const PRODUCTION_KIND_LABELS: Record<string, string> = {
@@ -38,9 +20,6 @@ const PRODUCTION_KIND_LABELS: Record<string, string> = {
   photo: "Photo",
 };
 
-const dateTime = new Intl.DateTimeFormat("fr-FR", {
-  day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/Paris",
-});
 const dayOnly = new Intl.DateTimeFormat("fr-FR", {
   day: "numeric", month: "long", timeZone: "Europe/Paris",
 });
@@ -216,76 +195,7 @@ export default async function HistoriquePage({ searchParams }: { searchParams: P
         />
       </section>
 
-      {weeks.length === 0 ? (
-        <p className="card px-4 py-8 text-center text-sm text-ink-faint">
-          Aucune fiche pour {selected.name} sur la semaine en cours ou les précédentes.
-        </p>
-      ) : (
-        <div className="space-y-4">
-          {weeks.map((week) => {
-            const delay = validationDelayHours(week);
-            const retours = week.events.filter((e) => e.kind === "client_feedback").length;
-            return (
-              <section key={week.sheetId} className="history-week section-card">
-                <div className="section-card-header flex-wrap gap-y-2">
-                  <div className="min-w-0">
-                    <p className="eyebrow">Semaine {week.isoWeek}</p>
-                    <h2 className="mt-1 font-semibold">
-                      {dayOnly.format(new Date(`${week.periodStart}T12:00:00Z`))}
-                      {" — "}
-                      {dayOnly.format(new Date(`${week.periodEnd}T12:00:00Z`))}
-                    </h2>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {retours > 0 && (
-                      <span className="badge bg-[#fff4e0] text-[#a15c00]">{retours} retour{retours > 1 ? "s" : ""}</span>
-                    )}
-                    {delay !== null
-                      ? <span className="badge bg-[#e8f8f1] text-state-approved">Validée en {delay} h</span>
-                      : <span className="badge bg-canvas text-ink-faint">Pas de validation</span>}
-                    <Link href={`/fiches/${week.sheetId}`} className="no-print text-xs font-semibold text-[#0b63ad] hover:text-[#07487f]">
-                      Ouvrir →
-                    </Link>
-                  </div>
-                </div>
-
-                {week.events.length === 0 ? (
-                  <p className="px-5 py-5 text-center text-xs text-ink-faint">
-                    Fiche créée, jamais envoyée au client.
-                  </p>
-                ) : (
-                  /*
-                    Un filet vertical relie les événements : il donne à lire une
-                    suite, là où des lignes séparées se lisaient comme un tableau
-                    sans ordre.
-                  */
-                  <ol className="history-timeline space-y-0 px-5 py-3">
-                    {week.events.map((event, index) => (
-                      <li key={`${event.kind}-${event.at}-${index}`} className="history-event">
-                        <span className="history-dot" style={{ background: EVENT_TONES[event.kind] }}/>
-                        <div className="min-w-0">
-                          <p className="flex flex-wrap items-baseline gap-x-2">
-                            <strong className="text-sm">{event.label}</strong>
-                            <span className="text-xs tabular-nums text-ink-faint">{dateTime.format(new Date(event.at))}</span>
-                          </p>
-                          {event.detail && <p className="mt-0.5 text-xs leading-relaxed text-ink-soft">{event.detail}</p>}
-                          {event.dueAt && (
-                            <p className="mt-0.5 text-xs text-ink-faint">
-                              Échéance : {event.dueAt.length <= 10
-                                ? dayOnly.format(new Date(`${event.dueAt}T12:00:00Z`))
-                                : dateTime.format(new Date(event.dueAt))}
-                            </p>
-                          )}
-                        </div>
-                      </li>
-                    ))}
-                  </ol>
-                )}
-              </section>
-            );
-          })}
-        </div>
-      )}
+      <HistoryView weeks={weeks} clientName={selected.name}/>
     </div>
   );
 }
