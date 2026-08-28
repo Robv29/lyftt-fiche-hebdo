@@ -101,7 +101,8 @@ export interface ProductionRequestRow {
 
 export interface PublicationRow {
   published_at: string | null;
-  scheduled_date: string;
+  /** Date prévue, déjà mise en forme : le domaine n'a pas à connaître la locale. */
+  scheduledLabel: string;
   formatLabel: string;
 }
 
@@ -225,7 +226,7 @@ export function buildWeekHistory(input: SheetHistoryInput): WeekHistory {
       at: publication.published_at,
       kind: "published",
       label: HISTORY_EVENT_LABELS.published,
-      detail: `${publication.formatLabel} · prévue le ${publication.scheduled_date}`,
+      detail: `${publication.formatLabel} · prévue le ${publication.scheduledLabel}`,
     });
   }
 

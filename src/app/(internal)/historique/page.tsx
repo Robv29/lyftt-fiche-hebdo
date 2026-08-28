@@ -3,12 +3,14 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
 import { MEDIA_FORMAT_LABELS, type MediaFormat } from "@/lib/domain/types";
+import { planningWeekRange } from "@/lib/domain/planning";
 import {
   buildWeekHistory,
   validationDelayHours,
   type HistoryEventKind,
   type WeekHistory,
 } from "@/lib/domain/history";
+import { HistoryToolbar } from "./HistoryToolbar";
 
 export const dynamic = "force-dynamic";
 
@@ -16,17 +18,17 @@ export const dynamic = "force-dynamic";
  * Couleur par nature d'événement : la chronologie se parcourt à la verticale,
  * et l'œil doit distinguer un envoi d'un retour sans lire chaque ligne.
  */
-const EVENT_TONES: Record<HistoryEventKind, { dot: string; text: string }> = {
-  sheet_sent: { dot: "#1176d3", text: "text-[#0b5e9f]" },
-  sheet_resent: { dot: "#6d28d9", text: "text-[#6d28d9]" },
-  reminder: { dot: "#e5484d", text: "text-state-changes" },
-  client_feedback: { dot: "#f5a524", text: "text-[#a15c00]" },
-  feedback_resolved: { dot: "#14b8a6", text: "text-[#0e7490]" },
-  special_request: { dot: "#ec4899", text: "text-[#be185d]" },
-  production_requested: { dot: "#8b5cf6", text: "text-[#6d28d9]" },
-  production_delivered: { dot: "#14b8a6", text: "text-[#0e7490]" },
-  approved: { dot: "#128359", text: "text-state-approved" },
-  published: { dot: "#64748b", text: "text-ink-soft" },
+const EVENT_TONES: Record<HistoryEventKind, string> = {
+  sheet_sent: "#1176d3",
+  sheet_resent: "#6d28d9",
+  reminder: "#e5484d",
+  client_feedback: "#f5a524",
+  feedback_resolved: "#14b8a6",
+  special_request: "#ec4899",
+  production_requested: "#8b5cf6",
+  production_delivered: "#0e7490",
+  approved: "#128359",
+  published: "#64748b",
 };
 
 /** Natures de commande, telles que l'enum `production_request_kind` les nomme. */
@@ -39,16 +41,16 @@ const PRODUCTION_KIND_LABELS: Record<string, string> = {
 const dateTime = new Intl.DateTimeFormat("fr-FR", {
   day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/Paris",
 });
+const dayOnly = new Intl.DateTimeFormat("fr-FR", {
+  day: "numeric", month: "long", timeZone: "Europe/Paris",
+});
 
 export default async function HistoriquePage({ searchParams }: { searchParams: Promise<{ client?: string }> }) {
   const profile = await getCurrentProfile();
   if (!profile) redirect("/login");
 
   const supabase = await createSupabaseServerClient();
-  const { data: clients } = await supabase
-    .from("clients")
-    .select("id, name")
-    .order("name");
+  const { data: clients } = await supabase.from("clients").select("id, name").order("name");
 
   const requested = (await searchParams).client;
   const selected = (clients ?? []).find((c) => c.id === requested) ?? (clients ?? [])[0] ?? null;
@@ -63,10 +65,12 @@ export default async function HistoriquePage({ searchParams }: { searchParams: P
   }
 
   /*
-   * Tout ce qui porte une date, pour ce client. Les fiches emportent leurs
-   * versions, leurs messages et leurs publications ; les retours arrivent à
-   * part, un ticket pouvant survivre à la fiche qui l'a fait naître.
+   * Un historique s'arrête à aujourd'hui : les fiches des semaines à venir sont
+   * du planning, pas du passé. La borne est la fin de la semaine en cours, pour
+   * que la semaine commencée y figure entièrement.
    */
+  const range = planningWeekRange();
+
   const [{ data: sheets }, { data: tickets }, { data: productionRequests }] = await Promise.all([
     supabase
       .from("weekly_sheets")
@@ -75,17 +79,13 @@ export default async function HistoriquePage({ searchParams }: { searchParams: P
         client_message_dispatches ( template_type, sent_at ),
         weekly_sheet_items ( published_at, scheduled_date, format, is_cancelled )`)
       .eq("client_id", selected.id)
+      .lte("period_start", range.currentEnd)
       .order("period_start", { ascending: false })
-      .limit(40),
+      .limit(52),
     supabase
       .from("client_tickets")
       .select("id, title, ticket_type, category, submitted_at, created_at, resolved_at, due_at, weekly_sheet_id, weekly_sheet_item_id")
       .eq("client_id", selected.id),
-    /*
-     * Commandes en production : elles ne dépendent d'aucune fiche et portent
-     * leur propre cycle — demandée, échéance, livrée. On les rattache à la
-     * semaine qui contient leur date de demande.
-     */
     supabase
       .from("production_requests")
       .select("title, kind, created_at, due_on, delivered_at, validated_at")
@@ -141,60 +141,80 @@ export default async function HistoriquePage({ searchParams }: { searchParams: P
       .filter((item) => !item.is_cancelled)
       .map((item) => ({
         published_at: item.published_at,
-        scheduled_date: item.scheduled_date,
+        scheduledLabel: dayOnly.format(new Date(`${item.scheduled_date}T12:00:00Z`)),
         formatLabel: MEDIA_FORMAT_LABELS[item.format],
       })),
     productionRequests: requestsForWeek(sheet.period_start as string, sheet.period_end as string),
   }));
 
+  /* Synthèse : ce qu'on retient d'un client avant d'entrer dans le détail. */
+  const delays = weeks.map(validationDelayHours).filter((d): d is number => d !== null);
+  const totals = {
+    semaines: weeks.length,
+    retours: weeks.reduce((n, w) => n + w.events.filter((e) => e.kind === "client_feedback").length, 0),
+    relances: weeks.reduce((n, w) => n + w.events.filter((e) => e.kind === "reminder").length, 0),
+    publications: weeks.reduce((n, w) => n + w.events.filter((e) => e.kind === "published").length, 0),
+    delaiMoyen: delays.length ? Math.round(delays.reduce((a, b) => a + b, 0) / delays.length) : null,
+  };
+
   return (
-    <div className="space-y-6">
-      <header>
-        <p className="eyebrow">Suivi</p>
-        <h1 className="page-title mt-1">Historique</h1>
-        <p className="mt-2 text-sm text-ink-soft">
-          Ce qui s’est passé semaine par semaine : envois, retours, validations et publications réelles.
+    <div className="history-page space-y-6">
+      <header className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="eyebrow">Suivi · semaine en cours et précédentes</p>
+          <h1 className="page-title mt-1">Historique — {selected.name}</h1>
+          <p className="mt-2 max-w-2xl text-sm text-ink-soft">
+            Envois, retours, validations et publications réelles, du plus récent au plus ancien.
+          </p>
+        </div>
+        {/* Visible seulement à l'impression : un PDF doit porter sa date. */}
+        <p className="print-only text-xs text-ink-faint">
+          Édité le {dayOnly.format(new Date())}
         </p>
       </header>
 
-      {/* Un client à la fois : quarante semaines de chronologie ne se lisent pas côte à côte. */}
-      <div className="flex flex-wrap gap-1.5">
-        {(clients ?? []).map((client) => (
-          <Link
-            key={client.id}
-            href={`/historique?client=${client.id}`}
-            className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
-              client.id === selected.id
-                ? "bg-[#1176d3] text-white"
-                : "bg-canvas text-ink-soft hover:bg-[#e8f2ff] hover:text-[#0b5e9f]"
-            }`}
-          >
-            {client.name}
-          </Link>
-        ))}
-      </div>
+      <HistoryToolbar clients={clients ?? []} selectedId={selected.id} clientName={selected.name}/>
+
+      <section className="card grid gap-3 p-4 sm:grid-cols-5 sm:p-5">
+        <Synthese valeur={totals.semaines} libelle={totals.semaines > 1 ? "semaines suivies" : "semaine suivie"}/>
+        <Synthese valeur={totals.retours} libelle={totals.retours > 1 ? "retours clients" : "retour client"}/>
+        <Synthese valeur={totals.relances} libelle={totals.relances > 1 ? "relances" : "relance"}/>
+        <Synthese valeur={totals.publications} libelle={totals.publications > 1 ? "publications" : "publication"}/>
+        <Synthese
+          valeur={totals.delaiMoyen === null ? "—" : `${totals.delaiMoyen} h`}
+          libelle="délai moyen de validation"
+        />
+      </section>
 
       {weeks.length === 0 ? (
         <p className="card px-4 py-8 text-center text-sm text-ink-faint">
-          Aucune fiche pour {selected.name}.
+          Aucune fiche pour {selected.name} sur la semaine en cours ou les précédentes.
         </p>
       ) : (
         <div className="space-y-4">
           {weeks.map((week) => {
             const delay = validationDelayHours(week);
+            const retours = week.events.filter((e) => e.kind === "client_feedback").length;
             return (
-              <section key={week.sheetId} className="section-card">
-                <div className="section-card-header">
-                  <div>
+              <section key={week.sheetId} className="history-week section-card">
+                <div className="section-card-header flex-wrap gap-y-2">
+                  <div className="min-w-0">
                     <p className="eyebrow">Semaine {week.isoWeek}</p>
-                    <h2 className="mt-1 font-semibold">{week.periodStart} → {week.periodEnd}</h2>
+                    <h2 className="mt-1 font-semibold">
+                      {dayOnly.format(new Date(`${week.periodStart}T12:00:00Z`))}
+                      {" — "}
+                      {dayOnly.format(new Date(`${week.periodEnd}T12:00:00Z`))}
+                    </h2>
                   </div>
-                  <div className="flex items-center gap-2">
-                    {delay !== null && (
-                      <span className="badge bg-[#e8f8f1] text-state-approved">Validée en {delay} h</span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {retours > 0 && (
+                      <span className="badge bg-[#fff4e0] text-[#a15c00]">{retours} retour{retours > 1 ? "s" : ""}</span>
                     )}
-                    <Link href={`/fiches/${week.sheetId}`} className="text-xs font-semibold text-[#0b63ad] hover:text-[#07487f]">
-                      Ouvrir la fiche →
+                    {delay !== null
+                      ? <span className="badge bg-[#e8f8f1] text-state-approved">Validée en {delay} h</span>
+                      : <span className="badge bg-canvas text-ink-faint">Pas de validation</span>}
+                    <Link href={`/fiches/${week.sheetId}`} className="no-print text-xs font-semibold text-[#0b63ad] hover:text-[#07487f]">
+                      Ouvrir →
                     </Link>
                   </div>
                 </div>
@@ -204,27 +224,31 @@ export default async function HistoriquePage({ searchParams }: { searchParams: P
                     Fiche créée, jamais envoyée au client.
                   </p>
                 ) : (
-                  <ol className="divide-y divide-line">
-                    {week.events.map((event, index) => {
-                      const tone = EVENT_TONES[event.kind];
-                      return (
-                        <li key={`${event.kind}-${event.at}-${index}`} className="flex items-start gap-3 px-5 py-2.5">
-                          <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full" style={{ background: tone.dot }}/>
-                          <div className="min-w-0 flex-1">
-                            <p className="flex flex-wrap items-baseline gap-x-2">
-                              <strong className={`text-sm ${tone.text}`}>{event.label}</strong>
-                              <span className="text-xs text-ink-faint">{dateTime.format(new Date(event.at))}</span>
+                  /*
+                    Un filet vertical relie les événements : il donne à lire une
+                    suite, là où des lignes séparées se lisaient comme un tableau
+                    sans ordre.
+                  */
+                  <ol className="history-timeline space-y-0 px-5 py-3">
+                    {week.events.map((event, index) => (
+                      <li key={`${event.kind}-${event.at}-${index}`} className="history-event">
+                        <span className="history-dot" style={{ background: EVENT_TONES[event.kind] }}/>
+                        <div className="min-w-0">
+                          <p className="flex flex-wrap items-baseline gap-x-2">
+                            <strong className="text-sm">{event.label}</strong>
+                            <span className="text-xs tabular-nums text-ink-faint">{dateTime.format(new Date(event.at))}</span>
+                          </p>
+                          {event.detail && <p className="mt-0.5 text-xs leading-relaxed text-ink-soft">{event.detail}</p>}
+                          {event.dueAt && (
+                            <p className="mt-0.5 text-xs text-ink-faint">
+                              Échéance : {event.dueAt.length <= 10
+                                ? dayOnly.format(new Date(`${event.dueAt}T12:00:00Z`))
+                                : dateTime.format(new Date(event.dueAt))}
                             </p>
-                            {event.detail && <p className="mt-0.5 text-xs text-ink-soft">{event.detail}</p>}
-                            {event.dueAt && (
-                              <p className="mt-0.5 text-xs text-ink-faint">
-                                Échéance : {dateTime.format(new Date(event.dueAt))}
-                              </p>
-                            )}
-                          </div>
-                        </li>
-                      );
-                    })}
+                          )}
+                        </div>
+                      </li>
+                    ))}
                   </ol>
                 )}
               </section>
@@ -232,6 +256,15 @@ export default async function HistoriquePage({ searchParams }: { searchParams: P
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+function Synthese({ valeur, libelle }: { valeur: number | string; libelle: string }) {
+  return (
+    <div className="rounded-xl bg-canvas px-3 py-2.5">
+      <p className="text-xl font-semibold tracking-[-.02em]">{valeur}</p>
+      <p className="mt-0.5 text-[11px] leading-tight text-ink-faint">{libelle}</p>
     </div>
   );
 }

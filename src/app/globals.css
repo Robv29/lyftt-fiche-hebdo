@@ -656,3 +656,58 @@ tbody tr { transition:background-color var(--motion-fast) var(--ease-out); }
 .legal-prose li + li {
   margin-top: 0.5rem;
 }
+
+/* ---------------------------------------------------------------------------
+   Historique — chronologie et impression.
+--------------------------------------------------------------------------- */
+
+/*
+ * Filet vertical reliant les événements d'une semaine : il donne à lire une
+ * suite. Sans lui, les lignes se lisaient comme un tableau sans ordre.
+ */
+.history-timeline { position:relative; }
+.history-timeline::before {
+  content:""; position:absolute; left:5px; top:14px; bottom:14px;
+  width:1px; background:var(--border);
+}
+.history-event { position:relative; display:flex; gap:14px; padding:7px 0; }
+.history-dot {
+  position:relative; z-index:1; margin-top:5px; width:11px; height:11px;
+  flex-shrink:0; border-radius:9999px; box-shadow:0 0 0 3px #fff;
+}
+
+/*
+ * Impression — « Exporter en PDF » passe par le navigateur.
+ *
+ * Le document imprimé est la page elle-même : pas de seconde mise en page à
+ * maintenir. On retire la coquille applicative, on déplie tout, et on empêche
+ * une semaine d'être coupée en deux entre deux feuilles.
+ */
+.print-only { display:none; }
+
+@media print {
+  .sidebar, .topbar, .mobile-nav, .no-print { display:none !important; }
+  .print-only { display:block; }
+
+  .workspace { margin:0 !important; padding:0 !important; }
+  .main-content {
+    min-height:0 !important; padding:0 !important;
+    border:0 !important; border-radius:0 !important; background:#fff !important;
+  }
+  .app-shell { background:#fff !important; }
+
+  /* Les animations d'arrivée laissent parfois une page blanche à l'impression. */
+  .main-content>div, .main-content>div>* { animation:none !important; opacity:1 !important; }
+
+  .history-page { gap:14px; }
+  .history-week {
+    break-inside:avoid; page-break-inside:avoid;
+    border:1px solid #d8dee7 !important; box-shadow:none !important;
+  }
+  .card { box-shadow:none !important; }
+
+  /* Le papier n'a pas de survol : le contraste doit tenir seul. */
+  a { color:inherit !important; text-decoration:none !important; }
+}
+
+@page { margin:14mm; }

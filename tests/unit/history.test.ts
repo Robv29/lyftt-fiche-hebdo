@@ -22,7 +22,7 @@ describe("historique d'une semaine", () => {
     const week = buildWeekHistory({
       ...base,
       approvedAt: "2026-08-26T14:00:00Z",
-      publications: [{ published_at: "2026-08-27T18:05:00Z", scheduled_date: "2026-08-27", formatLabel: "Photo" }],
+      publications: [{ published_at: "2026-08-27T18:05:00Z", scheduledLabel: "27 août", formatLabel: "Photo" }],
       versions: [{ version_number: 1, sent_to_client_at: "2026-08-24T09:00:00Z" }],
     });
 
@@ -106,15 +106,15 @@ describe("historique d'une semaine", () => {
     const week = buildWeekHistory({
       ...base,
       publications: [
-        { published_at: "2026-08-27T18:05:00Z", scheduled_date: "2026-08-26", formatLabel: "Photo" },
-        { published_at: null, scheduled_date: "2026-08-28", formatLabel: "Vidéo" },
+        { published_at: "2026-08-27T18:05:00Z", scheduledLabel: "26 août", formatLabel: "Photo" },
+        { published_at: null, scheduledLabel: "28 août", formatLabel: "Vidéo" },
       ],
     });
 
     // La publication non confirmée n'apparaît pas : rien ne dit qu'elle est sortie.
     expect(week.events).toHaveLength(1);
     expect(week.events[0]!.at).toBe("2026-08-27T18:05:00Z");
-    expect(week.events[0]!.detail).toContain("prévue le 2026-08-26");
+    expect(week.events[0]!.detail).toContain("prévue le 26 août");
   });
 });
 
