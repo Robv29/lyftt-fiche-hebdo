@@ -71,11 +71,18 @@ export default async function HistoriquePage({ searchParams }: { searchParams: P
    */
   const range = planningWeekRange();
 
-  const [{ data: sheets }, { data: tickets }, { data: productionRequests }] = await Promise.all([
+  const [sheetsResult, ticketsResult, requestsResult] = await Promise.all([
     supabase
       .from("weekly_sheets")
+      /*
+       * La clé étrangère est nommée explicitement : deux chemins relient une
+       * fiche à ses versions — la liste, et la version courante portée par
+       * `current_version_id`. Sans cette précision PostgREST refuse la requête
+       * (PGRST201), et l'écran affichait « aucune fiche » pour un client qui en
+       * avait.
+       */
       .select(`id, iso_week, period_start, period_end, approved_at,
-        weekly_sheet_versions ( version_number, sent_to_client_at ),
+        weekly_sheet_versions!weekly_sheet_versions_weekly_sheet_id_fkey ( version_number, sent_to_client_at ),
         client_message_dispatches ( template_type, sent_at ),
         weekly_sheet_items ( published_at, scheduled_date, format, is_cancelled )`)
       .eq("client_id", selected.id)
@@ -91,6 +98,29 @@ export default async function HistoriquePage({ searchParams }: { searchParams: P
       .select("title, kind, created_at, due_on, delivered_at, validated_at")
       .eq("client_id", selected.id),
   ]);
+
+  /*
+   * Une requête en échec ne doit pas se lire comme une absence de données : un
+   * écran vide laisse croire qu'il n'y a rien à montrer, et le défaut passe
+   * inaperçu. On le dit.
+   */
+  const failure = sheetsResult.error ?? ticketsResult.error ?? requestsResult.error;
+  if (failure) {
+    console.error("[historique] chargement impossible", failure.message);
+    return (
+      <div className="space-y-6">
+        <header><p className="eyebrow">Suivi</p><h1 className="page-title mt-1">Historique — {selected.name}</h1></header>
+        <p className="card px-4 py-8 text-center text-sm text-state-changes">
+          L’historique n’a pas pu être chargé. Réessayez dans un instant ; si le problème persiste,
+          l’erreur technique est : {failure.message}
+        </p>
+      </div>
+    );
+  }
+
+  const sheets = sheetsResult.data;
+  const tickets = ticketsResult.data;
+  const productionRequests = requestsResult.data;
 
   const ticketsBySheet = new Map<string, NonNullable<typeof tickets>>();
   for (const ticket of tickets ?? []) {
