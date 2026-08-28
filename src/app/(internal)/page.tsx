@@ -5,7 +5,7 @@ import { sheetStatusLabel, ticketStatusLabel, ticketPriorityLabel } from "@/lib/
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
 import { requiresProduction } from "@/lib/domain/routing";
 import { Icon } from "@/components/Icon";
-import { isActionableOverdue, planningWeekRange, sheetCompletion } from "@/lib/domain/planning";
+import { isActionableOverdue, planningBucketForPeriod, planningWeekRange, sheetCompletion } from "@/lib/domain/planning";
 import {
   SHOOTING_LINE_KEYS,
   isShootingLine,
@@ -240,9 +240,19 @@ export default async function DashboardPage() {
   /*
    * En attente de validation : la balle est dans le camp du client. Une fiche
    * en cours de correction chez nous n'attend pas le client, elle nous attend.
+   *
+   * Deux semaines seulement : celle en cours et la suivante. Une validation
+   * jamais venue sur une semaine déjà publiée n'appelle plus rien — la relancer
+   * ne rattrape pas des publications passées — et ces fiches encombraient une
+   * liste qui doit tenir d'un coup d'œil. Elles restent consultables dans le
+   * planning, onglet « Passé ».
    */
-  const awaitingClient = sheets.filter((sheet) =>
-    ["sent_to_client", "partially_approved", "awaiting_revalidation"].includes(sheet.status));
+  const awaitingClient = sheets.filter((sheet) => {
+    if (!["sent_to_client", "partially_approved", "awaiting_revalidation"].includes(sheet.status)) return false;
+    if (!sheet.period_start || !sheet.period_end) return true;
+    const bucket = planningBucketForPeriod(sheet.period_start as string, sheet.period_end as string);
+    return bucket === "current" || bucket === "next";
+  });
   /**
    * Dernier message parti sur une fiche.
    *
@@ -340,7 +350,7 @@ export default async function DashboardPage() {
       <section className="section-card" id="validations">
         <div className="section-card-header">
           <div>
-            <p className="eyebrow">Validation</p>
+            <p className="eyebrow">Validation · semaine en cours et suivante</p>
             <h2 className="mt-1 font-semibold">Fiches en attente de validation client</h2>
           </div>
           <div className="flex items-center gap-2">
