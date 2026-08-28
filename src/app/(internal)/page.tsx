@@ -5,7 +5,7 @@ import { sheetStatusLabel, ticketStatusLabel, ticketPriorityLabel } from "@/lib/
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
 import { requiresProduction } from "@/lib/domain/routing";
 import { Icon } from "@/components/Icon";
-import { planningWeekRange, sheetCompletion } from "@/lib/domain/planning";
+import { planningBucketForPeriod, planningWeekRange, sheetCompletion } from "@/lib/domain/planning";
 import {
   SHOOTING_LINE_KEYS,
   isShootingLine,
@@ -50,7 +50,7 @@ export default async function DashboardPage() {
      * demande de relancer sans dire quand on l'a fait la dernière fois — au
      * risque de relancer un client à deux jours d'intervalle.
      */
-    supabase.from("weekly_sheets").select("id, iso_week, status, validation_deadline_at, clients ( name ), client_message_dispatches ( template_type, sent_at )").in("status", ["sent_to_client", "partially_approved", "changes_requested", "corrections_in_progress", "new_version_to_send", "awaiting_revalidation"]).order("validation_deadline_at", { ascending: true }).limit(120),
+    supabase.from("weekly_sheets").select("id, iso_week, status, period_start, period_end, validation_deadline_at, clients ( name ), client_message_dispatches ( template_type, sent_at )").in("status", ["sent_to_client", "partially_approved", "changes_requested", "corrections_in_progress", "new_version_to_send", "awaiting_revalidation"]).order("validation_deadline_at", { ascending: true }).limit(120),
     supabase.from("weekly_sheet_items").select("id, published_at").eq("scheduled_date", today).eq("is_cancelled", false),
     supabase.from("clients").select("id, name, is_active, notes, contract_start_date, contract_end_date, pause_start_date, pause_end_date, client_contacts ( first_name, is_primary )").eq("is_active", true),
     /*
@@ -243,10 +243,6 @@ export default async function DashboardPage() {
    */
   const awaitingClient = sheets.filter((sheet) =>
     ["sent_to_client", "partially_approved", "awaiting_revalidation"].includes(sheet.status));
-  /*
-   * Retard de validation : la seule urgence de cet écran qui se compte, et
-   * celle qui décide si l'on relance aujourd'hui ou non.
-   */
   /**
    * Dernier message parti sur une fiche.
    *
@@ -264,9 +260,27 @@ export default async function DashboardPage() {
     return { at: latest.sent_at, relance: reminders.length > 0 };
   };
 
-  const overdueSheets = awaitingClient.filter((sheet) =>
-    sheet.validation_deadline_at
-    && deadlineState(new Date(sheet.validation_deadline_at)).isOverdue).length;
+  /**
+   * Retard qui appelle une relance aujourd'hui.
+   *
+   * Seule la semaine en cours est mise en avant. Une fiche de la semaine passée
+   * dont l'échéance est dépassée l'est irrémédiablement — ses publications sont
+   * derrière nous — et la signaler en rouge noyait les retards sur lesquels on
+   * peut encore agir. L'information reste affichée, sans l'alerte.
+   */
+  const isCurrentWeek = (sheet: { period_start?: string | null; period_end?: string | null }) =>
+    Boolean(sheet.period_start && sheet.period_end)
+    && planningBucketForPeriod(sheet.period_start as string, sheet.period_end as string) === "current";
+
+  const isActionableOverdue = (sheet: {
+    period_start?: string | null;
+    period_end?: string | null;
+    validation_deadline_at?: string | null;
+  }) => Boolean(sheet.validation_deadline_at)
+    && deadlineState(new Date(sheet.validation_deadline_at as string)).isOverdue
+    && isCurrentWeek(sheet);
+
+  const overdueSheets = awaitingClient.filter(isActionableOverdue).length;
 
   /*
    * Plafond de la liste : la page ne doit jamais s'allonger.
@@ -332,7 +346,7 @@ export default async function DashboardPage() {
             <h2 className="mt-1 font-semibold">Fiches en attente de validation client</h2>
           </div>
           <div className="flex items-center gap-2">
-            {overdueSheets > 0 && <span className="badge bg-state-changes/10 text-state-changes">{overdueSheets} en retard</span>}
+            {overdueSheets > 0 && <span className="badge bg-state-changes/10 text-state-changes">{overdueSheets} en retard cette semaine</span>}
             <span className="badge bg-[#e8f2ff] text-[#0b5e9f]">{awaitingClient.length}</span>
             <Link href="/fiches" className="text-xs font-semibold text-[#0b63ad] hover:text-[#07487f]">Tout voir →</Link>
           </div>
@@ -350,11 +364,13 @@ export default async function DashboardPage() {
               const client = sheet.clients as unknown as { name: string } | null;
               const deadline = sheet.validation_deadline_at ? deadlineState(new Date(sheet.validation_deadline_at)) : null;
               const contact = lastContact(sheet);
+              // Rouge seulement là où la relance peut encore changer quelque chose.
+              const urgent = isActionableOverdue(sheet);
               return <li key={sheet.id} className="flex items-center gap-2 px-5 py-3 transition-colors hover:bg-[#f7fafe]">
                 <Link href={`/fiches/${sheet.id}`} className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-3">
                     <strong className="truncate text-sm">{client?.name ?? "Client"}</strong>
-                    <span className={`shrink-0 text-[11px] font-semibold ${deadline?.isOverdue ? "text-state-changes" : "text-ink-faint"}`}>{deadline?.label ?? `S${sheet.iso_week}`}</span>
+                    <span className={`shrink-0 text-[11px] font-semibold ${urgent ? "text-state-changes" : "text-ink-faint"}`}>{deadline?.label ?? `S${sheet.iso_week}`}</span>
                   </div>
                   <p className="mt-0.5 truncate text-xs text-ink-faint">
                     Semaine {sheet.iso_week} · {sheetStatusLabel(sheet.status)}
@@ -370,7 +386,7 @@ export default async function DashboardPage() {
                 </Link>
                 <Link
                   href={`/fiches/${sheet.id}?relance=1`}
-                  className={`shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-semibold ${deadline?.isOverdue ? "bg-state-changes/10 text-state-changes hover:bg-state-changes/20" : "bg-[#e8f2ff] text-[#0b5e9f] hover:bg-[#d8e9ff]"}`}
+                  className={`shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-semibold ${urgent ? "bg-state-changes/10 text-state-changes hover:bg-state-changes/20" : "bg-[#e8f2ff] text-[#0b5e9f] hover:bg-[#d8e9ff]"}`}
                 >
                   Relancer
                 </Link>
