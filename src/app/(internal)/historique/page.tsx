@@ -23,8 +23,17 @@ const EVENT_TONES: Record<HistoryEventKind, { dot: string; text: string }> = {
   client_feedback: { dot: "#f5a524", text: "text-[#a15c00]" },
   feedback_resolved: { dot: "#14b8a6", text: "text-[#0e7490]" },
   special_request: { dot: "#ec4899", text: "text-[#be185d]" },
+  production_requested: { dot: "#8b5cf6", text: "text-[#6d28d9]" },
+  production_delivered: { dot: "#14b8a6", text: "text-[#0e7490]" },
   approved: { dot: "#128359", text: "text-state-approved" },
   published: { dot: "#64748b", text: "text-ink-soft" },
+};
+
+/** Natures de commande, telles que l'enum `production_request_kind` les nomme. */
+const PRODUCTION_KIND_LABELS: Record<string, string> = {
+  visuel: "Visuel",
+  video: "Vidéo",
+  photo: "Photo",
 };
 
 const dateTime = new Intl.DateTimeFormat("fr-FR", {
@@ -58,7 +67,7 @@ export default async function HistoriquePage({ searchParams }: { searchParams: P
    * versions, leurs messages et leurs publications ; les retours arrivent à
    * part, un ticket pouvant survivre à la fiche qui l'a fait naître.
    */
-  const [{ data: sheets }, { data: tickets }] = await Promise.all([
+  const [{ data: sheets }, { data: tickets }, { data: productionRequests }] = await Promise.all([
     supabase
       .from("weekly_sheets")
       .select(`id, iso_week, period_start, period_end, approved_at,
@@ -70,7 +79,16 @@ export default async function HistoriquePage({ searchParams }: { searchParams: P
       .limit(40),
     supabase
       .from("client_tickets")
-      .select("id, title, ticket_type, submitted_at, created_at, resolved_at, due_at, weekly_sheet_id, weekly_sheet_item_id")
+      .select("id, title, ticket_type, category, submitted_at, created_at, resolved_at, due_at, weekly_sheet_id, weekly_sheet_item_id")
+      .eq("client_id", selected.id),
+    /*
+     * Commandes en production : elles ne dépendent d'aucune fiche et portent
+     * leur propre cycle — demandée, échéance, livrée. On les rattache à la
+     * semaine qui contient leur date de demande.
+     */
+    supabase
+      .from("production_requests")
+      .select("title, kind, created_at, due_on, delivered_at, validated_at")
       .eq("client_id", selected.id),
   ]);
 
@@ -81,6 +99,21 @@ export default async function HistoriquePage({ searchParams }: { searchParams: P
     list.push(ticket);
     ticketsBySheet.set(key, list);
   }
+
+  const requestsForWeek = (start: string, end: string) =>
+    (productionRequests ?? [])
+      .filter((request) => {
+        const day = (request.created_at as string).slice(0, 10);
+        return day >= start && day <= end;
+      })
+      .map((request) => ({
+        title: request.title as string | null,
+        kindLabel: PRODUCTION_KIND_LABELS[request.kind as string] ?? "Production",
+        created_at: request.created_at as string,
+        due_on: request.due_on as string | null,
+        delivered_at: request.delivered_at as string | null,
+        validated_at: request.validated_at as string | null,
+      }));
 
   const weeks: WeekHistory[] = (sheets ?? []).map((sheet) => buildWeekHistory({
     sheetId: sheet.id as string,
@@ -100,6 +133,7 @@ export default async function HistoriquePage({ searchParams }: { searchParams: P
       resolved_at: ticket.resolved_at as string | null,
       due_at: ticket.due_at as string | null,
       weekly_sheet_item_id: ticket.weekly_sheet_item_id as string | null,
+      category: (ticket.category as string | null) ?? null,
     })),
     publications: ((sheet.weekly_sheet_items ?? []) as unknown as {
       published_at: string | null; scheduled_date: string; format: MediaFormat; is_cancelled: boolean;
@@ -110,6 +144,7 @@ export default async function HistoriquePage({ searchParams }: { searchParams: P
         scheduled_date: item.scheduled_date,
         formatLabel: MEDIA_FORMAT_LABELS[item.format],
       })),
+    productionRequests: requestsForWeek(sheet.period_start as string, sheet.period_end as string),
   }));
 
   return (

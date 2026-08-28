@@ -74,12 +74,12 @@ describe("historique d'une semaine", () => {
         {
           id: "t1", title: "Changer la photo", ticket_type: "photo_replace", typeLabel: "Remplacement de photo",
           submitted_at: "2026-08-25T10:00:00Z", created_at: "2026-08-25T10:00:00Z",
-          resolved_at: null, due_at: "2026-08-26T10:00:00Z", weekly_sheet_item_id: "i1",
+          resolved_at: null, due_at: "2026-08-26T10:00:00Z", weekly_sheet_item_id: "i1", category: "editorial",
         },
         {
           id: "t2", title: "Devis pour un shooting", ticket_type: "other", typeLabel: "Autre demande",
           submitted_at: "2026-08-25T11:00:00Z", created_at: "2026-08-25T11:00:00Z",
-          resolved_at: null, due_at: null, weekly_sheet_item_id: null,
+          resolved_at: null, due_at: null, weekly_sheet_item_id: null, category: null,
         },
       ],
     });
@@ -95,7 +95,7 @@ describe("historique d'une semaine", () => {
       tickets: [{
         id: "t1", title: null, ticket_type: "text_edit", typeLabel: "Correction de texte",
         submitted_at: "2026-08-25T10:00:00Z", created_at: "2026-08-25T10:00:00Z",
-        resolved_at: "2026-08-25T15:00:00Z", due_at: null, weekly_sheet_item_id: "i1",
+        resolved_at: "2026-08-25T15:00:00Z", due_at: null, weekly_sheet_item_id: "i1", category: "graphic",
       }],
     });
 
@@ -115,6 +115,63 @@ describe("historique d'une semaine", () => {
     expect(week.events).toHaveLength(1);
     expect(week.events[0]!.at).toBe("2026-08-27T18:05:00Z");
     expect(week.events[0]!.detail).toContain("prévue le 2026-08-26");
+  });
+});
+
+describe("commandes en production", () => {
+  it("inscrit la demande, son échéance et sa livraison", () => {
+    const week = buildWeekHistory({
+      ...base,
+      productionRequests: [{
+        title: "Visuels épinglés",
+        kindLabel: "Visuel",
+        created_at: "2026-08-19T15:56:10Z",
+        due_on: "2026-08-26",
+        delivered_at: "2026-08-26T10:03:20Z",
+        validated_at: "2026-08-26T13:39:00Z",
+      }],
+    });
+
+    expect(week.events.map((e) => e.kind)).toEqual(["production_requested", "production_delivered"]);
+    expect(week.events[0]!.detail).toBe("Visuel — Visuels épinglés");
+    expect(week.events[0]!.dueAt).toBe("2026-08-26");
+  });
+
+  it("n'invente pas de livraison pour une commande encore à faire", () => {
+    const week = buildWeekHistory({
+      ...base,
+      productionRequests: [{
+        title: "annonce site web", kindLabel: "Visuel",
+        created_at: "2026-08-18T13:17:22Z", due_on: null, delivered_at: null, validated_at: null,
+      }],
+    });
+
+    expect(week.events).toHaveLength(1);
+    expect(week.events[0]!.kind).toBe("production_requested");
+  });
+
+  it("signale qu'un retour part en production", () => {
+    const week = buildWeekHistory({
+      ...base,
+      tickets: [{
+        id: "t1", title: "Refaire le visuel", ticket_type: "photo_replace", typeLabel: "Remplacement de photo",
+        submitted_at: "2026-08-25T10:00:00Z", created_at: "2026-08-25T10:00:00Z",
+        resolved_at: null, due_at: null, weekly_sheet_item_id: "i1", category: "graphic",
+      }],
+    });
+    expect(week.events[0]!.detail).toContain("part en production");
+  });
+
+  it("ne le signale pas pour un retour traité au bureau", () => {
+    const week = buildWeekHistory({
+      ...base,
+      tickets: [{
+        id: "t1", title: "Corriger une faute", ticket_type: "text_typo", typeLabel: "Coquille",
+        submitted_at: "2026-08-25T10:00:00Z", created_at: "2026-08-25T10:00:00Z",
+        resolved_at: null, due_at: null, weekly_sheet_item_id: "i1", category: "editorial",
+      }],
+    });
+    expect(week.events[0]!.detail).not.toContain("part en production");
   });
 });
 

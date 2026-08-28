@@ -19,6 +19,8 @@ export type HistoryEventKind =
   | "client_feedback"
   | "feedback_resolved"
   | "special_request"
+  | "production_requested"
+  | "production_delivered"
   | "approved"
   | "published";
 
@@ -48,6 +50,8 @@ export const HISTORY_EVENT_LABELS: Record<HistoryEventKind, string> = {
   client_feedback: "Retour client",
   feedback_resolved: "Retour traité",
   special_request: "Demande spéciale",
+  production_requested: "Commande en production",
+  production_delivered: "Production livrée",
   approved: "Validation du client",
   published: "Publication",
 };
@@ -75,6 +79,24 @@ export interface TicketRow {
   due_at: string | null;
   /** Nul quand la demande ne vise aucun contenu : c'est une demande spéciale. */
   weekly_sheet_item_id: string | null;
+  /** `graphic` ou `video` : le retour part en production, il ne se traite pas au bureau. */
+  category: string | null;
+}
+
+/**
+ * Commande passée à la production — visuel, montage — avec son échéance.
+ *
+ * Elle ne dépend d'aucune fiche : elle porte sa propre date de demande, sa date
+ * limite et sa date de livraison. C'est le seul objet de l'application qui suit
+ * ce cycle, et il manquait à l'historique.
+ */
+export interface ProductionRequestRow {
+  title: string | null;
+  kindLabel: string;
+  created_at: string;
+  due_on: string | null;
+  delivered_at: string | null;
+  validated_at: string | null;
 }
 
 export interface PublicationRow {
@@ -93,6 +115,8 @@ export interface SheetHistoryInput {
   dispatches: DispatchRow[];
   tickets: TicketRow[];
   publications: PublicationRow[];
+  /** Commandes en production tombant dans la semaine, rattachées par leur date. */
+  productionRequests?: ProductionRequestRow[];
 }
 
 /**
@@ -142,11 +166,18 @@ export function buildWeekHistory(input: SheetHistoryInput): WeekHistory {
 
   for (const ticket of input.tickets) {
     const special = ticket.weekly_sheet_item_id === null;
+    /*
+     * Un retour qui demande un visuel ou un montage part en production ; les
+     * autres se traitent au bureau. La distinction change qui doit agir, elle
+     * mérite d'être lisible sans ouvrir le ticket.
+     */
+    const production = ticket.category === "graphic" || ticket.category === "video";
+    const base = ticket.title?.trim() ? `${ticket.typeLabel} — ${ticket.title.trim()}` : ticket.typeLabel;
     events.push({
       at: ticket.submitted_at ?? ticket.created_at,
       kind: special ? "special_request" : "client_feedback",
       label: HISTORY_EVENT_LABELS[special ? "special_request" : "client_feedback"],
-      detail: ticket.title?.trim() ? `${ticket.typeLabel} — ${ticket.title.trim()}` : ticket.typeLabel,
+      detail: production ? `${base} · part en production` : base,
       dueAt: ticket.due_at,
     });
     if (ticket.resolved_at) {
@@ -155,6 +186,26 @@ export function buildWeekHistory(input: SheetHistoryInput): WeekHistory {
         kind: "feedback_resolved",
         label: HISTORY_EVENT_LABELS.feedback_resolved,
         detail: ticket.typeLabel,
+      });
+    }
+  }
+
+  for (const request of input.productionRequests ?? []) {
+    const titre = request.title?.trim() || request.kindLabel;
+    events.push({
+      at: request.created_at,
+      kind: "production_requested",
+      label: HISTORY_EVENT_LABELS.production_requested,
+      detail: `${request.kindLabel} — ${titre}`,
+      // `due_on` est une date sans heure : elle reste telle quelle.
+      dueAt: request.due_on,
+    });
+    if (request.delivered_at) {
+      events.push({
+        at: request.delivered_at,
+        kind: "production_delivered",
+        label: HISTORY_EVENT_LABELS.production_delivered,
+        detail: titre,
       });
     }
   }
