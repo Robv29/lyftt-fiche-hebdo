@@ -45,7 +45,12 @@ export default async function DashboardPage() {
 
   const [ticketsResult, sheetsResult, publicationsResult, clientsResult, preparationResult] = await Promise.all([
     supabase.from("client_tickets").select("id, ticket_number, title, ticket_type, status, priority, due_at, created_at, clients ( name )").not("status", "in", "(closed,cancelled,rejected,approved_by_client)").order("created_at", { ascending: false }).limit(50),
-    supabase.from("weekly_sheets").select("id, iso_week, status, validation_deadline_at, clients ( name )").in("status", ["sent_to_client", "partially_approved", "changes_requested", "corrections_in_progress", "new_version_to_send", "awaiting_revalidation"]).order("validation_deadline_at", { ascending: true }).limit(120),
+    /*
+     * Les envois déjà partis accompagnent chaque fiche : sans eux, l'écran
+     * demande de relancer sans dire quand on l'a fait la dernière fois — au
+     * risque de relancer un client à deux jours d'intervalle.
+     */
+    supabase.from("weekly_sheets").select("id, iso_week, status, validation_deadline_at, clients ( name ), client_message_dispatches ( template_type, sent_at )").in("status", ["sent_to_client", "partially_approved", "changes_requested", "corrections_in_progress", "new_version_to_send", "awaiting_revalidation"]).order("validation_deadline_at", { ascending: true }).limit(120),
     supabase.from("weekly_sheet_items").select("id, published_at").eq("scheduled_date", today).eq("is_cancelled", false),
     supabase.from("clients").select("id, name, is_active, notes, contract_start_date, contract_end_date, pause_start_date, pause_end_date, client_contacts ( first_name, is_primary )").eq("is_active", true),
     /*
@@ -242,6 +247,23 @@ export default async function DashboardPage() {
    * Retard de validation : la seule urgence de cet écran qui se compte, et
    * celle qui décide si l'on relance aujourd'hui ou non.
    */
+  /**
+   * Dernier message parti sur une fiche.
+   *
+   * Un `reminder` est une relance à proprement parler ; les autres envois — la
+   * première mise à disposition, une nouvelle version — n'en sont pas, mais
+   * disent tout de même depuis quand le client n'a pas eu de nos nouvelles.
+   * Les deux sont donc distingués à l'affichage.
+   */
+  const lastContact = (sheet: { client_message_dispatches?: unknown }) => {
+    const dispatches = (sheet.client_message_dispatches ?? []) as { template_type: string; sent_at: string }[];
+    if (dispatches.length === 0) return null;
+    const reminders = dispatches.filter((d) => d.template_type === "reminder");
+    const source = reminders.length > 0 ? reminders : dispatches;
+    const latest = source.reduce((a, b) => (a.sent_at > b.sent_at ? a : b));
+    return { at: latest.sent_at, relance: reminders.length > 0 };
+  };
+
   const overdueSheets = awaitingClient.filter((sheet) =>
     sheet.validation_deadline_at
     && deadlineState(new Date(sheet.validation_deadline_at)).isOverdue).length;
@@ -256,6 +278,8 @@ export default async function DashboardPage() {
   const AWAITING_SHOWN = 8;
   const awaitingShown = awaitingClient.slice(0, AWAITING_SHOWN);
   const awaitingHidden = awaitingClient.length - awaitingShown.length;
+  // « 18 août » suffit sur une ligne serrée ; l'année n'apporte rien ici.
+  const dayMonth = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short", timeZone: "Europe/Paris" });
   const greetingDate = new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Paris" }).format(new Date());
   const publicationProgress = publications.length ? Math.round((published / publications.length) * 100) : 100;
 
@@ -325,13 +349,24 @@ export default async function DashboardPage() {
             {awaitingShown.map((sheet) => {
               const client = sheet.clients as unknown as { name: string } | null;
               const deadline = sheet.validation_deadline_at ? deadlineState(new Date(sheet.validation_deadline_at)) : null;
+              const contact = lastContact(sheet);
               return <li key={sheet.id} className="flex items-center gap-2 px-5 py-3 transition-colors hover:bg-[#f7fafe]">
                 <Link href={`/fiches/${sheet.id}`} className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-3">
                     <strong className="truncate text-sm">{client?.name ?? "Client"}</strong>
                     <span className={`shrink-0 text-[11px] font-semibold ${deadline?.isOverdue ? "text-state-changes" : "text-ink-faint"}`}>{deadline?.label ?? `S${sheet.iso_week}`}</span>
                   </div>
-                  <p className="mt-0.5 truncate text-xs text-ink-faint">Semaine {sheet.iso_week} · {sheetStatusLabel(sheet.status)}</p>
+                  <p className="mt-0.5 truncate text-xs text-ink-faint">
+                    Semaine {sheet.iso_week} · {sheetStatusLabel(sheet.status)}
+                    {/*
+                      Depuis quand le client n'a pas eu de nos nouvelles : sans
+                      cette date, on relance à l'aveugle, parfois deux fois en
+                      deux jours.
+                    */}
+                    {contact
+                      ? ` · ${contact.relance ? "relancée" : "envoyée"} le ${dayMonth.format(new Date(contact.at))}`
+                      : " · jamais envoyée"}
+                  </p>
                 </Link>
                 <Link
                   href={`/fiches/${sheet.id}?relance=1`}
