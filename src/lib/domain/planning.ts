@@ -331,3 +331,43 @@ export function satisfactionSummary(input: {
     unhappy: input.scores.filter((score) => score <= 1).length,
   };
 }
+
+export interface ReschedulableItem {
+  id: string;
+  scheduledDate: string;
+  /** Départage deux contenus tombant le même jour, pour un ordre stable. */
+  createdAt: string;
+}
+
+/**
+ * Redistribue les contenus d'une fiche sur les jours de publication du client.
+ *
+ * Les dates sont posées à la création de la fiche, d'après les jours renseignés
+ * alors. Changer ces jours ensuite laissait les fiches déjà créées sur l'ancien
+ * rythme : le planning affichait un mardi pour un client passé au jeudi.
+ *
+ * La répartition reprend `publicationDatesForWeek`, celle de la création : deux
+ * chemins produiraient deux plannings différents pour une même formule. L'ordre
+ * des contenus est conservé — le premier reste le premier — car il porte
+ * souvent une progression voulue.
+ *
+ * Ne renvoie que les contenus dont la date change : rien à écrire pour les
+ * autres.
+ */
+export function rescheduleItems(
+  items: readonly ReschedulableItem[],
+  weekdays: readonly number[],
+  weekStart: Date,
+): Array<{ id: string; scheduledDate: string }> {
+  const days = normalizeWeekdays(weekdays);
+  if (days.length === 0 || items.length === 0) return [];
+
+  const ordered = [...items].sort((a, b) =>
+    a.scheduledDate.localeCompare(b.scheduledDate) || a.createdAt.localeCompare(b.createdAt));
+
+  const dates = publicationDatesForWeek(ordered.length, days, weekStart);
+
+  return ordered
+    .map((item, index) => ({ id: item.id, scheduledDate: dates[index]! }))
+    .filter((next, index) => next.scheduledDate && next.scheduledDate !== ordered[index]!.scheduledDate);
+}

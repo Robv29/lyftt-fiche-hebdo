@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isActionableOverdue,
+  rescheduleItems,
   planningBucketForPeriod,
   planningWeekRange,
   selectHashtags,
@@ -274,5 +275,66 @@ describe("retard sur lequel on peut encore agir", () => {
   it("s'accorde avec la période calculée pour la même semaine", () => {
     expect(planningBucketForPeriod(semaineEnCours.periodStart, semaineEnCours.periodEnd, maintenant)).toBe("current");
     expect(planningBucketForPeriod(semainePassee.periodStart, semainePassee.periodEnd, maintenant)).toBe("past");
+  });
+});
+
+/*
+ * Recalage des dates sur les jours de publication.
+ *
+ * Les dates sont posées à la création ; changer les jours du client laissait les
+ * fiches déjà créées sur l'ancien rythme. Quarante-sept fiches étaient dans ce
+ * cas en production.
+ */
+describe("recalage des dates de publication", () => {
+  const lundi = new Date("2026-08-24T00:00:00Z");
+  const item = (id: string, date: string, createdAt = "2026-08-20T09:00:00Z") =>
+    ({ id, scheduledDate: date, createdAt });
+
+  it("replace les contenus sur les jours voulus", () => {
+    // Deux contenus un lundi et un vendredi, pour un client qui publie mercredi et jeudi.
+    const changes = rescheduleItems([item("a", "2026-08-24"), item("b", "2026-08-28")], [3, 4], lundi);
+    expect(changes).toEqual([
+      { id: "a", scheduledDate: "2026-08-26" },
+      { id: "b", scheduledDate: "2026-08-27" },
+    ]);
+  });
+
+  it("ne renvoie rien quand tout est déjà à sa place", () => {
+    const changes = rescheduleItems([item("a", "2026-08-26"), item("b", "2026-08-27")], [3, 4], lundi);
+    expect(changes).toEqual([]);
+  });
+
+  it("conserve l'ordre des contenus", () => {
+    // Le premier reste le premier : l'ordre porte souvent une progression voulue.
+    const changes = rescheduleItems(
+      [item("tardif", "2026-08-28"), item("precoce", "2026-08-25")],
+      [3, 4],
+      lundi,
+    );
+    expect(changes[0]!.id).toBe("precoce");
+    expect(changes[0]!.scheduledDate).toBe("2026-08-26");
+  });
+
+  it("cycle sur les jours quand il y a plus de contenus que de jours", () => {
+    const changes = rescheduleItems(
+      [item("a", "2026-08-24"), item("b", "2026-08-25"), item("c", "2026-08-26")],
+      [2],
+      lundi,
+    );
+    // Un seul jour vendu : tout tombe le mardi.
+    expect(changes.every((c) => c.scheduledDate === "2026-08-25")).toBe(true);
+  });
+
+  it("ne touche à rien sans jour renseigné", () => {
+    expect(rescheduleItems([item("a", "2026-08-24")], [], lundi)).toEqual([]);
+  });
+
+  it("départage deux contenus du même jour par leur création", () => {
+    const changes = rescheduleItems(
+      [item("second", "2026-08-24", "2026-08-20T15:00:00Z"), item("premier", "2026-08-24", "2026-08-20T09:00:00Z")],
+      [3, 4],
+      lundi,
+    );
+    expect(changes.map((c) => c.id)).toEqual(["premier", "second"]);
   });
 });

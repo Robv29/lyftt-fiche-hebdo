@@ -13,6 +13,7 @@ import {
   normalizeHashtag,
 } from "@/lib/domain/hashtags";
 import { removeClientLogo, uploadClientLogo } from "@/lib/media/client-logo";
+import { rescheduleClientDrafts } from "@/lib/planning/reschedule";
 import { normalizeWeekdays } from "@/lib/domain/planning";
 import {
   SHOOTING_PLAN_SERVICES,
@@ -435,6 +436,11 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
 
   const notes = { ...currentNotes, ...clientSettings(input, hashtags, existingBrandProfile) };
 
+  /*
+   * Les jours de publication viennent peut-être de changer : les brouillons du
+   * client se recalent dessus. Fait avant l'écriture du client pour rien —
+   * l'ordre importe peu, ces contenus ne dépendent pas de la fiche elle-même.
+   */
   const { error: clientError } = await admin.from("clients").update({
     name: sanitizeText(input.name, 120),
     validation_deadline_weekday: input.deadlineWeekday,
@@ -489,6 +495,16 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
     .eq("role", "community_manager")
     .neq("profile_id", input.communityManagerId);
 
+  /*
+   * Recalage des brouillons sur les jours de publication.
+   *
+   * Les dates sont posées à la création d'une fiche : sans cela, changer les
+   * jours laissait les fiches déjà créées sur l'ancien rythme, et le planning
+   * affichait un mardi pour un client passé au jeudi. Seuls les brouillons
+   * bougent — une fiche envoyée porte des dates que le client a vues.
+   */
+  const moved = await rescheduleClientDrafts(admin, clientId.data, input.publicationWeekdays);
+
   revalidatePath("/clients");
   revalidatePath(`/clients/${clientId.data}`);
   revalidatePath("/fiches");
@@ -497,7 +513,14 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
   // Le budget affiche le nom du client : il doit suivre un renommage.
   revalidatePath("/budget");
   revalidatePath(`/budget/${clientId.data}`);
-  return { ok: true, message: "Modifications enregistrées.", clientId: clientId.data };
+  return {
+    ok: true,
+    // Un déplacement de dates ne doit pas se faire en silence : on dit combien.
+    message: moved > 0
+      ? `Modifications enregistrées. ${moved} publication${moved > 1 ? "s" : ""} replanifiée${moved > 1 ? "s" : ""} sur les nouveaux jours.`
+      : "Modifications enregistrées.",
+    clientId: clientId.data,
+  };
 }
 
 export async function setClientActive(
