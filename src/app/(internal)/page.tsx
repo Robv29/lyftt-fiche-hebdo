@@ -426,7 +426,18 @@ export default async function DashboardPage() {
                 const client = ticket.clients as unknown as { name: string } | null;
                 return <li key={ticket.id}><Link href={`/retours/${ticket.id}`} className="group grid gap-2 px-5 py-3 transition-colors hover:bg-[#f7fafe] sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
                   <div className="flex min-w-0 items-center gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#e8f2ff] text-xs font-bold text-[#0b4f88]">{(client?.name ?? "CL").slice(0,2).toUpperCase()}</span><div className="min-w-0"><strong className="block truncate text-sm">{client?.name ?? "Client"}</strong><p className="mt-0.5 truncate text-xs text-ink-faint">{getTicketTypeDefinition(ticket.ticket_type).label} · {ticket.ticket_number}</p></div></div>
-                  <div className="flex items-center gap-2 pl-[48px] sm:pl-0">{ticket.priority !== "normal" && <span className="badge bg-state-changes/10 text-state-changes">{ticketPriorityLabel(ticket.priority)}</span>}<span className="badge bg-canvas text-ink-soft">{ticketStatusLabel(ticket.status)}</span><Icon name="arrow" className="h-4 w-4 text-ink-faint transition-transform group-hover:translate-x-0.5"/></div>
+                  <div className="flex items-center gap-2 pl-[48px] sm:pl-0">{/*
+                    Une priorité haute ou urgente pulse : dans une file où toutes
+                    les lignes se ressemblent, celle qui presse doit se voir sans
+                    qu'on lise chaque étiquette.
+                  */}
+                  {ticket.priority !== "normal" && (
+                    <span className={`badge bg-state-changes/10 text-state-changes ${
+                      ticket.priority === "high" || ticket.priority === "urgent" ? "alert-pulse" : ""
+                    }`}>
+                      {ticketPriorityLabel(ticket.priority)}
+                    </span>
+                  )}<span className="badge bg-canvas text-ink-soft">{ticketStatusLabel(ticket.status)}</span><Icon name="arrow" className="h-4 w-4 text-ink-faint transition-transform group-hover:translate-x-0.5"/></div>
                 </Link></li>;
               })}
             </ul>

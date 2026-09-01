@@ -549,6 +549,17 @@
 @keyframes badge-halo { 0%,100% { box-shadow:0 0 0 0 rgba(229,72,77,.42); } 55% { box-shadow:0 0 0 7px rgba(229,72,77,0); } }
 
 /*
+ * Alerte qui appelle le regard.
+ *
+ * Une pulsation, pas un clignotement : un contenu qui s'éteint et se rallume
+ * est illisible pendant la moitié du cycle, et au-delà de trois battements par
+ * seconde il devient dangereux pour les personnes photosensibles. Le halo
+ * attire l'œil sans jamais masquer le texte, et reprend celui de la cloche —
+ * une alerte doit se signaler partout de la même façon.
+ */
+.alert-pulse { animation:badge-halo 2.4s var(--ease-out) infinite; }
+
+/*
  * Arrivée en cascade.
  *
  * Les blocs d'une page apparaissaient tous ensemble : l'œil n'avait aucun
@@ -623,7 +634,7 @@ tbody tr { transition:background-color var(--motion-fast) var(--ease-out); }
   .main-content>div,.lift-card,.nav-item,.reveal-on-card-hover,.reveal-panel,.side-sheet { transform:none!important; }
   /* Aucune cascade, aucune pulsation : l'écran s'affiche d'un coup, complet. */
   .main-content>div>*,.insights-overview-top>*,.insights-overview-bottom>*,.insights-health-grid>*,.insights-kpi-row>*,
-  .insights-ring,.insights-donut,.topbar-icon b,.nav-item b,.mobile-nav b {
+  .insights-ring,.insights-donut,.topbar-icon b,.nav-item b,.mobile-nav b,.alert-pulse {
     animation:none!important; transform:none!important; opacity:1!important;
   }
   /*
