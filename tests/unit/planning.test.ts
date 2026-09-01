@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isActionableOverdue,
+  reconcileWeekItems,
   rescheduleItems,
   planningBucketForPeriod,
   planningWeekRange,
@@ -12,6 +13,7 @@ import {
   publicationDatesForWeek,
   normalizeWeekdays,
 } from "../../src/lib/domain/planning";
+import type { MediaFormat } from "../../src/lib/domain/types";
 import { planningHrefForBucket } from "../../src/app/(internal)/fiches/planning-tab";
 
 describe("planning hebdomadaire", () => {
@@ -336,5 +338,52 @@ describe("recalage des dates de publication", () => {
       lundi,
     );
     expect(changes.map((c) => c.id)).toEqual(["premier", "second"]);
+  });
+});
+
+/*
+ * Ajustement du nombre de contenus au rythme vendu.
+ *
+ * Le compte est posé à la création : vendre deux vidéos de plus laissait les
+ * fiches déjà créées à l'ancien nombre.
+ */
+describe("réconciliation des contenus d'une fiche", () => {
+  const vide = (id: string, format: MediaFormat) => ({ id, format, filled: false });
+  const rempli = (id: string, format: MediaFormat) => ({ id, format, filled: true });
+
+  it("ajoute ce qui manque", () => {
+    const result = reconcileWeekItems([vide("a", "photo")], ["photo", "photo", "video"]);
+    expect(result.toAdd).toEqual(["photo", "video"]);
+    expect(result.toRemove).toEqual([]);
+  });
+
+  it("retire les contenus vides en trop", () => {
+    const result = reconcileWeekItems([vide("a", "photo"), vide("b", "photo")], ["photo"]);
+    expect(result.toRemove).toEqual(["b"]);
+    expect(result.toAdd).toEqual([]);
+  });
+
+  it("ne retire jamais un contenu déjà travaillé", () => {
+    // Supprimer effacerait un texte ou un média sans possibilité de retour.
+    const result = reconcileWeekItems([rempli("a", "photo"), rempli("b", "photo")], ["photo"]);
+    expect(result.toRemove).toEqual([]);
+    expect(result.keptFilled).toBe(1);
+  });
+
+  it("sacrifie le vide avant le rempli quand il faut réduire", () => {
+    const result = reconcileWeekItems([rempli("plein", "photo"), vide("creux", "photo")], ["photo"]);
+    expect(result.toRemove).toEqual(["creux"]);
+    expect(result.keptFilled).toBe(0);
+  });
+
+  it("retire un format qui n'est plus vendu", () => {
+    const result = reconcileWeekItems([vide("a", "story")], ["photo"]);
+    expect(result.toRemove).toEqual(["a"]);
+    expect(result.toAdd).toEqual(["photo"]);
+  });
+
+  it("ne bouge rien quand le compte est juste", () => {
+    const result = reconcileWeekItems([vide("a", "photo"), rempli("b", "video")], ["photo", "video"]);
+    expect(result).toEqual({ toAdd: [], toRemove: [], keptFilled: 0 });
   });
 });

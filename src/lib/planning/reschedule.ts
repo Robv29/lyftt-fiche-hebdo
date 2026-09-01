@@ -1,7 +1,13 @@
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { rescheduleItems } from "@/lib/domain/planning";
+import {
+  reconcileWeekItems,
+  rescheduleItems,
+  weeklyFormatsForCadence,
+  type MonthlyCadence,
+} from "@/lib/domain/planning";
+import type { MediaFormat } from "@/lib/domain/types";
 
 /**
  * Recale les brouillons d'un client sur ses jours de publication.
@@ -21,24 +27,86 @@ export async function rescheduleClientDrafts(
   supabase: SupabaseClient,
   clientId: string,
   weekdays: readonly number[],
-): Promise<number> {
-  if (weekdays.length === 0) return 0;
+  cadence?: MonthlyCadence,
+): Promise<{ moved: number; added: number; removed: number; keptFilled: number }> {
+  const nothing = { moved: 0, added: 0, removed: 0, keptFilled: 0 };
+  if (weekdays.length === 0) return nothing;
 
   const { data: sheets, error } = await supabase
     .from("weekly_sheets")
-    .select("id, period_start, weekly_sheet_items ( id, scheduled_date, created_at, is_cancelled )")
+    .select("id, iso_week, period_start, weekly_sheet_items ( id, format, caption, hashtags, media_asset_id, media_external_url, position, scheduled_date, created_at, is_cancelled )")
     .eq("client_id", clientId)
     .eq("status", "draft");
 
   if (error) {
     console.error("[replanification] lecture impossible", error.message);
-    return 0;
+    return nothing;
   }
 
   let moved = 0;
+  let added = 0;
+  let removed = 0;
+  let keptFilled = 0;
 
   for (const sheet of sheets ?? []) {
-    const items = ((sheet.weekly_sheet_items ?? []) as unknown as {
+    const raw = (sheet.weekly_sheet_items ?? []) as unknown as {
+      id: string; format: MediaFormat; caption: string; hashtags: string[] | null;
+      media_asset_id: string | null; media_external_url: string | null; position: number;
+      scheduled_date: string; created_at: string; is_cancelled: boolean;
+    }[];
+
+    /*
+     * Nombre de contenus : il suit le rythme vendu, comme à la création.
+     * Sans cela, vendre deux vidéos de plus laissait la fiche à l'ancien
+     * compte.
+     */
+    if (cadence) {
+      const active = raw.filter((item) => !item.is_cancelled);
+      const { toAdd, toRemove, keptFilled: kept } = reconcileWeekItems(
+        active.map((item) => ({
+          id: item.id,
+          format: item.format,
+          // Un contenu porte du travail dès qu'il a du texte, des hashtags ou un média.
+          filled: Boolean(item.caption?.trim())
+            || (item.hashtags?.length ?? 0) > 0
+            || Boolean(item.media_asset_id || item.media_external_url),
+        })),
+        weeklyFormatsForCadence(cadence, sheet.iso_week as number),
+      );
+      keptFilled += kept;
+
+      if (toRemove.length > 0) {
+        const { error: deleteError } = await supabase
+          .from("weekly_sheet_items")
+          .delete()
+          .in("id", toRemove);
+        if (deleteError) console.error("[replanification] retrait impossible", deleteError.message);
+        else removed += toRemove.length;
+      }
+
+      if (toAdd.length > 0) {
+        const nextPosition = Math.max(0, ...active.map((item) => item.position)) + 1;
+        const { error: insertError } = await supabase.from("weekly_sheet_items").insert(
+          toAdd.map((format, index) => ({
+            weekly_sheet_id: sheet.id as string,
+            format,
+            position: nextPosition + index,
+            // Une date provisoire : le recalage ci-dessous la pose sur le bon jour.
+            scheduled_date: sheet.period_start as string,
+          })),
+        );
+        if (insertError) console.error("[replanification] ajout impossible", insertError.message);
+        else added += toAdd.length;
+      }
+    }
+
+    /* Relecture : les contenus viennent peut-être de changer. */
+    const { data: refreshed } = await supabase
+      .from("weekly_sheet_items")
+      .select("id, scheduled_date, created_at, is_cancelled")
+      .eq("weekly_sheet_id", sheet.id as string);
+
+    const items = ((refreshed ?? raw) as unknown as {
       id: string; scheduled_date: string; created_at: string; is_cancelled: boolean;
     }[])
       // Un contenu annulé ne compte pas dans la répartition : le garder
@@ -66,5 +134,5 @@ export async function rescheduleClientDrafts(
     }
   }
 
-  return moved;
+  return { moved, added, removed, keptFilled };
 }

@@ -503,7 +503,12 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
    * affichait un mardi pour un client passé au jeudi. Seuls les brouillons
    * bougent — une fiche envoyée porte des dates que le client a vues.
    */
-  const moved = await rescheduleClientDrafts(admin, clientId.data, input.publicationWeekdays);
+  const resync = await rescheduleClientDrafts(admin, clientId.data, input.publicationWeekdays, {
+    photo: input.photoPerMonth,
+    video: input.videoPerMonth,
+    story: input.storyPerMonth,
+    visual: input.visualPerMonth,
+  });
 
   revalidatePath("/clients");
   revalidatePath(`/clients/${clientId.data}`);
@@ -516,9 +521,20 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
   return {
     ok: true,
     // Un déplacement de dates ne doit pas se faire en silence : on dit combien.
-    message: moved > 0
-      ? `Modifications enregistrées. ${moved} publication${moved > 1 ? "s" : ""} replanifiée${moved > 1 ? "s" : ""} sur les nouveaux jours.`
-      : "Modifications enregistrées.",
+    /*
+     * Ce qui a bougé se dit : ajouter, retirer ou déplacer des publications
+     * dans le dos de l'utilisateur lui ferait découvrir un planning changé
+     * sans savoir pourquoi.
+     */
+    message: [
+      "Modifications enregistrées.",
+      resync.added > 0 ? `${resync.added} publication${resync.added > 1 ? "s" : ""} ajoutée${resync.added > 1 ? "s" : ""}.` : null,
+      resync.removed > 0 ? `${resync.removed} vide${resync.removed > 1 ? "s" : ""} retiré${resync.removed > 1 ? "s" : ""}.` : null,
+      resync.moved > 0 ? `${resync.moved} date${resync.moved > 1 ? "s" : ""} replanifiée${resync.moved > 1 ? "s" : ""}.` : null,
+      resync.keptFilled > 0
+        ? `${resync.keptFilled} publication${resync.keptFilled > 1 ? "s" : ""} en trop conservée${resync.keptFilled > 1 ? "s" : ""} : elle${resync.keptFilled > 1 ? "s sont déjà remplies" : " est déjà remplie"}.`
+        : null,
+    ].filter(Boolean).join(" "),
     clientId: clientId.data,
   };
 }

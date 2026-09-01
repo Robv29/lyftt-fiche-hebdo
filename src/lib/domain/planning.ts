@@ -371,3 +371,67 @@ export function rescheduleItems(
     .map((item, index) => ({ id: item.id, scheduledDate: dates[index]! }))
     .filter((next, index) => next.scheduledDate && next.scheduledDate !== ordered[index]!.scheduledDate);
 }
+
+export interface ExistingItem {
+  id: string;
+  format: MediaFormat;
+  /** Vrai si le contenu porte déjà du travail : texte, hashtags ou média. */
+  filled: boolean;
+}
+
+/**
+ * Écart entre le rythme vendu et les contenus d'une fiche.
+ *
+ * Le nombre de publications est posé à la création, d'après le rythme du moment.
+ * Vendre deux vidéos de plus par mois laissait les fiches déjà créées à
+ * l'ancien compte : le planning affichait trois contenus pour un forfait qui en
+ * prévoyait cinq.
+ *
+ * **Rien de rempli n'est jamais retiré.** Un contenu en trop qui porte déjà un
+ * texte, des hashtags ou un média est conservé et signalé : il a été travaillé,
+ * et le supprimer effacerait ce travail sans qu'on puisse le récupérer. Seuls
+ * les contenus restés vides sont repris.
+ */
+export function reconcileWeekItems(
+  existing: readonly ExistingItem[],
+  expectedFormats: readonly MediaFormat[],
+): { toAdd: MediaFormat[]; toRemove: string[]; keptFilled: number } {
+  const needed = new Map<MediaFormat, number>();
+  for (const format of expectedFormats) needed.set(format, (needed.get(format) ?? 0) + 1);
+
+  const toAdd: MediaFormat[] = [];
+  const toRemove: string[] = [];
+  let keptFilled = 0;
+
+  const byFormat = new Map<MediaFormat, ExistingItem[]>();
+  for (const item of existing) {
+    const list = byFormat.get(item.format) ?? [];
+    list.push(item);
+    byFormat.set(item.format, list);
+  }
+
+  const formats = new Set<MediaFormat>([...needed.keys(), ...byFormat.keys()]);
+
+  for (const format of formats) {
+    const want = needed.get(format) ?? 0;
+    /*
+     * Les contenus déjà travaillés passent en tête : ce sont eux qu'on garde.
+     * Le surplus se prend donc à la fin, sur les vides — l'inverse effacerait
+     * un texte ou un média pour conserver une coquille vide.
+     */
+    const present = [...(byFormat.get(format) ?? [])].sort((a, b) => Number(b.filled) - Number(a.filled));
+
+    if (present.length < want) {
+      for (let i = present.length; i < want; i += 1) toAdd.push(format);
+      continue;
+    }
+
+    const surplus = present.slice(want);
+    for (const item of surplus) {
+      if (item.filled) keptFilled += 1;
+      else toRemove.push(item.id);
+    }
+  }
+
+  return { toAdd, toRemove, keptFilled };
+}
