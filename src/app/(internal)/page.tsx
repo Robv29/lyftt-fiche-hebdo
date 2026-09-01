@@ -300,8 +300,14 @@ export default async function DashboardPage() {
   const AWAITING_SHOWN = 8;
   const awaitingShown = awaitingClient.slice(0, AWAITING_SHOWN);
   const awaitingHidden = awaitingClient.length - awaitingShown.length;
-  // « 18 août » suffit sur une ligne serrée ; l'année n'apporte rien ici.
-  const dayMonth = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short", timeZone: "Europe/Paris" });
+  /*
+   * « 18 août à 14 h 32 » : l'année n'apporte rien sur une ligne serrée, mais
+   * l'heure si. Deux relances le même jour se distinguent, et on voit si celle
+   * du matin laisse encore la journée au client avant d'en envoyer une autre.
+   */
+  const dayTime = new Intl.DateTimeFormat("fr-FR", {
+    day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/Paris",
+  });
   const greetingDate = new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Paris" }).format(new Date());
   const publicationProgress = publications.length ? Math.round((published / publications.length) * 100) : 100;
 
@@ -388,7 +394,7 @@ export default async function DashboardPage() {
                       deux jours.
                     */}
                     {contact
-                      ? ` · ${contact.relance ? "relancée" : "envoyée"} le ${dayMonth.format(new Date(contact.at))}`
+                      ? ` · ${contact.relance ? "relancée" : "envoyée"} le ${dayTime.format(new Date(contact.at)).replace(", ", " à ").replace(":", " h ")}`
                       : " · jamais envoyée"}
                   </p>
                 </Link>
