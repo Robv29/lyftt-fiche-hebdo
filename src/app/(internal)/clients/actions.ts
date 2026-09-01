@@ -534,6 +534,14 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
       resync.keptFilled > 0
         ? `${resync.keptFilled} publication${resync.keptFilled > 1 ? "s" : ""} en trop conservée${resync.keptFilled > 1 ? "s" : ""} : elle${resync.keptFilled > 1 ? "s sont déjà remplies" : " est déjà remplie"}.`
         : null,
+      /*
+       * Le silence sur les semaines figées se lisait comme une panne : on
+       * change le rythme, la semaine en cours ne bouge pas, et rien n'explique
+       * pourquoi. La fiche est partie chez le client — on le dit.
+       */
+      resync.lockedWeeks.length > 0
+        ? `Semaine${resync.lockedWeeks.length > 1 ? "s" : ""} ${resync.lockedWeeks.join(", ")} : fiche déjà envoyée au client, le nombre de publications n'a pas été touché.`
+        : null,
     ].filter(Boolean).join(" "),
     clientId: clientId.data,
   };

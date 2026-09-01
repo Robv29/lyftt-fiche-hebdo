@@ -21,15 +21,18 @@ import type { MediaFormat } from "@/lib/domain/types";
  * sortie ne se replanifie pas. Déplacer l'une des trois reviendrait à réécrire
  * un engagement sans le dire.
  *
- * Renvoie le nombre de contenus déplacés, pour que l'appelant puisse le dire.
+ * Renvoie ce qui a bougé, pour que l'appelant puisse le dire — et aussi ce qui
+ * n'a **pas** bougé : les semaines déjà parties chez le client gardent leur
+ * compte, et le taire donnait l'impression que changer le rythme ne servait à
+ * rien.
  */
 export async function rescheduleClientDrafts(
   supabase: SupabaseClient,
   clientId: string,
   weekdays: readonly number[],
   cadence?: MonthlyCadence,
-): Promise<{ moved: number; added: number; removed: number; keptFilled: number }> {
-  const nothing = { moved: 0, added: 0, removed: 0, keptFilled: 0 };
+): Promise<{ moved: number; added: number; removed: number; keptFilled: number; lockedWeeks: number[] }> {
+  const nothing = { moved: 0, added: 0, removed: 0, keptFilled: 0, lockedWeeks: [] as number[] };
   if (weekdays.length === 0) return nothing;
 
   const { data: sheets, error } = await supabase
@@ -47,6 +50,7 @@ export async function rescheduleClientDrafts(
   let added = 0;
   let removed = 0;
   let keptFilled = 0;
+  const lockedWeeks = await frozenWeeksOffCadence(supabase, clientId, cadence);
 
   for (const sheet of sheets ?? []) {
     const raw = (sheet.weekly_sheet_items ?? []) as unknown as {
@@ -134,5 +138,55 @@ export async function rescheduleClientDrafts(
     }
   }
 
-  return { moved, added, removed, keptFilled };
+  return { moved, added, removed, keptFilled, lockedWeeks };
+}
+
+/**
+ * Semaines qui devraient changer mais qu'on ne touche pas.
+ *
+ * Une fiche envoyée ou validée porte un compte que le client a vu. Le rythme
+ * vendu peut avoir changé depuis : la fiche reste en l'état, et c'est voulu.
+ * Encore faut-il le dire — sans quoi vendre deux vidéos de plus et voir la
+ * semaine en cours inchangée ressemble à une panne.
+ *
+ * Seules les semaines encore à venir sont regardées : une semaine publiée ne
+ * se rattrape pas.
+ */
+async function frozenWeeksOffCadence(
+  supabase: SupabaseClient,
+  clientId: string,
+  cadence: MonthlyCadence | undefined,
+): Promise<number[]> {
+  if (!cadence) return [];
+
+  const today = new Date().toISOString().slice(0, 10);
+  const { data, error } = await supabase
+    .from("weekly_sheets")
+    .select("iso_week, period_end, weekly_sheet_items ( id, format, is_cancelled )")
+    .eq("client_id", clientId)
+    .neq("status", "draft")
+    .gte("period_end", today);
+
+  if (error) {
+    console.error("[replanification] semaines figées illisibles", error.message);
+    return [];
+  }
+
+  const weeks: number[] = [];
+  for (const sheet of data ?? []) {
+    const items = ((sheet.weekly_sheet_items ?? []) as unknown as {
+      id: string; format: MediaFormat; is_cancelled: boolean;
+    }[]).filter((item) => !item.is_cancelled);
+
+    const { toAdd, keptFilled } = reconcileWeekItems(
+      // Tout est déclaré rempli : on ne cherche pas à retirer quoi que ce soit
+      // ici, seulement à savoir si le compte diverge. Le surplus ressort donc
+      // en « conservé » plutôt qu'en « à retirer ».
+      items.map((item) => ({ id: item.id, format: item.format, filled: true })),
+      weeklyFormatsForCadence(cadence, sheet.iso_week as number),
+    );
+    if (toAdd.length > 0 || keptFilled > 0) weeks.push(sheet.iso_week as number);
+  }
+
+  return weeks.sort((a, b) => a - b);
 }
