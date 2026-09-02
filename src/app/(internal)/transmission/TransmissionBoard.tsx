@@ -274,9 +274,9 @@ function CarteTransmission({
           d'être corrigé pour partir. On signale l'étape sautée, on ne la
           rend pas obligatoire.
         */}
-        {!row.menuValideLe && !row.recapEnvoyeLe && (
+        {!row.menuValideLe && (
           <Avertissement>
-            Le menu n’a pas encore été relu. Vous pouvez tout de même envoyer le récapitulatif.
+            Validez d’abord le menu à l’étape 1 : le client recevra ce qu’il contient, il doit avoir été relu.
           </Avertissement>
         )}
 
@@ -285,7 +285,8 @@ function CarteTransmission({
             <button
               type="button"
               className={`text-xs ${row.recapEnvoyeLe ? "btn-secondary" : "btn-primary"}`}
-              disabled={pending}
+              disabled={pending || !row.menuValideLe}
+              title={row.menuValideLe ? undefined : "Validez le menu à l’étape 1"}
               onClick={() => {
                 // Un e-mail part chez un vrai client : la confirmation évite le
                 // clic de trop, et le doublon dans sa boîte.
@@ -319,13 +320,27 @@ function CarteTransmission({
           <Link href={`/clients/${row.clientId}`} className="btn-secondary text-xs">
             Voir le dossier
           </Link>
-        ) : (
+        ) : row.recapEnvoyeLe ? (
           <Link
             href={`/clients?nom=${encodeURIComponent(row.entreprise)}&transmission=${row.id}`}
             className="btn-primary text-xs"
           >
             <Icon name="plus" className="h-3.5 w-3.5"/>Créer le client
           </Link>
+        ) : (
+          /*
+            Le dossier ne s'ouvre qu'une fois le client informé : créer la fiche
+            avant l'envoi, c'est engager la production sur un accompagnement que
+            personne n'a confirmé au client.
+          */
+          <div className="space-y-1.5">
+            <Avertissement>
+              Envoyez d’abord le récapitulatif au client à l’étape 2.
+            </Avertissement>
+            <button type="button" className="btn-primary text-xs" disabled title="Envoyez le récapitulatif à l’étape 2">
+              <Icon name="plus" className="h-3.5 w-3.5"/>Créer le client
+            </button>
+          </div>
         )}
       </div>
     ),
