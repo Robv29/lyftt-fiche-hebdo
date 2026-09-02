@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, useTransition, type DragEvent } from "react";
+import type { ProductionUrgency } from "@/lib/domain/production";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { uploadMediaDirect } from "@/lib/media/direct-upload";
@@ -31,7 +32,12 @@ export interface ProductionRequestRow {
   mediaKind: string | null;
   /** Visuel d'exemple joint à la demande : une inspiration, pas un modèle. */
   referenceUrl: string | null;
-  overdue: boolean;
+  /*
+   * Urgence de l'échéance, calculée une seule fois côté serveur par
+   * `productionUrgency` : la carte, le sous-menu et la pastille de navigation
+   * doivent dire la même chose.
+   */
+  urgency: ProductionUrgency;
 }
 
 const KIND_LABELS: Record<ProductionRequestRow["kind"], string> = {
@@ -329,7 +335,10 @@ function RequestCard({
   };
 
   return (
-    <li className={`card overflow-hidden ${request.overdue ? "border-state-changes/40" : ""}`}>
+    <li className={`card overflow-hidden ${
+      request.urgency === "overdue" ? "border-state-changes/40"
+      : request.urgency === "due_tomorrow" ? "border-state-progress/40" : ""
+    }`}>
       <div className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0">
@@ -339,8 +348,19 @@ function RequestCard({
             </div>
             <h3 className="mt-2 text-sm font-semibold leading-snug">{request.title}</h3>
           </div>
-          <span className={`badge shrink-0 ${request.overdue ? "bg-state-changes/10 text-state-changes" : "bg-canvas text-ink-soft"}`}>
-            {request.overdue ? "En retard · " : ""}{formatDay(request.dueOn)}
+          {/*
+            L'échéance de demain se distingue du retard : l'une se rattrape
+            encore, l'autre non. Les confondre dans un même rouge ferait
+            renoncer à ce qui est encore tenable.
+          */}
+          <span className={`badge shrink-0 ${
+            request.urgency === "overdue" ? "bg-state-changes/10 text-state-changes"
+            : request.urgency === "due_tomorrow" ? "bg-state-progress/10 text-state-progress"
+            : "bg-canvas text-ink-soft"
+          }`}>
+            {request.urgency === "overdue" ? "En retard · "
+              : request.urgency === "due_tomorrow" ? "Demain · " : ""}
+            {formatDay(request.dueOn)}
           </span>
         </div>
 

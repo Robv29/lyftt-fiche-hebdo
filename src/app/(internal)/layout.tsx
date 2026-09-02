@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { appRoleLabel } from "@/lib/domain/types";
-import { todayInParis } from "@/lib/domain/client-lifecycle";
+import { nextDay, todayInParis } from "@/lib/domain/client-lifecycle";
 import { InternalShell } from "@/components/InternalShell";
 
 /** §8 — La navigation porte la pastille des retours clients à traiter. */
@@ -73,6 +73,26 @@ export default async function InternalLayout({
             .lt("due_at", new Date().toISOString()),
         ],
   );
+  /*
+   * Échéance de production qui tombe demain.
+   *
+   * Le compteur dit combien il reste à faire ; il ne dit pas quand. Une
+   * commande découverte le jour de son terme est une commande livrée en
+   * retard : la pastille prévient la veille, tant qu'il reste une journée
+   * pour s'y mettre.
+   */
+  const { count: dueTomorrow } = await supabase
+    .from("production_requests")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "a_faire")
+    .eq("due_on", nextDay(todayInParis()));
+
+  const productionAlert = (dueTomorrow ?? 0) > 0
+    ? {
+        label: `${dueTomorrow} commande${dueTomorrow! > 1 ? "s" : ""} de production à rendre demain`,
+      }
+    : null;
+
   const productionBadge = productionCounts.reduce(
     (total, result) => total + (result.count ?? 0),
     0,
@@ -89,14 +109,14 @@ export default async function InternalLayout({
         { href: "/clients", label: "Clients", icon: "users", badge: null },
       ]
     : isProduction
-    ? [{ href: "/production", label: "Corrections clients", icon: "layers", badge: productionBadge }]
+    ? [{ href: "/production", label: "Corrections clients", icon: "layers", badge: productionBadge, alert: productionAlert }]
     : [
         { href: "/", label: "Vue d’ensemble", icon: "dashboard", badge: null },
         { href: "/publications", label: "Publications", icon: "send", badge: null },
         { href: "/fiches", label: "Planning", icon: "calendar", badge: null },
         { href: "/clients", label: "Clients", icon: "users", badge: null },
         { href: "/retours", label: "Tickets clients", icon: "message", badge: openTickets ?? 0 },
-        { href: "/production", label: "Production", icon: "layers", badge: productionBadge },
+        { href: "/production", label: "Production", icon: "layers", badge: productionBadge, alert: productionAlert },
         { href: "/indicateurs", label: "Indicateurs", icon: "chart", badge: null },
         { href: "/historique", label: "Historique", icon: "clock", badge: null },
         { href: "/implantations", label: "Nos implantations", icon: "map", badge: null },

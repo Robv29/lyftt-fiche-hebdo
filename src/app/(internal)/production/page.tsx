@@ -1,4 +1,5 @@
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
+import { productionUrgency } from "@/lib/domain/production";
 import { denyCommercial } from "@/lib/internal/authorization";
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
 import { isActionableOverdue } from "@/lib/domain/planning";
@@ -101,7 +102,10 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
       mediaFileName: media?.file_name ?? null,
       mediaKind: media?.kind ?? null,
       referenceUrl: resolvedReference?.url ?? null,
-      overdue: (row.due_on as string) < today && row.status === "a_faire",
+      urgency: productionUrgency(
+        { dueOn: row.due_on as string, status: row.status as ProductionRequestRow["status"] },
+        today,
+      ),
     };
   }));
 
@@ -143,7 +147,7 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
   });
 
   // Ce qui a dépassé son échéance : le sous-menu l'affiche sans qu'il faille ouvrir l'onglet pour le découvrir.
-  const overdueCount = requests.filter((request) => request.overdue).length
+  const overdueCount = requests.filter((request) => request.urgency === "overdue").length
     + corrections.filter((correction) => correction.overdue).length;
 
   /*

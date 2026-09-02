@@ -5,7 +5,18 @@ import { usePathname } from "next/navigation";
 import { Icon } from "./Icon";
 import { BrandLogo } from "./BrandLogo";
 
-type NavItem = { href: string; label: string; icon: string; badge?: number | null };
+type NavItem = {
+  href: string;
+  label: string;
+  icon: string;
+  badge?: number | null;
+  /*
+   * Alerte sans nombre : une échéance approche. Distincte du compteur, qui dit
+   * combien il reste à faire — ici c'est le « quand » qui presse, pas le
+   * « combien ».
+   */
+  alert?: { label: string } | null;
+};
 
 export function InternalShell({ children, profile, links }: { children: React.ReactNode; profile: { name: string; role: string }; links: NavItem[] }) {
   const pathname = usePathname();
@@ -23,7 +34,7 @@ export function InternalShell({ children, profile, links }: { children: React.Re
         <nav className="side-nav" aria-label="Navigation principale">
           {links.map((link) => {
             const active = link.href === "/" ? pathname === "/" : pathname.startsWith(link.href);
-            return <Link key={link.href} href={link.href} className={active ? "nav-item active" : "nav-item"}><Icon name={link.icon} className="nav-icon"/><span>{link.label}</span>{Boolean(link.badge) && <b>{link.badge}</b>}</Link>;
+            return <Link key={link.href} href={link.href} className={active ? "nav-item active" : "nav-item"}><Icon name={link.icon} className="nav-icon"/><span>{link.label}</span>{link.alert && <i className="nav-dot" role="img" aria-label={link.alert.label} title={link.alert.label}/>}{Boolean(link.badge) && <b>{link.badge}</b>}</Link>;
           })}
         </nav>
         <div className="profile-chip"><span>{initials}</span><div><strong>{profile.name}</strong><small>{profile.role}</small></div><Icon name="arrow" className="profile-arrow"/></div>
@@ -44,7 +55,7 @@ export function InternalShell({ children, profile, links }: { children: React.Re
         depuis aucun écran sur téléphone.
       */}
       <nav className="mobile-nav" aria-label="Navigation mobile">
-        {links.map((link) => { const active = link.href === "/" ? pathname === "/" : pathname.startsWith(link.href); return <Link key={link.href} href={link.href} className={active ? "active" : ""}><Icon name={link.icon}/><span>{link.label.split(" ")[0]}</span>{Boolean(link.badge) && <b>{link.badge}</b>}</Link>; })}
+        {links.map((link) => { const active = link.href === "/" ? pathname === "/" : pathname.startsWith(link.href); return <Link key={link.href} href={link.href} className={active ? "active" : ""}><Icon name={link.icon}/><span>{link.label.split(" ")[0]}</span>{link.alert && <i className="nav-dot" role="img" aria-label={link.alert.label}/>}{Boolean(link.badge) && <b>{link.badge}</b>}</Link>; })}
       </nav>
     </div>
   );
