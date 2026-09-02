@@ -385,6 +385,25 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
     return { ok: false, message: `Responsable non enregistré : ${assignmentError.message}` };
   }
 
+  /*
+   * Fiche transmise par le CRM à l'origine de cette création, s'il y en a une.
+   * Le rattachement échoue en silence : le client, lui, existe bel et bien, et
+   * une fiche restée « à traiter » se referme d'un clic — alors qu'annuler la
+   * création obligerait à ressaisir tout l'onboarding.
+   */
+  const transmissionId = z.string().uuid().safeParse(formData.get("transmissionId"));
+  if (transmissionId.success) {
+    const { error: transmissionError } = await admin
+      .from("client_transmissions")
+      .update({ client_id: client.id, statut: "traite" })
+      .eq("id", transmissionId.data);
+    if (transmissionError) {
+      console.error("[clients] fiche transmise non rattachée", transmissionError.message);
+    } else {
+      revalidatePath("/transmission");
+    }
+  }
+
   revalidatePath("/clients");
   return { ok: true, message: `${input.name} a été créé.`, clientId: client.id };
 }

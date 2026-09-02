@@ -3,6 +3,7 @@ import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/se
 import { appRoleLabel } from "@/lib/domain/types";
 import { nextDay, todayInParis } from "@/lib/domain/client-lifecycle";
 import { InternalShell } from "@/components/InternalShell";
+import { EDITORIAL_ROLES } from "@/lib/internal/authorization";
 
 /** §8 — La navigation porte la pastille des retours clients à traiter. */
 export default async function InternalLayout({
@@ -20,6 +21,20 @@ export default async function InternalLayout({
     .not("status", "in", "(closed,cancelled,rejected,approved_by_client)");
 
   const isProduction = ["graphic_designer", "video_editor"].includes(profile.role);
+  const managesProduction = EDITORIAL_ROLES.includes(profile.role);
+
+  /*
+   * Pastille de la transmission : les fiches que le CRM a poussées et que
+   * personne n'a encore prises en charge. C'est le seul endroit où un client
+   * fraîchement signé se signale — sans ce compteur, l'onglet reste muet et on
+   * découvre le client la veille de son rendez-vous.
+   */
+  const { count: pendingTransmissions } = managesProduction
+    ? await supabase
+        .from("client_transmissions")
+        .select("id", { count: "exact", head: true })
+        .eq("statut", "a_traiter")
+    : { count: 0 };
 
   /*
    * Pastille de la production : ce qui attend un geste de la personne qui
@@ -115,6 +130,9 @@ export default async function InternalLayout({
         { href: "/publications", label: "Publications", icon: "send", badge: null },
         { href: "/fiches", label: "Planning", icon: "calendar", badge: null },
         { href: "/clients", label: "Clients", icon: "users", badge: null },
+        ...(managesProduction
+          ? [{ href: "/transmission", label: "Transmission client", icon: "send", badge: pendingTransmissions ?? 0 }]
+          : []),
         { href: "/retours", label: "Tickets clients", icon: "message", badge: openTickets ?? 0 },
         { href: "/production", label: "Production", icon: "layers", badge: productionBadge, alert: productionAlert },
         { href: "/indicateurs", label: "Indicateurs", icon: "chart", badge: null },
