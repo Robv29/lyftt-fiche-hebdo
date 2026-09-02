@@ -110,7 +110,14 @@ export function UserAdmin({
               <label className="label" htmlFor="role">
                 Rôle
               </label>
-              <select id="role" name="role" className="field" defaultValue="community_manager">
+              {/*
+                Aucun rôle présélectionné. Un défaut discret se laisse oublier :
+                un commercial a été créé community manager sans que personne le
+                voie, et il ne voyait aucun client — un CM ne voit que les
+                clients qui lui sont affectés. Le choix doit être posé.
+              */}
+              <select id="role" name="role" className="field" defaultValue="" required>
+                <option value="" disabled>Choisir un rôle…</option>
                 {APP_ROLES.map((role) => (
                   <option key={role} value={role}>
                     {APP_ROLE_LABELS[role]}
