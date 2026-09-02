@@ -14,6 +14,7 @@ import {
 } from "@/lib/domain/hashtags";
 import { removeClientLogo, uploadClientLogo } from "@/lib/media/client-logo";
 import { rescheduleClientDrafts } from "@/lib/planning/reschedule";
+import { syncClientLocation } from "@/lib/geo/client-location";
 import { normalizeWeekdays } from "@/lib/domain/planning";
 import {
   SHOOTING_PLAN_SERVICES,
@@ -370,6 +371,9 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
   // Rattachement du community manager : c'est ce qui lui donne accès au client
   // et ce qui alimente le routage des tickets (§7).
   const managerId = input.communityManagerId;
+  // Position sur la carte des implantations. Silencieux en cas d'échec.
+  await syncClientLocation(admin, client.id, input.city, input.postalCode);
+
   const { error: assignmentError } = await admin.from("client_assignments").insert({
     client_id: client.id,
     profile_id: managerId,
@@ -417,7 +421,7 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
   const admin = createSupabaseAdminClient();
   const { data: current } = await admin
     .from("clients")
-    .select("id, notes, logo_url, client_contacts ( id, is_primary )")
+    .select("id, notes, logo_url, latitude, client_contacts ( id, is_primary )")
     .eq("id", clientId.data)
     .maybeSingle();
   if (!current) return { ok: false, message: "Client introuvable." };
@@ -503,6 +507,16 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
    * affichait un mardi pour un client passé au jeudi. Seuls les brouillons
    * bougent — une fiche envoyée porte des dates que le client a vues.
    */
+  /*
+   * La commune a peut-être changé : la carte des implantations suit. Le
+   * géocodeur n'est sollicité que si la ville ou le code postal ont bougé.
+   */
+  await syncClientLocation(admin, clientId.data, input.city, input.postalCode, {
+    city: existingBrandProfile.city,
+    postalCode: existingBrandProfile.postalCode,
+    located: current.latitude !== null,
+  });
+
   const resync = await rescheduleClientDrafts(admin, clientId.data, input.publicationWeekdays, {
     photo: input.photoPerMonth,
     video: input.videoPerMonth,

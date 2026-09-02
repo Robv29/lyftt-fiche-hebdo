@@ -89,6 +89,7 @@ export default async function InternalLayout({
         { href: "/production", label: "Production", icon: "layers", badge: productionBadge },
         { href: "/indicateurs", label: "Indicateurs", icon: "chart", badge: null },
         { href: "/historique", label: "Historique", icon: "clock", badge: null },
+        { href: "/implantations", label: "Nos implantations", icon: "map", badge: null },
         ...(profile.role === "super_admin"
           ? [
               { href: "/budget", label: "Budget", icon: "euro", badge: null },
