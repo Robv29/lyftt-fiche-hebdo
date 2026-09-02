@@ -127,6 +127,31 @@ de quoi brancher le webhook avant d'avoir posé la clé.
 
 Les deux secrets se posent dans Vercel ; `.env.example` en donne la forme.
 
+#### Le parcours en trois étapes
+
+Chaque fiche suit trois gestes datés, lisibles sur la carte :
+
+1. **Récapitulatif du besoin** — le chef de projet relit le menu et le corrige
+   au besoin (`menu_valide_le`).
+2. **Récapitulatif envoyé au client** — un e-mail confirme l'accompagnement
+   retenu et le rendez-vous (`recap_envoye_le`). Il part par Resend, comme les
+   autres messages de l'application : sans `RESEND_API_KEY` ni `MAIL_FROM`,
+   l'action refuse d'envoyer plutôt que de dater un message fantôme.
+3. **Fiche client créée** — le dossier est ouvert dans le portefeuille
+   (`client_id`).
+
+Aucune étape n'en conditionne une autre : un menu déjà juste n'a pas à être
+corrigé pour partir. L'écran signale l'étape sautée, il ne l'interdit pas. Le
+tri des cartes suit l'avancement, ce que personne n'a encore regardé d'abord.
+
+Le menu vit dans **deux colonnes**. `fiche_mission` est la parole du CRM,
+réécrite à chaque envoi ; `menu_corrige` celle de la production, que le CRM ne
+touche jamais. L'affichage privilégie la corrigée — sinon une retouche de
+numéro de téléphone dans le CRM effacerait une correction sans que personne ne
+le remarque. Le revers est traité : `fiche_mission_maj_le`, posée par trigger
+sur les seuls menus réellement différents, permet de signaler « le CRM a
+renvoyé un menu depuis votre relecture ».
+
 ### Données personnelles
 
 Seule une empreinte d'IP salée et tronquée est conservée, ainsi qu'une famille de
