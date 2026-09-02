@@ -239,31 +239,6 @@ function CarteTransmission({
           arrive parfois jamais — rendez-vous pris par téléphone, adresse
           différente de celle du CRM — d'où la saisie à la main.
         */}
-        {row.dateRdv ? (
-          <div className="mt-2 rounded-xl bg-canvas px-3 py-2">
-            <p className="flex flex-wrap items-center gap-2 text-xs">
-              <Icon name="calendar" className="h-4 w-4 shrink-0 text-[#0b5e9f]"/>
-              <span className="font-semibold">Rendez-vous</span>
-              <span className="text-ink-soft">{formatParisDateTime(row.dateRdv)}</span>
-            </p>
-            {/*
-              Corrigeable : Calendly renvoie le créneau initial, et un report
-              convenu au téléphone ne repasse jamais par lui. Une date fausse
-              est pire qu'une date absente.
-            */}
-            <details className="mt-1">
-              <summary className="cursor-pointer text-[11px] text-ink-faint">Corriger la date</summary>
-              <RendezVousForm
-                row={row}
-                pending={pending}
-                defaultValue={parisDateTimeLocalValue(row.dateRdv)}
-                onSubmit={run}
-              />
-            </details>
-          </div>
-        ) : (
-          <RendezVousForm row={row} pending={pending} defaultValue="" onSubmit={run}/>
-        )}
 
         {row.recapEnvoyeA && (
           <p className="mt-2 text-[11px] text-ink-faint">Envoyé à {row.recapEnvoyeA}</p>

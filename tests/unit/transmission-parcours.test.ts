@@ -173,19 +173,28 @@ describe("récapitulatif envoyé au client", () => {
     expect(buildRecapSubject(base)).toContain("Un été à la campagne");
   });
 
-  it("reprend le menu, le rendez-vous et la signature", () => {
+  it("reprend le menu et la signature", () => {
     const texte = buildRecapText(base);
     expect(texte).toContain("Bonjour Jean,");
     expect(texte).toContain("• Post photo (2/sem)");
-    expect(texte).toContain("08/09/2026 à 11h30");
     expect(texte).toContain("Théo Martin");
   });
 
-  it("reste lisible sans prénom et sans rendez-vous", () => {
+  /*
+    Le client a pris son rendez-vous lui-même avant de recevoir ce message :
+    le lui reproposer donnerait l'impression qu'on ne l'a pas vu passer.
+  */
+  it("ne mentionne pas le rendez-vous, même quand la date est connue", () => {
+    const texte = buildRecapText(base);
+    expect(texte).not.toContain("08/09/2026");
+    expect(texte).not.toContain("rendez-vous");
+  });
+
+  it("reste lisible sans prénom", () => {
     const texte = buildRecapText({ ...base, contactPrenom: null, rendezVousLabel: null });
     expect(texte).toContain("Bonjour,");
     expect(texte).not.toContain("Bonjour ,");
-    expect(texte).toContain("caler votre rendez-vous de lancement");
+    expect(texte).toContain("La brigade se met au travail");
   });
 
   it("annonce que le menu reste à arrêter quand le client n’en a pas composé", () => {

@@ -252,6 +252,8 @@ export async function envoyerTransmissionRecap(
     // Le client répond au chef de projet, pas à une boîte technique : c'est
     // souvent par ce fil que remonte la première correction de menu.
     replyTo: profile.email,
+    // Le client voit Lyftt, pas l'adresse de notification interne.
+    displayName: "Lyftt",
   });
 
   if (!outcome.sent) {

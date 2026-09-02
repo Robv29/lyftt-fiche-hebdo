@@ -41,14 +41,16 @@ function salutation(input: RecapEmailInput): string {
   return prenom.length > 0 ? `Bonjour ${prenom},` : "Bonjour,";
 }
 
-/** Phrase sur le rendez-vous : ce qui se passe ensuite, dans les deux cas. */
-function suite(input: RecapEmailInput): string {
-  return input.rendezVousLabel
-    ? `On se retrouve le ${input.rendezVousLabel} pour votre rendez-vous de lancement :`
-      + " on y parlera de votre univers, de vos envies et du calendrier des premières"
-      + " publications."
-    : "Nous revenons très vite vers vous pour caler votre rendez-vous de lancement,"
-      + " celui où l'on parlera de votre univers et des premières publications.";
+/**
+ * Ce qui se passe ensuite.
+ *
+ * Le rendez-vous n'est pas mentionné : le client l'a déjà pris lui-même en
+ * composant son menu, le lui reproposer donnerait l'impression qu'on ne l'a
+ * pas vu passer.
+ */
+function suite(): string {
+  return "La brigade se met au travail. Nous revenons vers vous à chaque étape,"
+    + " et vous n'avez plus rien à faire de votre côté.";
 }
 
 const MENU_ABSENT = "Votre menu n’a pas encore été arrêté : nous le fixerons ensemble.";
@@ -64,7 +66,7 @@ export function buildRecapText(input: RecapEmailInput): string {
     "",
     input.menu ?? MENU_ABSENT,
     "",
-    suite(input),
+    suite(),
     "",
     "Un oubli, un plat en trop, une envie de dernière minute ? Répondez simplement à ce"
       + " message, on rectifie avant le premier coup de feu.",
@@ -83,12 +85,6 @@ export function buildRecapHtml(input: RecapEmailInput): string {
     : `<p style="margin:4px 0 0;padding:14px 16px;background:#fafaf9;border-radius:6px;
          font-size:15px;line-height:1.7;font-style:italic;color:#8a8a8a;">${escape(MENU_ABSENT)}</p>`;
 
-  const rendezVous = input.rendezVousLabel
-    ? `<p style="margin:20px 0 0;padding:12px 14px;background:#e8f2ff;border-radius:6px;
-         font-size:15px;line-height:1.6;color:#0b5e9f;">
-         <strong>Rendez-vous de lancement</strong><br>${escape(input.rendezVousLabel)}
-       </p>`
-    : "";
 
   return `<!doctype html>
 <html lang="fr"><body style="margin:0;padding:24px;background:#fafaf9;
@@ -104,9 +100,9 @@ export function buildRecapHtml(input: RecapEmailInput): string {
 
     <p style="margin:0;font-size:13px;color:#8a8a8a;">Votre accompagnement</p>
     ${menu}
-    ${rendezVous}
+    
 
-    <p style="margin:20px 0 0;font-size:15px;line-height:1.6;">${escape(suite(input))}</p>
+    <p style="margin:20px 0 0;font-size:15px;line-height:1.6;">${escape(suite())}</p>
     <p style="margin:16px 0 0;font-size:15px;line-height:1.6;">
       Un oubli, un plat en trop, une envie de dernière minute ? Répondez simplement à ce
       message, on rectifie avant le premier coup de feu.

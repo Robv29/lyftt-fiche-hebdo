@@ -17,6 +17,20 @@ export interface EmailMessage {
   html: string;
   text: string;
   replyTo?: string;
+  /** Nom d'expéditeur à afficher, quand le destinataire est un client. */
+  displayName?: string;
+}
+
+/**
+ * Nom affiché à la place de celui de MAIL_FROM.
+ *
+ * L'adresse technique reste la même — c'est le seul domaine vérifié chez
+ * Resend — mais un client n'a pas à voir « notifications » dans son courrier :
+ * il attend un message de Lyftt.
+ */
+export function withDisplayName(from: string, displayName: string): string {
+  const address = from.includes("<") ? from.slice(from.indexOf("<") + 1, from.indexOf(">")).trim() : from.trim();
+  return `${displayName} <${address}>`;
 }
 
 export type EmailOutcome =
@@ -46,7 +60,7 @@ export async function sendEmail(message: EmailMessage): Promise<EmailOutcome> {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from,
+        from: message.displayName ? withDisplayName(from, message.displayName) : from,
         to: recipients,
         subject: message.subject,
         html: message.html,
