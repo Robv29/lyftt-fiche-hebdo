@@ -4,22 +4,33 @@ import { ClientAdmin } from "./ClientAdmin";
 import { resolveClientLogoUrl } from "@/lib/media/client-logo";
 import { cadenceMonthlyCostCents, parseCustomMonthly, parseShootingPlan } from "@/lib/domain/budget";
 
-export default async function ClientsPage() {
+export default async function ClientsPage({
+  searchParams,
+}: {
+  /*
+   * `nom` et `transmission` viennent de l'écran « Transmission client » : le
+   * formulaire d'onboarding demande une vingtaine de champs que le CRM ne
+   * connaît pas, on ne peut donc pas créer le client tout seul — mais on peut
+   * au moins ouvrir le formulaire avec le nom déjà saisi.
+   */
+  searchParams: Promise<{ nom?: string; transmission?: string }>;
+}) {
   const profile = await getCurrentProfile();
   if (!profile) redirect("/login");
+  const { nom, transmission } = await searchParams;
   // Le commercial consulte : la page s'affiche sans aucun levier d'écriture.
   const readOnly = profile.role === "commercial";
   const supabase = await createSupabaseServerClient();
 
   const [{ data: clients }, { data: managers }] = await Promise.all([
-    supabase.from("clients").select("id, name, logo_url, notes, is_active, validation_deadline_weekday, validation_deadline_time, approval_policy, contract_start_date, contract_end_date, pause_start_date, pause_end_date, client_contacts ( first_name, last_name, phone ), client_assignments ( role, profiles ( full_name ) )").order("name"),
+    supabase.from("clients").select("id, name, logo_url, notes, is_active, validation_deadline_weekday, validation_deadline_time, approval_policy, contract_start_date, contract_end_date, pause_start_date, pause_end_date, client_contacts ( first_name, last_name, phone, email ), client_assignments ( role, profiles ( full_name ) )").order("name"),
     supabase.from("profiles").select("id, full_name").in("role", ["community_manager", "super_admin", "production_manager"]).eq("is_active", true).order("full_name"),
   ]);
 
   return <div className="space-y-7">
     <header><p className="eyebrow">Portefeuille</p><h1 className="page-title mt-1">Clients</h1><p className="mt-2 text-sm text-ink-soft">{readOnly ? "Consultation du portefeuille : contacts, rythme vendu et responsable de chaque client." : "Cadrez les contacts, échéances et règles de validation avant de produire."}</p></header>
     <ClientAdmin clients={await Promise.all((clients ?? []).map(async (c) => {
-      const contact = (c.client_contacts as unknown as { first_name:string; last_name:string|null; phone:string|null }[])?.[0];
+      const contact = (c.client_contacts as unknown as { first_name:string; last_name:string|null; phone:string|null; email:string|null }[])?.[0];
       const assignments = (c.client_assignments as unknown as { role:string; profiles:{full_name:string}|null }[]) ?? [];
       let settings: { monthlyCadence?: { photo?:number; video?:number; story?:number; visual?:number }; shootingPlan?: unknown; customMonthlyService?: unknown } = {};
       try { settings = typeof c.notes === "string" ? JSON.parse(c.notes) : {}; } catch { settings = {}; }
@@ -39,7 +50,7 @@ export default async function ClientsPage() {
             parseCustomMonthly(settings.customMonthlyService),
           )
         : null;
-      return { id:c.id, name:c.name, isActive:c.is_active, deadlineWeekday:c.validation_deadline_weekday, deadlineTime:c.validation_deadline_time, approvalPolicy:c.approval_policy, contactName:contact ? `${contact.first_name} ${contact.last_name ?? ""}`.trim() : null, managerName:assignments.find((assignment)=>assignment.role==="community_manager")?.profiles?.full_name ?? "Non assigné", contractStartDate:c.contract_start_date, contractEndDate:c.contract_end_date, pauseStartDate:c.pause_start_date, pauseEndDate:c.pause_end_date, logoUrl:await resolveClientLogoUrl(c.logo_url), cadenceLabel:`${Number(cadence.photo??0)} photo · ${Number(cadence.video??0)} vidéo · ${Number(cadence.story??0)} story · ${Number(cadence.visual??0)} visuel`, monthlyCostCents };
-    }))} managers={(managers ?? []).map((m) => ({ id:m.id, name:m.full_name }))} readOnly={readOnly}/>
+      return { id:c.id, name:c.name, isActive:c.is_active, deadlineWeekday:c.validation_deadline_weekday, deadlineTime:c.validation_deadline_time, approvalPolicy:c.approval_policy, contactName:contact ? `${contact.first_name} ${contact.last_name ?? ""}`.trim() : null, contactEmail:contact?.email ?? null, contactPhone:contact?.phone ?? null, managerName:assignments.find((assignment)=>assignment.role==="community_manager")?.profiles?.full_name ?? "Non assigné", contractStartDate:c.contract_start_date, contractEndDate:c.contract_end_date, pauseStartDate:c.pause_start_date, pauseEndDate:c.pause_end_date, logoUrl:await resolveClientLogoUrl(c.logo_url), cadenceLabel:`${Number(cadence.photo??0)} photo · ${Number(cadence.video??0)} vidéo · ${Number(cadence.story??0)} story · ${Number(cadence.visual??0)} visuel`, monthlyCostCents };
+    }))} managers={(managers ?? []).map((m) => ({ id:m.id, name:m.full_name }))} readOnly={readOnly} prefillName={(nom ?? "").slice(0, 120)} transmissionId={transmission ?? ""}/>
   </div>;
 }

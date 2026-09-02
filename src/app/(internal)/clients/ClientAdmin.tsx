@@ -16,6 +16,7 @@ function lifecycleOf(client:{isActive:boolean;contractEndDate:string|null;pauseS
 import { SOCIAL_NETWORKS, SOCIAL_NETWORK_LABELS } from "@/lib/domain/types";
 import { Icon } from "@/components/Icon";
 import { ClientLogoField } from "@/components/ClientLogoField";
+import { ClientCard } from "@/components/ClientCard";
 import {
   hashtagsForClientType,
   LYFTT_CLIENT_TYPES,
@@ -65,6 +66,9 @@ interface ClientRow {
   deadlineTime: string;
   approvalPolicy: string;
   contactName: string | null;
+  /* Coordonnées du contact principal : elles étaient chargées puis jetées. */
+  contactEmail: string | null;
+  contactPhone: string | null;
   managerName: string;
   logoUrl: string | null;
   cadenceLabel: string;
@@ -80,6 +84,8 @@ export function ClientAdmin({
   clients,
   managers,
   readOnly = false,
+  prefillName = "",
+  transmissionId = "",
 }: {
   clients: ClientRow[];
   managers: { id: string; name: string }[];
@@ -91,10 +97,24 @@ export function ClientAdmin({
    * proposer un bouton qui refuserait de fonctionner.
    */
   readOnly?: boolean;
+  /*
+   * Nom repris de la fiche transmise par le CRM. Le formulaire s'ouvre alors
+   * de lui-même : arriver depuis « Transmission client » sur un écran replié,
+   * où il faut encore cliquer « Nouveau client » puis retaper le nom qu'on
+   * vient de lire, n'aurait rien fait gagner.
+   */
+  prefillName?: string;
+  /*
+   * Fiche transmise à l'origine de cette création. Le client créé lui est
+   * rattaché et la fiche passe en « traitée » : sans ce fil, la colonne
+   * `client_id` de `client_transmissions` resterait vide à jamais et Théo
+   * devrait marquer la fiche traitée à la main juste après l'avoir créée.
+   */
+  transmissionId?: string;
 }) {
   const [pending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<ClientActionResult | null>(null);
-  const [showForm, setShowForm] = useState(false);
+  const [showForm, setShowForm] = useState(Boolean(prefillName) && !readOnly);
   const [query, setQuery] = useState("");
   const [tacit, setTacit] = useState(false);
   const [clientType, setClientType] = useState<LyfttClientType>("restaurant");
@@ -110,7 +130,7 @@ export function ClientAdmin({
     Boolean(key) && (baseHashtagKeys.has(key) || customKeys.indexOf(key) !== index),
   );
   const hashtagSelectionIsValid = filledCustomHashtags === 5 && !hasDuplicateCustomHashtag;
-  const filteredClients = clients.filter((client) => `${client.name} ${client.contactName ?? ""} ${client.managerName}`.toLocaleLowerCase("fr").includes(query.trim().toLocaleLowerCase("fr")));
+  const filteredClients = clients.filter((client) => `${client.name} ${client.contactName ?? ""} ${client.contactEmail ?? ""} ${client.contactPhone ?? ""} ${client.managerName}`.toLocaleLowerCase("fr").includes(query.trim().toLocaleLowerCase("fr")));
 
   /*
    * Un client archivé, en pause ou dont le contrat est arrivé à terme ne se
@@ -186,13 +206,14 @@ export function ClientAdmin({
           }}
           className="card reveal-panel space-y-7 p-5 sm:p-7"
         >
+          {transmissionId && <input type="hidden" name="transmissionId" value={transmissionId}/>}
           <div><p className="eyebrow">Nouveau dossier</p><h2 className="mt-1 text-lg font-semibold">Onboarding éditorial complet</h2><p className="mt-1 text-sm text-ink-faint">Tous les champs sont nécessaires : ils alimentent le planning, les messages clients et la bibliothèque éditoriale.</p></div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <label className="label" htmlFor="name">
                 Nom du client
               </label>
-              <input id="name" name="name" required maxLength={120} {...fieldProps(fieldErrors,"name")} placeholder="Un été à la campagne"/>
+              <input id="name" name="name" required maxLength={120} defaultValue={prefillName} {...fieldProps(fieldErrors,"name")} placeholder="Un été à la campagne"/>
               <FieldError errors={fieldErrors} name="name"/>
             </div>
             <div>
@@ -560,54 +581,51 @@ export function ClientAdmin({
               <p className="text-xs text-ink-faint">{section.hint}</p>
             </div>
             <ul className="grid gap-4 lg:grid-cols-2">
-          {section.list.map((client) => (
-            <li key={client.id} className={`card lift-card p-5 ${lifecycleOf(client).canProduce ? "" : "border-line/60 bg-canvas/60"}`}>
-              {(() => { const lifecycle = lifecycleOf(client); return (
-              <div className="flex h-full flex-col gap-5">
-                <div className="flex items-start gap-3">
-                  {client.logoUrl
-                    // Le logo prime sur les initiales : c'est ce qui permet de
-                    // repérer un client d'un coup d'œil dans un portefeuille.
-                    // eslint-disable-next-line @next/next/no-img-element
-                    ? <img src={client.logoUrl} alt="" className="h-11 w-11 shrink-0 rounded-xl border border-line bg-white object-contain"/>
-                    : <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[#e8f2ff] text-sm font-bold text-[#0b5e9f]">{client.name.slice(0,2).toUpperCase()}</span>}
-                  <div className="min-w-0 flex-1">
-                  <p className="font-semibold tracking-[-.015em]">
-                    {client.name}
-                    {lifecycle.state !== "active" && (
-                      <span className={`ml-2 badge ${lifecycle.state === "paused" ? "bg-state-progress/10 text-state-progress" : "bg-canvas text-ink-faint"}`}>
-                        {lifecycle.label}
-                      </span>
-                    )}
-                    {client.approvalPolicy === "tacit_allowed" && (
-                      <span className="ml-2 badge bg-state-progress/10 text-state-progress">
-                        Validation tacite
-                      </span>
-                    )}
+          {section.list.map((client) => {
+            const lifecycle = lifecycleOf(client);
+            return (
+            <ClientCard
+              key={client.id}
+              name={client.name}
+              logoUrl={client.logoUrl}
+              muted={!lifecycle.canProduce}
+              email={client.contactEmail}
+              phone={client.contactPhone}
+              badges={<>
+                {lifecycle.state !== "active" && (
+                  <span className={`ml-2 badge ${lifecycle.state === "paused" ? "bg-state-progress/10 text-state-progress" : "bg-canvas text-ink-faint"}`}>
+                    {lifecycle.label}
+                  </span>
+                )}
+                {client.approvalPolicy === "tacit_allowed" && (
+                  <span className="ml-2 badge bg-state-progress/10 text-state-progress">
+                    Validation tacite
+                  </span>
+                )}
+              </>}
+              detail={lifecycle.detail
+                ? <p className={`mt-1 text-xs ${lifecycle.canProduce ? "text-ink-faint" : "text-state-progress"}`}>{lifecycle.detail}</p>
+                : null}
+              lines={<>
+                <p className="mt-1 text-xs leading-relaxed text-ink-faint">
+                  {client.contactName ?? "Aucun contact"} · échéance{" "}
+                  {WEEKDAYS.find((d) => d.value === client.deadlineWeekday)?.label.toLowerCase()}{" "}
+                  {client.deadlineTime.slice(0, 5).replace(":", " h ")}
+                </p>
+                <p className="mt-2 text-xs text-ink-soft">{client.managerName} · {client.cadenceLabel}</p>
+                {/*
+                  Montant mensuel de l'abonnement : le rythme vendu ne disait
+                  pas ce qu'il rapporte, et c'est la question qui vient juste
+                  après en regardant une carte client.
+                */}
+                {client.monthlyCostCents !== null && (
+                  <p className="mt-1.5 text-xs font-semibold text-[#0b5e9f]">
+                    {formatEuros(client.monthlyCostCents)} par mois
                   </p>
-                  {lifecycle.detail && (
-                    <p className={`mt-1 text-xs ${lifecycle.canProduce ? "text-ink-faint" : "text-state-progress"}`}>{lifecycle.detail}</p>
-                  )}
-                  <p className="mt-1 text-xs leading-relaxed text-ink-faint">
-                    {client.contactName ?? "Aucun contact"} · échéance{" "}
-                    {WEEKDAYS.find((d) => d.value === client.deadlineWeekday)?.label.toLowerCase()}{" "}
-                    {client.deadlineTime.slice(0, 5).replace(":", " h ")}
-                  </p>
-                  <p className="mt-2 text-xs text-ink-soft">{client.managerName} · {client.cadenceLabel}</p>
-                  {/*
-                    Montant mensuel de l'abonnement : le rythme vendu ne disait
-                    pas ce qu'il rapporte, et c'est la question qui vient juste
-                    après en regardant une carte client.
-                  */}
-                  {client.monthlyCostCents !== null && (
-                    <p className="mt-1.5 text-xs font-semibold text-[#0b5e9f]">
-                      {formatEuros(client.monthlyCostCents)} par mois
-                    </p>
-                  )}
-                  </div>
-                </div>
-
-                <div className="mt-auto grid grid-cols-[1fr_44px] gap-2 border-t pt-4 sm:grid-cols-[1fr_1fr_44px]">
+                )}
+              </>}
+              footer={<>
+                <div className="grid grid-cols-[1fr_44px] gap-2 sm:grid-cols-[1fr_1fr_44px]">
                   <Link href={`/clients/${client.id}`} className="btn-secondary order-2 text-xs sm:order-1">Voir le dossier</Link>
                   {/* Aucune fiche pour un client en pause ou dont la gestion est terminée. */}
                   {!readOnly && (lifecycle.canProduce ? (
@@ -638,7 +656,7 @@ export function ClientAdmin({
                   lendemain de la fin de pause.
                 */}
                 {!readOnly && (
-                <details className="border-t pt-3">
+                <details className="mt-3 border-t pt-3">
                   <summary className="cursor-pointer text-xs font-semibold text-ink-soft">Gestion et pause</summary>
                   <form
                     action={(formData) => { formData.set("clientId", client.id); run(() => updateClientLifecycle(formData)); }}
@@ -671,10 +689,10 @@ export function ClientAdmin({
                   </form>
                 </details>
                 )}
-              </div>
-              ); })()}
-            </li>
-          ))}
+              </>}
+            />
+            );
+          })}
             </ul>
           </section>
           ))}
