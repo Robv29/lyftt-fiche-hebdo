@@ -199,19 +199,36 @@ export function TransmissionBoard({ rows }: { rows: TransmissionRow[] }) {
                       <RendezVousForm row={row} pending={pending} defaultValue="" onSubmit={run}/>
                     )}
 
-                    {row.ficheMission && (
-                      <details className="rounded-xl border border-line bg-canvas/60 px-3 py-2">
-                        <summary className="cursor-pointer text-xs font-semibold text-ink-soft">Fiche mission</summary>
-                        {/*
-                          Le menu est saisi en texte libre dans le CRM, une
-                          prestation par ligne. Sans `whitespace-pre-line`, tout
-                          se retrouve en un seul paragraphe illisible.
-                        */}
-                        <p className="mt-2 whitespace-pre-line text-xs leading-relaxed text-ink-soft">
+                    {/*
+                      Le menu composé par le client est la raison d'être de
+                      cette carte : le replier obligeait à cliquer sur chaque
+                      fiche pour savoir ce qu'il y a à produire. Il est donc
+                      ouvert, et `whitespace-pre-line` préserve le découpage
+                      ligne par ligne du CRM.
+                    */}
+                    <div className="rounded-xl border border-line bg-canvas/60 px-3 py-2.5">
+                      <p className="eyebrow mb-1.5">Menu composé par le client</p>
+                      {row.ficheMission ? (
+                        <p className="whitespace-pre-line text-xs leading-relaxed text-ink-soft">
                           {row.ficheMission}
                         </p>
-                      </details>
-                    )}
+                      ) : (
+                        <p className="text-xs italic text-ink-faint">
+                          Le client n&apos;a pas encore composé son menu.
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Le dossier commercial reste la source : un aller-retour
+                        vaut mieux qu'une donnée recopiée qu'on croit à jour. */}
+                    <a
+                      href={`https://lyftt-crm.vercel.app/prospects/${row.crmProspectId}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[11px] font-semibold text-accent hover:underline"
+                    >
+                      Ouvrir la fiche dans le CRM →
+                    </a>
                   </ClientCard>
                 );
               })}
