@@ -63,6 +63,7 @@ src/lib/security/    Nettoyage des textes, contrôle des pièces jointes,
 src/lib/review/      Couche de lecture du portail client
 src/lib/internal/    Actions serveur de l'équipe
 src/app/client-review/[token]/   Portail client public
+src/app/api/crm/     Webhooks du CRM commercial et de Calendly
 src/app/(internal)/  Écrans internes (authentifiés)
 supabase/migrations/ Schéma, RLS, fonctions métier
 ```
@@ -89,6 +90,42 @@ accès à rien.
 - Buckets privés, médias servis en URL signée à durée limitée
 - `internal_notes` n'est jamais sélectionné par la couche portail
   (vérifié par un test)
+
+### Transmission depuis le CRM commercial
+
+Le CRM (`Robv29/lyftt-crm`) et cette application ne partagent que la table
+`client_transmissions`. Quand un client signe et compose son menu de
+prestations, le CRM pousse sa fiche ; elle apparaît dans l'onglet
+**Transmission client**, où le chef de projet crée le vrai dossier.
+
+| Route | Appelée par | Authentification |
+| --- | --- | --- |
+| `POST /api/crm/transmission` | le CRM, à la signature | `Authorization: Bearer $CRM_WEBHOOK_SECRET` |
+| `POST /api/crm/calendly` | Calendly, sur `invitee.created` | en-tête `Calendly-Webhook-Signature` (HMAC-SHA256) |
+
+```bash
+curl -X POST https://<app>/api/crm/transmission \
+  -H "Authorization: Bearer $CRM_WEBHOOK_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"crm_prospect_id":38916,"entreprise":"Un été à la campagne",
+       "contact_prenom":"Jean","contact_nom":"Dupont","email":"jean@exemple.fr",
+       "telephone":"0612345678","fiche_mission":"4 photos\n2 vidéos",
+       "montant_ca":1500,"menu_compose_le":"2026-09-02T10:00:00Z"}'
+```
+
+Réponses : `200 {"ok":true}`, `401` si le secret ne correspond pas, `422` si le
+corps est invalide. L'insertion est idempotente sur `crm_prospect_id` : le CRM
+peut rejouer la même fiche sans jamais renvoyer dans « à traiter » une fiche
+déjà prise en charge — seules les colonnes venues du CRM sont réécrites.
+
+La route Calendly rapproche le rendez-vous de la fiche par l'adresse e-mail,
+sans tenir compte de la casse. Sans correspondance, elle répond quand même
+`200 {"ok":true,"matched":false}` : un webhook qu'on fait échouer est un webhook
+que Calendly finit par désactiver. Si `CALENDLY_WEBHOOK_SECRET` n'est pas
+défini, la signature n'est pas vérifiée et un avertissement est journalisé —
+de quoi brancher le webhook avant d'avoir posé la clé.
+
+Les deux secrets se posent dans Vercel ; `.env.example` en donne la forme.
 
 ### Données personnelles
 
