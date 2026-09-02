@@ -96,11 +96,16 @@ export const config = {
      * statiques et les images.
      */
     /*
+     * `invitation` est exclu : c'est précisément la route qu'une personne sans
+     * session doit pouvoir atteindre, puisqu'elle sert à en ouvrir une. La
+     * renvoyer vers la connexion consommerait son lien sans rien faire.
+     */
+    /*
      * `api` est exclu dans son ensemble : ces routes sont appelées par des
      * machines (tâches planifiées, sondes) et portent leur propre
      * authentification. Les y soumettre renvoyait une redirection 307 vers la
      * page de connexion, que le cron ne peut évidemment pas suivre.
      */
-    "/((?!client-review|demande|login|api|politique-de-confidentialite|mentions-legales|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!client-review|demande|login|invitation|api|politique-de-confidentialite|mentions-legales|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

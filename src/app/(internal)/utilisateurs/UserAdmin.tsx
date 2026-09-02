@@ -5,6 +5,7 @@ import {
   changeMemberRole,
   createTeamMember,
   deleteTeamMember,
+  inviteTeamMember,
   setMemberActive,
   type UserActionResult,
 } from "./actions";
@@ -52,6 +53,13 @@ export function UserAdmin({
           }`}
         >
           <p>{feedback.message}</p>
+          {feedback.invitationLink && (
+            <p className="mt-2 break-all text-ink">
+              <code className="rounded bg-canvas px-2 py-0.5 font-mono text-xs">
+                {feedback.invitationLink}
+              </code>
+            </p>
+          )}
           {feedback.temporaryPassword && (
             <p className="mt-2 text-ink">
               Mot de passe provisoire, à transmettre maintenant — il ne sera plus
@@ -77,6 +85,11 @@ export function UserAdmin({
 
       {showForm && (
         <form
+          /*
+            Deux boutons, un seul formulaire : les champs sont les mêmes, et
+            `formAction` choisit le geste. Dupliquer le formulaire aurait
+            obligé à tenir deux fois la liste des rôles.
+          */
           action={(formData) => run(() => createTeamMember(formData))}
           className="card space-y-4 p-4"
         >
@@ -106,9 +119,28 @@ export function UserAdmin({
               </select>
             </div>
           </div>
-          <button type="submit" className="btn-primary" disabled={pending}>
-            {pending ? "Création…" : "Créer le compte"}
-          </button>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="submit"
+              className="btn-primary"
+              disabled={pending}
+              formAction={(formData) => run(() => inviteTeamMember(formData))}
+            >
+              {pending ? "Envoi…" : "Inviter par e-mail"}
+            </button>
+            <button type="submit" className="btn-secondary" disabled={pending}>
+              {pending ? "Création…" : "Créer avec un mot de passe provisoire"}
+            </button>
+          </div>
+          {/*
+            L'invitation est mise en avant : personne d'autre que l'intéressé
+            ne connaît alors son mot de passe. Le mot de passe provisoire reste
+            là pour les cas où le courrier ne passe pas.
+          */}
+          <p className="text-xs text-ink-faint">
+            L’invitation envoie un lien à usage unique : la personne choisit
+            elle-même son mot de passe, que personne d’autre ne connaît.
+          </p>
         </form>
       )}
 

@@ -6,6 +6,8 @@ import { z } from "zod";
 import { getCurrentProfile } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { APP_ROLES, type AppRole } from "@/lib/domain/types";
+import { sendEmail } from "@/lib/notifications/resend";
+import { env } from "@/lib/supabase/env";
 
 /**
  * Administration des comptes de l'équipe.
@@ -20,6 +22,14 @@ export interface UserActionResult {
   message?: string;
   /** Mot de passe provisoire, affiché une seule fois à la création. */
   temporaryPassword?: string;
+  /**
+   * Lien d'invitation, à afficher quand l'e-mail n'est pas parti.
+   *
+   * L'envoi peut échouer — clé absente, domaine non vérifié, adresse refusée.
+   * Sans ce repli, l'invitation serait perdue sans que personne le sache : le
+   * membre existe, il attend un courrier qui n'arrivera pas.
+   */
+  invitationLink?: string;
 }
 
 async function requireSuperAdmin() {
@@ -257,4 +267,134 @@ async function hasAnotherAdmin(excludedProfileId: string): Promise<boolean> {
     .neq("id", excludedProfileId);
 
   return (count ?? 0) > 0;
+}
+
+
+// ---------------------------------------------------------------------------
+// Invitation : la personne choisit son propre mot de passe
+// ---------------------------------------------------------------------------
+
+/**
+ * Invite un membre à créer son compte.
+ *
+ * Différence avec la création directe : personne d'autre que l'intéressé ne
+ * connaît son mot de passe. L'administrateur ne transmet plus un mot de passe
+ * provisoire par un canal qu'il ne maîtrise pas.
+ *
+ * Le lien est fabriqué par nous et pointe sur nos écrans, plutôt que de passer
+ * par le courrier de Supabase : c'est notre expéditeur qui écrit, comme pour
+ * le reste de l'application, et l'envoi ne dépend pas d'un service tiers
+ * configuré ailleurs.
+ *
+ * Le profil est créé tout de suite : le membre apparaît dans l'équipe avec son
+ * rôle, en attente de première connexion. Ne le créer qu'à l'acceptation
+ * laisserait l'invitation invisible, sans moyen de savoir qui a été invité.
+ */
+export async function inviteTeamMember(formData: FormData): Promise<UserActionResult> {
+  const admin = await requireSuperAdmin();
+  if (!admin) return { ok: false, message: "Action réservée à un administrateur." };
+
+  const parsed = createSchema.safeParse({
+    fullName: formData.get("fullName"),
+    email: formData.get("email"),
+    role: formData.get("role"),
+  });
+  if (!parsed.success) {
+    return { ok: false, message: parsed.error.issues[0]?.message ?? "Formulaire invalide." };
+  }
+
+  const { fullName, email, role } = parsed.data;
+  const supabase = createSupabaseAdminClient();
+
+  const { data: existingProfile } = await supabase
+    .from("profiles")
+    .select("id")
+    .eq("email", email)
+    .maybeSingle();
+  if (existingProfile) return { ok: false, message: "Un compte utilise déjà cette adresse." };
+
+  /*
+   * Deux cas, un seul résultat attendu : un jeton à usage unique.
+   *
+   * « invite » crée le compte au passage. Si l'adresse est déjà connue de
+   * l'authentification — un compte créé ailleurs, sans membre associé — la
+   * génération échoue ; on repart alors sur « recovery », qui pose le même
+   * geste sur un compte existant.
+   */
+  let link = await generateInvitationLink(supabase, "invite", email, fullName);
+  if (!link) link = await generateInvitationLink(supabase, "recovery", email, fullName);
+  if (!link) {
+    return { ok: false, message: "Invitation impossible : lien non généré." };
+  }
+
+  const { error: profileError } = await supabase.from("profiles").insert({
+    id: link.userId,
+    full_name: fullName,
+    email,
+    role,
+  });
+  if (profileError) {
+    return { ok: false, message: `Profil non créé : ${profileError.message}` };
+  }
+
+  const outcome = await sendEmail(invitationEmail(fullName, email, link.url));
+  revalidatePath("/utilisateurs");
+
+  if (outcome.sent) {
+    return { ok: true, message: `Invitation envoyée à ${email}.` };
+  }
+
+  /*
+   * L'envoi a échoué : on rend le lien plutôt que de laisser croire que
+   * l'invitation est partie. Le membre est bien créé, il ne manque que le
+   * message — que l'administrateur peut transmettre lui-même.
+   */
+  return {
+    ok: true,
+    message: `${fullName} a été ajouté, mais l'e-mail n'est pas parti (${outcome.reason}). Transmettez-lui ce lien, valable une seule fois :`,
+    invitationLink: link.url,
+  };
+}
+
+/** Jeton d'invitation, transformé en adresse de nos écrans. */
+async function generateInvitationLink(
+  supabase: ReturnType<typeof createSupabaseAdminClient>,
+  type: "invite" | "recovery",
+  email: string,
+  fullName: string,
+): Promise<{ url: string; userId: string } | null> {
+  const { data, error } = await supabase.auth.admin.generateLink(
+    type === "invite"
+      ? { type, email, options: { data: { full_name: fullName } } }
+      : { type, email },
+  );
+
+  const token = data?.properties?.hashed_token;
+  const userId = data?.user?.id;
+  if (error || !token || !userId) return null;
+
+  /*
+   * On garde le jeton et on reconstruit l'adresse : le lien fourni par
+   * Supabase passe par son propre point de vérification, qui renvoie les
+   * jetons dans le fragment de l'URL — invisible côté serveur. Notre route
+   * les reçoit en clair et ouvre la session elle-même.
+   */
+  const url = new URL("/invitation", env.appUrl);
+  url.searchParams.set("token_hash", token);
+  url.searchParams.set("type", type);
+  return { url: url.toString(), userId };
+}
+
+function invitationEmail(fullName: string, email: string, link: string) {
+  const subject = "Votre accès à l'espace équipe LYFTT";
+  const intro = `Bonjour ${fullName}, votre accès à l'espace équipe LYFTT est prêt.`;
+  const consigne = "Choisissez votre mot de passe en suivant ce lien. Il ne fonctionne qu'une fois.";
+
+  return {
+    to: [email],
+    subject,
+    text: `${intro}\n\n${consigne}\n\n${link}\n\nSi vous n'attendiez pas ce message, ignorez-le.`,
+    html: `<p>${intro}</p><p>${consigne}</p><p><a href="${link}">Choisir mon mot de passe</a></p>`
+      + `<p style="color:#667085;font-size:13px">Si vous n'attendiez pas ce message, ignorez-le.</p>`,
+  };
 }

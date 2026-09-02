@@ -32,7 +32,14 @@ export default async function LoginPage({
 
       {erreur && (
         <p role="alert" className="mt-5 rounded-xl border border-state-changes/30 bg-state-changes/5 px-4 py-3 text-sm text-state-changes">
-          Identifiants incorrects.
+          {/*
+            Un lien d'invitation ne sert qu'une fois : dire « identifiants
+            incorrects » enverrait la personne chercher une faute de frappe
+            dans un mot de passe qu'elle n'a pas encore choisi.
+          */}
+          {erreur === "invitation"
+            ? "Ce lien d’invitation a déjà servi ou n’est plus valide. Demandez-en un nouveau."
+            : "Identifiants incorrects."}
         </p>
       )}
 
