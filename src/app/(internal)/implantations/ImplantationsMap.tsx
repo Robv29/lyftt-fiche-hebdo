@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { FRANCE_DEPARTMENTS, MAP_VIEWBOX } from "@/lib/geo/france-map";
 import {
   countBySector,
+  groupByDepartment,
   placeImplantations,
   type ImplantationInput,
   type ImplantationState,
@@ -32,6 +33,10 @@ export function ImplantationsMap({
 }) {
   const [sector, setSector] = useState<LyfttClientType | null>(null);
   const [focused, setFocused] = useState<string | null>(null);
+  const [selectedDept, setSelectedDept] = useState<string | null>(null);
+
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const groupRefs = useRef(new Map<string, HTMLLIElement>());
 
   const sectors = useMemo(
     () => countBySector(clients, LYFTT_CLIENT_TYPES.map((t) => t.id)).filter((s) => s.count > 0),
@@ -49,20 +54,33 @@ export function ImplantationsMap({
    * trous là où se tenaient les autres.
    */
   const placed = useMemo(() => placeImplantations(shown), [shown]);
+  const groups = useMemo(() => groupByDepartment(placed, FRANCE_DEPARTMENTS), [placed]);
   const unlocated = shown.filter((c) => c.latitude === null || c.longitude === null);
 
-  const communes = useMemo(() => {
-    const map = new Map<string, ImplantationInput[]>();
-    for (const client of shown) {
-      const list = map.get(client.city) ?? [];
-      list.push(client);
-      map.set(client.city, list);
-    }
-    return [...map.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0], "fr"));
-  }, [shown]);
+  /** Départements qui portent au moins un client : les seuls à cliquer. */
+  const populated = useMemo(() => new Set(groups.map((g) => g.code)), [groups]);
+
+  /*
+   * Amener la liste sur le département choisi.
+   *
+   * `scrollIntoView` emporterait la page entière avec lui ; on ne déplace donc
+   * que le conteneur, en visant le haut du groupe.
+   */
+  useEffect(() => {
+    if (!selectedDept) return;
+    const container = listRef.current;
+    const group = groupRefs.current.get(selectedDept);
+    if (!container || !group) return;
+    container.scrollTo({ top: group.offsetTop - container.offsetTop, behavior: "smooth" });
+  }, [selectedDept, groups]);
+
+  const selectDepartment = (code: string) => {
+    setSelectedDept((current) => (current === code ? null : code));
+  };
 
   // Le point survolé passe au-dessus des autres : dessiné en dernier.
   const ordered = [...placed].sort((a, b) => Number(a.id === focused) - Number(b.id === focused));
+  const selectedName = groups.find((g) => g.code === selectedDept)?.name;
 
   return (
     <div className="grid gap-4">
@@ -76,7 +94,7 @@ export function ImplantationsMap({
             {shown.length} client{shown.length > 1 ? "s" : ""}
             {sector ? ` · ${SECTOR_LABEL.get(sector) ?? sector}` : ""}
             {" · "}
-            {communes.length} commune{communes.length > 1 ? "s" : ""}
+            {groups.length} département{groups.length > 1 ? "s" : ""}
           </p>
         </header>
 
@@ -87,9 +105,7 @@ export function ImplantationsMap({
               onClick={() => setSector(null)}
               aria-pressed={sector === null}
               className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
-                sector === null
-                  ? "bg-accent text-white"
-                  : "bg-[#eef3f9] text-ink-faint hover:bg-[#e2eaf3]"
+                sector === null ? "bg-accent text-white" : "bg-[#eef3f9] text-ink-faint hover:bg-[#e2eaf3]"
               }`}
             >
               Tous les secteurs · {clients.length}
@@ -101,9 +117,7 @@ export function ImplantationsMap({
                 onClick={() => setSector(type === sector ? null : type)}
                 aria-pressed={sector === type}
                 className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
-                  sector === type
-                    ? "bg-accent text-white"
-                    : "bg-[#eef3f9] text-ink-faint hover:bg-[#e2eaf3]"
+                  sector === type ? "bg-accent text-white" : "bg-[#eef3f9] text-ink-faint hover:bg-[#e2eaf3]"
                 }`}
               >
                 {SECTOR_LABEL.get(type) ?? type} · {count}
@@ -112,7 +126,7 @@ export function ImplantationsMap({
           </div>
         </div>
 
-        <div className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_320px]">
           <div>
             <svg
               viewBox={`0 0 ${MAP_VIEWBOX.width} ${MAP_VIEWBOX.height}`}
@@ -120,16 +134,39 @@ export function ImplantationsMap({
               role="img"
               aria-label={`Carte de France des ${shown.length} implantations LYFTT`}
             >
-              {FRANCE_DEPARTMENTS.map((dep) => (
-                <path
-                  key={dep.code}
-                  d={dep.path}
-                  fill="#eef2f7"
-                  stroke="#d7dfea"
-                  strokeWidth={1}
-                  strokeLinejoin="round"
-                />
-              ))}
+              {FRANCE_DEPARTMENTS.map((dep) => {
+                const hasClients = populated.has(dep.code);
+                const isSelected = dep.code === selectedDept;
+                return (
+                  <path
+                    key={dep.code}
+                    d={dep.path}
+                    fill={isSelected ? "#cfe3f7" : hasClients ? "#e2ebf5" : "#eef2f7"}
+                    stroke={isSelected ? "#1176d3" : "#d7dfea"}
+                    strokeWidth={isSelected ? 2 : 1}
+                    strokeLinejoin="round"
+                    className={hasClients ? "cursor-pointer outline-none" : undefined}
+                    /*
+                      Seuls les départements où nous sommes présents réagissent :
+                      cliquer sur un département vide n'aurait aucune liste à
+                      montrer, et le curseur ne doit pas le laisser croire.
+                    */
+                    tabIndex={hasClients ? 0 : undefined}
+                    role={hasClients ? "button" : undefined}
+                    aria-label={hasClients ? `${dep.name} — voir les clients` : undefined}
+                    aria-pressed={hasClients ? isSelected : undefined}
+                    onClick={hasClients ? () => selectDepartment(dep.code) : undefined}
+                    onKeyDown={hasClients ? (event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        selectDepartment(dep.code);
+                      }
+                    } : undefined}
+                  >
+                    {hasClients && <title>{`${dep.name} (${dep.code})`}</title>}
+                  </path>
+                );
+              })}
 
               {ordered.map((point) => {
                 const active = point.id === focused;
@@ -140,13 +177,7 @@ export function ImplantationsMap({
                       point de recouvrir ses voisins de la même commune.
                     */}
                     {active && (
-                      <circle
-                        cx={point.x}
-                        cy={point.y}
-                        r={13}
-                        fill={COLOR_OF.get(point.state)}
-                        fillOpacity={0.18}
-                      />
+                      <circle cx={point.x} cy={point.y} r={13} fill={COLOR_OF.get(point.state)} fillOpacity={0.18} />
                     )}
                     <circle
                       cx={point.x}
@@ -155,9 +186,7 @@ export function ImplantationsMap({
                       fill={COLOR_OF.get(point.state)}
                       stroke="#fff"
                       strokeWidth={1.8}
-                      className="cursor-pointer"
-                      onMouseEnter={() => setFocused(point.id)}
-                      onMouseLeave={() => setFocused(null)}
+                      className="pointer-events-none"
                     >
                       <title>{`${point.name} — ${point.city} — ${LABEL_OF.get(point.state)}`}</title>
                     </circle>
@@ -169,11 +198,7 @@ export function ImplantationsMap({
             <ul className="mt-3 flex flex-wrap gap-x-5 gap-y-2">
               {STATES.map((state) => (
                 <li key={state.id} className="flex items-center gap-2 text-xs text-ink-faint">
-                  <span
-                    className="h-2.5 w-2.5 rounded-full"
-                    style={{ background: state.color }}
-                    aria-hidden="true"
-                  />
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ background: state.color }} aria-hidden="true" />
                   {state.label} · {shown.filter((c) => c.state === state.id).length}
                 </li>
               ))}
@@ -181,40 +206,86 @@ export function ImplantationsMap({
           </div>
 
           <div className="min-w-0">
-            <p className="eyebrow">Par commune</p>
-            <ul className="mt-2 max-h-[560px] space-y-3 overflow-y-auto pr-1">
-              {communes.map(([city, list]) => (
-                <li key={city}>
-                  <p className="text-xs font-bold uppercase tracking-wide text-ink-faint">
-                    {city} · {list.length}
-                  </p>
-                  <ul className="mt-1 space-y-0.5">
-                    {list.map((client) => (
-                      <li key={client.id}>
-                        <Link
-                          href={`/clients/${client.id}`}
-                          onMouseEnter={() => setFocused(client.id)}
-                          onMouseLeave={() => setFocused(null)}
-                          className={`flex items-center gap-2 rounded-lg px-2 py-1 text-sm transition-colors ${
-                            focused === client.id ? "bg-[#eef3f9]" : "hover:bg-[#f7fafe]"
-                          }`}
-                        >
-                          <span
-                            className="h-2 w-2 shrink-0 rounded-full"
-                            style={{ background: COLOR_OF.get(client.state) }}
-                            aria-hidden="true"
-                          />
-                          <span className="truncate">{client.name}</span>
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                </li>
-              ))}
-              {communes.length === 0 && (
-                <li className="text-sm text-ink-faint">Aucun client dans ce secteur.</li>
+            <div className="flex items-baseline justify-between gap-2">
+              <p className="eyebrow">Par département</p>
+              {selectedDept && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedDept(null)}
+                  className="text-xs font-semibold text-accent hover:underline"
+                >
+                  Tout voir
+                </button>
               )}
-            </ul>
+            </div>
+            <p className="mt-1 text-xs text-ink-faint">
+              {selectedName ? selectedName : "Cliquez un département sur la carte."}
+            </p>
+
+            <div ref={listRef} className="mt-2 max-h-[560px] overflow-y-auto pr-1">
+              <ul className="space-y-3">
+                {groups.map((group) => {
+                  const isSelected = group.code === selectedDept;
+                  const byCommune = new Map<string, typeof group.clients>();
+                  for (const client of group.clients) {
+                    byCommune.set(client.city, [...(byCommune.get(client.city) ?? []), client]);
+                  }
+                  return (
+                    <li
+                      key={group.code || "hors-carte"}
+                      ref={(element) => {
+                        if (element) groupRefs.current.set(group.code, element);
+                        else groupRefs.current.delete(group.code);
+                      }}
+                      className={`rounded-xl border p-2 transition-colors ${
+                        isSelected ? "border-accent bg-[#f2f8ff]" : "border-transparent"
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => selectDepartment(group.code)}
+                        className="flex w-full items-center justify-between gap-2 text-left"
+                      >
+                        <span className="text-xs font-bold uppercase tracking-wide text-ink">
+                          {group.code ? `${group.code} · ` : ""}{group.name}
+                        </span>
+                        <span className="shrink-0 text-xs text-ink-faint">{group.clients.length}</span>
+                      </button>
+
+                      {[...byCommune.entries()].sort((a, b) => a[0].localeCompare(b[0], "fr")).map(([city, list]) => (
+                        <div key={city} className="mt-1.5">
+                          <p className="px-2 text-[11px] font-semibold text-ink-faint">{city}</p>
+                          <ul className="mt-0.5 space-y-0.5">
+                            {list.map((client) => (
+                              <li key={client.id}>
+                                <Link
+                                  href={`/clients/${client.id}`}
+                                  onMouseEnter={() => setFocused(client.id)}
+                                  onMouseLeave={() => setFocused(null)}
+                                  className={`flex items-center gap-2 rounded-lg px-2 py-1 text-sm transition-colors ${
+                                    focused === client.id ? "bg-[#e2eaf3]" : "hover:bg-[#f7fafe]"
+                                  }`}
+                                >
+                                  <span
+                                    className="h-2 w-2 shrink-0 rounded-full"
+                                    style={{ background: COLOR_OF.get(client.state) }}
+                                    aria-hidden="true"
+                                  />
+                                  <span className="truncate">{client.name}</span>
+                                </Link>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
+                    </li>
+                  );
+                })}
+                {groups.length === 0 && (
+                  <li className="text-sm text-ink-faint">Aucun client dans ce secteur.</li>
+                )}
+              </ul>
+            </div>
           </div>
         </div>
 

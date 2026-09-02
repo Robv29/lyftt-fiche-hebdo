@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   countBySector,
+  departmentAt,
+  groupByDepartment,
   placeImplantations,
   projectToMap,
   type ImplantationInput,
 } from "@/lib/domain/implantations";
-import { MAP_VIEWBOX } from "@/lib/geo/france-map";
+import { FRANCE_DEPARTMENTS, MAP_VIEWBOX } from "@/lib/geo/france-map";
 
 const client = (over: Partial<ImplantationInput> & { id: string }): ImplantationInput => ({
   name: over.id, city: "Ville", clientType: "commerce", longitude: 1.4442, latitude: 43.6045,
@@ -101,5 +103,57 @@ describe("countBySector", () => {
       { type: "bar", count: 2 },
       { type: "hotel", count: 1 },
     ]);
+  });
+});
+
+describe("departmentAt", () => {
+  it("range chaque ville dans son département", () => {
+    const cases: Array<[string, number, number, string]> = [
+      ["Toulouse", 1.4442, 43.6045, "31"],
+      ["Montauban", 1.3638, 44.0198, "82"],
+      ["Paris", 2.3522, 48.8566, "75"],
+      ["Marseille", 5.405, 43.282, "13"],
+      ["Périgueux", 0.7113, 45.1931, "24"],
+      ["Mont-de-Marsan", -0.5002, 43.8914, "40"],
+      ["Cernay-la-Ville", 1.9677, 48.6717, "78"],
+      ["Castres", 2.2455, 43.6094, "81"],
+      ["Narbonne", 3.0501, 43.1667, "11"],
+    ];
+    for (const [nom, lon, lat, attendu] of cases) {
+      const point = projectToMap(lon, lat)!;
+      expect(departmentAt(point.x, point.y, FRANCE_DEPARTMENTS), nom).toMatchObject({ code: attendu });
+    }
+  });
+
+  it("ne rattache rien à un point hors des terres", () => {
+    // Pleine mer au large de la Bretagne.
+    const point = projectToMap(-5.5, 47.5);
+    expect(point === null || departmentAt(point.x, point.y, FRANCE_DEPARTMENTS) === null).toBe(true);
+  });
+});
+
+describe("groupByDepartment", () => {
+  it("groupe par département, le plus fourni en tête", () => {
+    const placed = placeImplantations([
+      client({ id: "toulouse1" }),
+      client({ id: "toulouse2" }),
+      client({ id: "montauban", longitude: 1.3638, latitude: 44.0198 }),
+    ]);
+    const groups = groupByDepartment(placed, FRANCE_DEPARTMENTS);
+    expect(groups.map((g) => [g.code, g.clients.length])).toEqual([["31", 2], ["82", 1]]);
+  });
+
+  it("garde le rattachement stable malgré l'écartement des points", () => {
+    /*
+     * Huit clients d'une même commune sont dispersés autour de leur centre.
+     * Le rattachement doit suivre le centre, pas la position décalée, sinon
+     * un client saute dans le département voisin.
+     */
+    const placed = placeImplantations(
+      Array.from({ length: 8 }, (_, i) => client({ id: `c${i}`, longitude: 1.3638, latitude: 44.0198 })),
+    );
+    const groups = groupByDepartment(placed, FRANCE_DEPARTMENTS);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.code).toBe("82");
   });
 });
