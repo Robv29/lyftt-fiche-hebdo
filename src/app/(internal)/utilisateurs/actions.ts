@@ -70,32 +70,106 @@ export async function createTeamMember(formData: FormData): Promise<UserActionRe
     user_metadata: { full_name: fullName },
   });
 
-  if (authError || !created.user) {
-    return {
-      ok: false,
-      message: `Compte non créé : ${authError?.message ?? "erreur inconnue"}`,
-    };
+  let userId = created?.user?.id ?? null;
+  /* Vrai si le compte d'authentification préexistait : on ne le supprimera pas. */
+  let reattached = false;
+
+  if (authError || !userId) {
+    /*
+     * Adresse déjà connue de l'authentification, sans membre associé.
+     *
+     * Le cas se produit dès qu'un compte a été créé ailleurs qu'ici — depuis
+     * le tableau de bord Supabase, par exemple. Il n'apparaît alors nulle part
+     * dans Équipe : impossible de le supprimer, impossible de le recréer,
+     * l'adresse devenait inutilisable sans aucune issue depuis l'écran.
+     *
+     * On rattache le compte existant plutôt que de renvoyer l'utilisateur à
+     * une impasse. Son mot de passe est remplacé par le mot de passe
+     * provisoire : celui qui aurait pu être fixé auparavant cesse de valoir.
+     */
+    const existing = await findAuthUserByEmail(supabase, email);
+    if (!existing) {
+      return {
+        ok: false,
+        message: `Compte non créé : ${authError?.message ?? "erreur inconnue"}`,
+      };
+    }
+
+    // Garde-fou : le contrôle par adresse ci-dessus ne verrait pas un profil
+    // enregistré sous une autre adresse que celle de l'authentification.
+    const { data: linked } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("id", existing.id)
+      .maybeSingle();
+    if (linked) return { ok: false, message: "Un compte utilise déjà cette adresse." };
+
+    const { error: resetError } = await supabase.auth.admin.updateUserById(existing.id, {
+      password: temporaryPassword,
+      email_confirm: true,
+      user_metadata: { full_name: fullName },
+    });
+    if (resetError) {
+      return { ok: false, message: `Compte non rattaché : ${resetError.message}` };
+    }
+
+    userId = existing.id;
+    reattached = true;
   }
 
   const { error: profileError } = await supabase.from("profiles").insert({
-    id: created.user.id,
+    id: userId,
     full_name: fullName,
     email,
     role,
   });
 
   if (profileError) {
-    // On ne laisse pas un compte d'authentification orphelin derrière soi.
-    await supabase.auth.admin.deleteUser(created.user.id);
+    /*
+     * On ne laisse pas un compte d'authentification orphelin derrière soi —
+     * sauf s'il préexistait : le supprimer effacerait un compte que nous
+     * n'avons pas créé, et que son titulaire utilise peut-être ailleurs.
+     */
+    if (!reattached) await supabase.auth.admin.deleteUser(userId);
     return { ok: false, message: `Profil non créé : ${profileError.message}` };
   }
 
   revalidatePath("/utilisateurs");
   return {
     ok: true,
-    message: `${fullName} a été ajouté.`,
+    message: reattached
+      ? `${fullName} a été ajouté. Un compte existait déjà pour cette adresse sans membre associé : il a été rattaché, et son mot de passe remplacé par celui ci-dessous.`
+      : `${fullName} a été ajouté.`,
     temporaryPassword,
   };
+}
+
+/**
+ * Compte d'authentification portant cette adresse, s'il en existe un.
+ *
+ * L'API d'administration ne sait pas chercher par adresse : elle ne sait que
+ * paginer. Le parcours est donc borné — une équipe interne tient largement
+ * dans ces pages, et une boucle sans fin sur un service distant serait pire
+ * que de ne pas trouver le compte.
+ */
+async function findAuthUserByEmail(
+  supabase: ReturnType<typeof createSupabaseAdminClient>,
+  email: string,
+): Promise<{ id: string } | null> {
+  const PER_PAGE = 200;
+  const MAX_PAGES = 10;
+
+  for (let page = 1; page <= MAX_PAGES; page += 1) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: PER_PAGE });
+    if (error || !data) return null;
+
+    const found = data.users.find(
+      (user) => (user.email ?? "").toLowerCase() === email,
+    );
+    if (found) return { id: found.id };
+    if (data.users.length < PER_PAGE) return null;
+  }
+  return null;
 }
 
 export async function setMemberActive(
