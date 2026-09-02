@@ -14,6 +14,11 @@ import type { TicketStatus } from "@/lib/domain/types";
 import { isServiceRequest, type TicketType } from "@/lib/domain/ticket-types";
 import { whatsappLink } from "@/lib/domain/templates";
 import { sheetCompletion } from "@/lib/domain/planning";
+import {
+  ACCESS_DENIED_MESSAGE,
+  EDITORIAL_ROLES,
+  resolveAccessibleSheet,
+} from "@/lib/internal/authorization";
 import type { MediaFormat } from "@/lib/domain/types";
 
 export interface InternalActionResult {
@@ -139,12 +144,31 @@ export async function generateReviewLink(
   return { ok: true, reviewUrl: `${env.appUrl}/client-review/${token}` };
 }
 
+/**
+ * Révocation d'un lien de consultation client.
+ *
+ * L'action n'exigeait qu'une session : n'importe quel compte connecté pouvait
+ * révoquer n'importe quel lien à partir de son seul identifiant, sans que la
+ * fiche concernée soit dans son périmètre. L'écriture passe par la clé
+ * service, donc la RLS ne rattrapait rien.
+ *
+ * Deux barrières désormais : un rôle éditorial, et une fiche que la personne
+ * voit réellement — lecture faite avec le client soumis à RLS, comme partout
+ * ailleurs, pour que la politique SQL reste seule juge du périmètre.
+ */
 export async function revokeReviewLink(
   linkId: string,
   sheetId: string,
   reason: string,
 ): Promise<InternalActionResult> {
-  await requireProfile();
+  const profile = await requireProfile();
+  if (!EDITORIAL_ROLES.includes(profile.role)) {
+    return { ok: false, message: ACCESS_DENIED_MESSAGE };
+  }
+
+  const sheet = await resolveAccessibleSheet(sheetId);
+  if (!sheet) return { ok: false, message: ACCESS_DENIED_MESSAGE };
+
   const admin = createSupabaseAdminClient();
 
   await admin
@@ -153,7 +177,10 @@ export async function revokeReviewLink(
       revoked_at: new Date().toISOString(),
       revoked_reason: sanitizeText(reason, 300) || "Révocation manuelle",
     })
-    .eq("id", linkId);
+    .eq("id", linkId)
+    // Le lien doit appartenir à la fiche : un identifiant emprunté à un autre
+    // client ne doit pas se révoquer par ce chemin.
+    .eq("weekly_sheet_id", sheet.id);
 
   revalidatePath(`/fiches/${sheetId}`);
   return { ok: true, message: "Lien révoqué." };

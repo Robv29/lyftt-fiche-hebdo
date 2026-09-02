@@ -1,4 +1,5 @@
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
+import { denyCommercial } from "@/lib/internal/authorization";
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
 import { isActionableOverdue } from "@/lib/domain/planning";
 import { deadlineState, formatPeriod } from "@/lib/domain/deadline";
@@ -22,6 +23,7 @@ import { ProductionTabs } from "./ProductionTabs";
 const MAX_WEEK_OFFSET = 6;
 
 export default async function ProductionPage({ searchParams }: { searchParams: Promise<{ week?: string }> }) {
+  await denyCommercial();
   const profile = await getCurrentProfile();
   const supabase = await createSupabaseServerClient();
   // Combien de semaines après celle-ci la vue d'ensemble regarde ; 0 = cette semaine.

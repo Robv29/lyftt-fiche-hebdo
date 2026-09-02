@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { denyCommercial } from "@/lib/internal/authorization";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { deadlineState } from "@/lib/domain/deadline";
 import { sheetStatusLabel, ticketStatusLabel, ticketPriorityLabel } from "@/lib/domain/types";
@@ -37,6 +38,7 @@ function clientSettings(notes: string | null): Record<string, unknown> {
 
 /** Vue opérationnelle du jour, exclusivement alimentée par Supabase. */
 export default async function DashboardPage() {
+  await denyCommercial();
   const profile = await getCurrentProfile();
   const supabase = await createSupabaseServerClient();
   const today = todayInParis();

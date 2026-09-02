@@ -78,7 +78,17 @@ export default async function InternalLayout({
     0,
   );
 
-  const links = isProduction
+  /*
+   * Le commercial ne produit rien : il prépare des rendez-vous. Sa navigation
+   * se limite donc à la carte et aux fiches clients — lui proposer Planning ou
+   * Production l'enverrait sur des écrans que la RLS lui laisse vides.
+   */
+  const links = profile.role === "commercial"
+    ? [
+        { href: "/implantations", label: "Nos implantations", icon: "map", badge: null },
+        { href: "/clients", label: "Clients", icon: "users", badge: null },
+      ]
+    : isProduction
     ? [{ href: "/production", label: "Corrections clients", icon: "layers", badge: productionBadge }]
     : [
         { href: "/", label: "Vue d’ensemble", icon: "dashboard", badge: null },

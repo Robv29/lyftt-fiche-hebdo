@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { denyCommercial } from "@/lib/internal/authorization";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { budgetPenalty, budgetSummary, parseCustomMonthly, parseShootingPlan, shootingTally, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
 import { healthActions, healthScore, HEALTH_TARGET, type HealthAction, type HealthPillar } from "@/lib/domain/health-score";
@@ -112,6 +113,7 @@ export default async function MetricsPage({
 }: {
   searchParams: Promise<{ depuis?: string; vue?: string }>;
 }) {
+  await denyCommercial();
   const filters = await searchParams;
   /*
    * Une borne illisible dans l'adresse ferait échouer les requêtes, et l'écran

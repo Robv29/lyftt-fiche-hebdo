@@ -1,4 +1,5 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { denyCommercial } from "@/lib/internal/authorization";
 import { formatPeriod } from "@/lib/domain/deadline";
 import {
   civilDaysBefore,
@@ -97,6 +98,7 @@ function sheetEntry(sheet: PlanningSheet): PlanningEntry {
 }
 
 export default async function SheetsPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
+  await denyCommercial();
   const requestedTab = (await searchParams).tab;
   const initialTab = isPlanningTab(requestedTab) ? requestedTab : "current";
   const supabase = await createSupabaseServerClient();

@@ -1,4 +1,5 @@
 import "server-only";
+import { redirect } from "next/navigation";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import type { AppRole } from "@/lib/domain/types";
 
@@ -20,6 +21,23 @@ export const EDITORIAL_ROLES: readonly AppRole[] = [
   "production_manager",
   "community_manager",
 ];
+
+/**
+ * Le commercial ne consulte que les clients et la carte.
+ *
+ * La navigation ne lui propose rien d'autre, mais une URL saisie à la main
+ * atteindrait les autres écrans. Ceux-ci se videraient d'eux-mêmes — la RLS ne
+ * lui montre ni fiche, ni ticket, ni budget — et une page vide se lit comme une
+ * panne. Mieux vaut le renvoyer là où il a quelque chose à voir.
+ *
+ * À appeler en tête des pages qui sortent de son périmètre. Ce n'est pas la
+ * barrière de sécurité : celle-ci est en base, et dans les gardes de rôle des
+ * actions serveur.
+ */
+export async function denyCommercial(): Promise<void> {
+  const profile = await getCurrentProfile();
+  if (profile?.role === "commercial") redirect("/implantations");
+}
 
 export interface AuthorizedProfile {
   id: string;

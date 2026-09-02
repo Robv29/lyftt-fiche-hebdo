@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { denyCommercial } from "@/lib/internal/authorization";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isServiceRequest, isServiceRequestOverdue, serviceRequestAgeInDays } from "@/lib/domain/ticket-types";
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
@@ -37,6 +38,7 @@ export default async function TicketsPage({
 }: {
   searchParams: Promise<{ statut?: string; client?: string; type?: string }>;
 }) {
+  await denyCommercial();
   const filters = await searchParams;
   const statusFilter = filters.statut ?? "open";
 

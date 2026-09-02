@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { denyCommercial } from "@/lib/internal/authorization";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
 import { MEDIA_FORMAT_LABELS, type MediaFormat } from "@/lib/domain/types";
@@ -25,6 +26,7 @@ const dayOnly = new Intl.DateTimeFormat("fr-FR", {
 });
 
 export default async function HistoriquePage({ searchParams }: { searchParams: Promise<{ client?: string }> }) {
+  await denyCommercial();
   const profile = await getCurrentProfile();
   if (!profile) redirect("/login");
 

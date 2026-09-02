@@ -9,6 +9,7 @@ export const APP_ROLES = [
   "community_manager",
   "graphic_designer",
   "video_editor",
+  "commercial",
   "observer",
 ] as const;
 export type AppRole = (typeof APP_ROLES)[number];
@@ -19,6 +20,7 @@ export const APP_ROLE_LABELS: Record<AppRole, string> = {
   community_manager: "Community manager",
   graphic_designer: "Graphiste",
   video_editor: "Vidéaste",
+  commercial: "Commercial",
   observer: "Observateur",
 };
 

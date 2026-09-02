@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { denyCommercial } from "@/lib/internal/authorization";
 import { resolveMediaUrl } from "@/lib/media/signed-url";
 import { addDays, format, startOfISOWeek } from "date-fns";
 import { fr } from "date-fns/locale";
@@ -11,6 +12,7 @@ function todayInParis():string { return new Intl.DateTimeFormat("en-CA", { timeZ
 
 
 export default async function PublicationsPage({ searchParams }:{ searchParams:Promise<{date?:string}> }) {
+  await denyCommercial();
   const requested=(await searchParams).date; const date=/^\d{4}-\d{2}-\d{2}$/.test(requested??"") ? requested! : todayInParis();
   const supabase=await createSupabaseServerClient();
   const { data:rows }=await supabase.from("weekly_sheet_items").select(`id, scheduled_date, scheduled_time, format, networks, caption, hashtags, approval_status, published_at, media_downloaded_at, content_copied_at, collaboration_handle, collaboration_done_at, media_external_url, media_pending_note, published_networks, media_assets:media_asset_id ( kind, storage_path, file_name, preview_path, purged_at, preview_purged_at ), weekly_sheet_item_media ( position, media_assets ( kind, storage_path, file_name, preview_path, purged_at, preview_purged_at ) ), weekly_sheets!inner ( clients ( name, notes ) )`).eq("scheduled_date",date).eq("is_cancelled",false).order("scheduled_date",{ascending:true}).order("scheduled_time",{ascending:true});

@@ -7,6 +7,8 @@ import { cadenceMonthlyCostCents, parseCustomMonthly, parseShootingPlan } from "
 export default async function ClientsPage() {
   const profile = await getCurrentProfile();
   if (!profile) redirect("/login");
+  // Le commercial consulte : la page s'affiche sans aucun levier d'écriture.
+  const readOnly = profile.role === "commercial";
   const supabase = await createSupabaseServerClient();
 
   const [{ data: clients }, { data: managers }] = await Promise.all([
@@ -15,7 +17,7 @@ export default async function ClientsPage() {
   ]);
 
   return <div className="space-y-7">
-    <header><p className="eyebrow">Portefeuille</p><h1 className="page-title mt-1">Clients</h1><p className="mt-2 text-sm text-ink-soft">Cadrez les contacts, échéances et règles de validation avant de produire.</p></header>
+    <header><p className="eyebrow">Portefeuille</p><h1 className="page-title mt-1">Clients</h1><p className="mt-2 text-sm text-ink-soft">{readOnly ? "Consultation du portefeuille : contacts, rythme vendu et responsable de chaque client." : "Cadrez les contacts, échéances et règles de validation avant de produire."}</p></header>
     <ClientAdmin clients={await Promise.all((clients ?? []).map(async (c) => {
       const contact = (c.client_contacts as unknown as { first_name:string; last_name:string|null; phone:string|null }[])?.[0];
       const assignments = (c.client_assignments as unknown as { role:string; profiles:{full_name:string}|null }[]) ?? [];
@@ -38,6 +40,6 @@ export default async function ClientsPage() {
           )
         : null;
       return { id:c.id, name:c.name, isActive:c.is_active, deadlineWeekday:c.validation_deadline_weekday, deadlineTime:c.validation_deadline_time, approvalPolicy:c.approval_policy, contactName:contact ? `${contact.first_name} ${contact.last_name ?? ""}`.trim() : null, managerName:assignments.find((assignment)=>assignment.role==="community_manager")?.profiles?.full_name ?? "Non assigné", contractStartDate:c.contract_start_date, contractEndDate:c.contract_end_date, pauseStartDate:c.pause_start_date, pauseEndDate:c.pause_end_date, logoUrl:await resolveClientLogoUrl(c.logo_url), cadenceLabel:`${Number(cadence.photo??0)} photo · ${Number(cadence.video??0)} vidéo · ${Number(cadence.story??0)} story · ${Number(cadence.visual??0)} visuel`, monthlyCostCents };
-    }))} managers={(managers ?? []).map((m) => ({ id:m.id, name:m.full_name }))}/>
+    }))} managers={(managers ?? []).map((m) => ({ id:m.id, name:m.full_name }))} readOnly={readOnly}/>
   </div>;
 }
