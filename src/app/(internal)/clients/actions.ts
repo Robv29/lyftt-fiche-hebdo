@@ -405,6 +405,8 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
   }
 
   revalidatePath("/clients");
+  // La carte gagne un point : elle doit le montrer sans qu'on ait à recharger.
+  revalidatePath("/implantations");
   return { ok: true, message: `${input.name} a été créé.`, clientId: client.id };
 }
 
@@ -551,6 +553,8 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
   // Le budget affiche le nom du client : il doit suivre un renommage.
   revalidatePath("/budget");
   revalidatePath(`/budget/${clientId.data}`);
+  // La commune, le nom ou le secteur ont pu changer : la carte suit.
+  revalidatePath("/implantations");
   return {
     ok: true,
     // Un déplacement de dates ne doit pas se faire en silence : on dit combien.
@@ -596,6 +600,8 @@ export async function setClientActive(
   if (error) return { ok: false, message: error.message };
 
   revalidatePath("/clients");
+  // Archiver retire le client de la carte ; le réactiver l'y remet.
+  revalidatePath("/implantations");
   return { ok: true, message: isActive ? "Client réactivé." : "Client archivé." };
 }
 
@@ -669,6 +675,11 @@ export async function updateClientLifecycle(formData: FormData): Promise<ClientA
 
   revalidatePath("/clients");
   revalidatePath("/fiches");
+  /*
+   * Les dates de gestion décident de la présence sur la carte : une fin de
+   * gestion l'en retire dès le lendemain, une pause change sa couleur.
+   */
+  revalidatePath("/implantations");
   return { ok: true, message: "Gestion du client mise à jour." };
 }
 
@@ -734,5 +745,6 @@ export async function deleteClient(
   revalidatePath("/fiches");
   revalidatePath("/budget");
   revalidatePath("/publications");
+  revalidatePath("/implantations");
   return { ok: true, message: `${client.name} a été supprimé.` };
 }

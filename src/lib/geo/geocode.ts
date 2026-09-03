@@ -13,6 +13,8 @@ import "server-only";
  * réapparaît dans la liste « position inconnue » de la carte.
  */
 
+import { primaryCommune } from "./commune";
+
 const ENDPOINT = "https://api-adresse.data.gouv.fr/search/";
 /* Au-delà, l'enregistrement de la fiche paraîtrait bloqué. */
 const TIMEOUT_MS = 4_000;
@@ -63,13 +65,7 @@ export async function geocodeCommune(
   city: string | null | undefined,
   postalCode: string | null | undefined,
 ): Promise<GeocodedCommune | null> {
-  /*
-   * Une fiche porte parfois plusieurs villes — « MONT DE MARSAN ET DAX ». On
-   * retient la première : un point unique par client, celui du siège.
-   */
-  const commune = (city ?? "")
-    .split(/\s*(?:,|\bet\b|\/)\s*/i)[0]
-    ?.trim();
+  const commune = primaryCommune(city);
   if (!commune) return null;
 
   const code = (postalCode ?? "").trim();

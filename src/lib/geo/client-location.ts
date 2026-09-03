@@ -14,8 +14,9 @@ import { geocodeCommune } from "./geocode";
  * inutile d'appeler un service public à chaque changement d'horaire de
  * validation.
  *
- * Ne renvoie rien et ne lève jamais : la position est un agrément de la carte,
- * pas une condition d'enregistrement de la fiche.
+ * Ne lève jamais : la position est un agrément de la carte, pas une condition
+ * d'enregistrement de la fiche. Renvoie `true` si une position a bien été
+ * écrite — ce dont le rattrapage nocturne a besoin pour compter son travail.
  */
 export async function syncClientLocation(
   supabase: SupabaseClient,
@@ -23,14 +24,14 @@ export async function syncClientLocation(
   city: string | null | undefined,
   postalCode: string | null | undefined,
   previous?: { city?: unknown; postalCode?: unknown; located: boolean },
-): Promise<void> {
+): Promise<boolean> {
   const same = previous?.located === true
     && String(previous.city ?? "").trim().toLowerCase() === String(city ?? "").trim().toLowerCase()
     && String(previous.postalCode ?? "").trim() === String(postalCode ?? "").trim();
-  if (same) return;
+  if (same) return false;
 
   const found = await geocodeCommune(city, postalCode);
-  if (!found) return;
+  if (!found) return false;
 
   const { error } = await supabase
     .from("clients")
@@ -42,5 +43,9 @@ export async function syncClientLocation(
     })
     .eq("id", clientId);
 
-  if (error) console.error("[géocodage] position non enregistrée", clientId, error.message);
+  if (error) {
+    console.error("[géocodage] position non enregistrée", clientId, error.message);
+    return false;
+  }
+  return true;
 }

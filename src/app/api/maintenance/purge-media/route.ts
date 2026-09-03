@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { logRibAccess } from "@/lib/internal/rib-audit";
+import { syncClientLocation } from "@/lib/geo/client-location";
 import { decideMediaRetention, formatBytes } from "@/lib/domain/media-retention";
 import { cadenceFromNotes, customMonthlyFromNotes, shootingPlanFromNotes, syncManagementMonths } from "@/lib/budget/management-months";
 
@@ -335,8 +336,25 @@ async function handle(request: NextRequest) {
     if (!deleteError) deletedSheets = expiredSheets.length;
   }
 
+  /*
+   * Rattrapage des positions manquantes.
+   *
+   * Un client est géocodé à l'enregistrement de sa fiche. Si le service
+   * public est injoignable à cet instant — panne, délai dépassé — la fiche
+   * s'enregistre quand même, sans position : c'est voulu, une carte ne vaut
+   * pas qu'on perde un client. Mais sans rattrapage, ce client resterait
+   * absent de la carte jusqu'à ce que quelqu'un rouvre sa fiche par hasard.
+   *
+   * On reprend donc chaque nuit ceux qui n'ont pas de position. Le lot est
+   * borné : mieux vaut plusieurs nuits qu'une rafale sur un service gratuit,
+   * et un client sans position reste visible dans la liste « position
+   * inconnue » de la carte entre-temps.
+   */
+  const located = await locateMissingClients(admin);
+
   return NextResponse.json({
     fichesValideesTacitement: Array.isArray(tacit) ? tacit.length : 0,
+    clientsLocalises: located,
     moisDeGestionInscrits: managementMonths,
     originauxPurges: purgedIds.length,
     apercusPurges: previewPurgedIds.length,
@@ -345,4 +363,43 @@ async function handle(request: NextRequest) {
     evenementsRibPurges: purgedRibEvents ?? 0,
     espaceLibere: formatBytes(freed),
   });
+}
+
+
+/** Nombre de clients localisés cette nuit. */
+const GEOCODING_BATCH = 20;
+
+async function locateMissingClients(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+): Promise<number> {
+  const { data, error } = await admin
+    .from("clients")
+    .select("id, notes")
+    .is("latitude", null)
+    .eq("is_active", true)
+    .limit(GEOCODING_BATCH);
+
+  if (error) {
+    console.error("[entretien] clients sans position illisibles", error.message);
+    return 0;
+  }
+
+  let located = 0;
+  for (const row of data ?? []) {
+    let profile: Record<string, unknown> = {};
+    try {
+      const notes = typeof row.notes === "string" ? JSON.parse(row.notes) : {};
+      profile = (notes?.brandProfile ?? {}) as Record<string, unknown>;
+    } catch { continue; }
+
+    const placed = await syncClientLocation(
+      admin,
+      row.id as string,
+      typeof profile.city === "string" ? profile.city : null,
+      typeof profile.postalCode === "string" ? profile.postalCode : null,
+    );
+    if (placed) located += 1;
+  }
+
+  return located;
 }

@@ -518,6 +518,12 @@ export async function saveContractDates(formData: FormData): Promise<BudgetActio
   revalidatePath("/budget");
   revalidatePath(`/budget/${parsed.data.clientId}`);
   revalidatePath("/clients");
+  /*
+   * Ces dates décident aussi de la présence du client sur la carte des
+   * implantations : une gestion terminée l'en retire, une gestion à venir
+   * l'en écarte encore.
+   */
+  revalidatePath("/implantations");
   return { ok: true, message: "Dates de gestion enregistrées." };
 }
 
