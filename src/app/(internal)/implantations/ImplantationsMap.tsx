@@ -22,14 +22,25 @@ const COLOR_OF = new Map(STATES.map((s) => [s.id, s.color]));
 const LABEL_OF = new Map(STATES.map((s) => [s.id, s.label]));
 const SECTOR_LABEL = new Map(LYFTT_CLIENT_TYPES.map((t) => [t.id, t.label]));
 
+/** Motifs d'exclusion, dans les mots de l'écran. */
+const SET_ASIDE_LABELS: Record<string, string> = {
+  archived: "archivé",
+  ended: "gestion terminée avant",
+  not_started: "gestion pas encore commencée",
+};
+
 export function ImplantationsMap({
   clients,
   setAside,
   year,
+  partialScope,
 }: {
   clients: ImplantationInput[];
-  setAside: number;
+  /** Nombre de clients écartés, par état du cycle de vie. */
+  setAside: Record<string, number>;
   year: number;
+  /** Le lecteur ne voit-il qu'une partie du portefeuille ? */
+  partialScope: boolean;
 }) {
   const [sector, setSector] = useState<LyfttClientType | null>(null);
   const [focused, setFocused] = useState<string | null>(null);
@@ -53,9 +64,15 @@ export function ImplantationsMap({
    * secteur doit desserrer les grappes, sinon les points restants gardent des
    * trous là où se tenaient les autres.
    */
-  const placed = useMemo(() => placeImplantations(shown), [shown]);
+  const { placed, offMap } = useMemo(() => placeImplantations(shown), [shown]);
   const groups = useMemo(() => groupByDepartment(placed, FRANCE_DEPARTMENTS), [placed]);
   const unlocated = shown.filter((c) => c.latitude === null || c.longitude === null);
+  /*
+   * Ce que la carte ne montre pas doit rester comptable : l'en-tête annonçait
+   * un nombre de clients que le dessin ne contenait pas.
+   */
+  const drawn = placed.length;
+  const setAsideTotal = Object.values(setAside).reduce((total, count) => total + count, 0);
 
   /** Départements qui portent au moins un client : les seuls à cliquer. */
   const populated = useMemo(() => new Set(groups.map((g) => g.code)), [groups]);
@@ -74,6 +91,16 @@ export function ImplantationsMap({
     container.scrollTo({ top: group.offsetTop - container.offsetTop, behavior: "smooth" });
   }, [selectedDept, groups]);
 
+  /*
+   * Filtrer un secteur peut vider le département choisi : il restait surligné
+   * dans une liste où il n'apparaissait plus, et son tracé ne réagissait plus
+   * au clic — impossible de le désélectionner autrement qu'en changeant de
+   * filtre.
+   */
+  useEffect(() => {
+    if (selectedDept && !groups.some((g) => g.code === selectedDept)) setSelectedDept(null);
+  }, [groups, selectedDept]);
+
   const selectDepartment = (code: string) => {
     setSelectedDept((current) => (current === code ? null : code));
   };
@@ -91,7 +118,7 @@ export function ImplantationsMap({
             <h1 className="mt-1 text-lg font-semibold">Où nous travaillons</h1>
           </div>
           <p className="text-xs text-ink-faint">
-            {shown.length} client{shown.length > 1 ? "s" : ""}
+            {drawn} client{drawn > 1 ? "s" : ""} sur la carte
             {sector ? ` · ${SECTOR_LABEL.get(sector) ?? sector}` : ""}
             {" · "}
             {groups.length} département{groups.length > 1 ? "s" : ""}
@@ -199,7 +226,7 @@ export function ImplantationsMap({
               {STATES.map((state) => (
                 <li key={state.id} className="flex items-center gap-2 text-xs text-ink-faint">
                   <span className="h-2.5 w-2.5 rounded-full" style={{ background: state.color }} aria-hidden="true" />
-                  {state.label} · {shown.filter((c) => c.state === state.id).length}
+                  {state.label} · {placed.filter((c) => c.state === state.id).length}
                 </li>
               ))}
             </ul>
@@ -289,22 +316,53 @@ export function ImplantationsMap({
           </div>
         </div>
 
-        {(unlocated.length > 0 || setAside > 0) && (
+        {(unlocated.length > 0 || offMap.length > 0 || setAsideTotal > 0 || partialScope) && (
           <footer className="border-t border-line px-5 py-3 text-xs text-ink-faint">
             {unlocated.length > 0 && (
               <p>
                 {/*
                   Un client sans position doit se voir : absent de la carte et
                   absent de la page, il passerait pour un client qu'on n'a pas.
+
+                  Le libellé ne dit plus « renseignez la ville » : la cause est
+                  aussi souvent un service de géocodage indisponible qu'une
+                  saisie manquante, et accuser la saisie envoie corriger un
+                  champ déjà correct. Le rattrapage de nuit reprend ces clients.
                 */}
-                Position inconnue, absent de la carte : {unlocated.map((c) => c.name).join(", ")}.
-                Renseignez la ville et le code postal dans la fiche client.
+                Sans position, absent{unlocated.length > 1 ? "s" : ""} de la carte :{" "}
+                {unlocated.map((c) => c.name).join(", ")}. Vérifiez la ville et le code postal
+                de la fiche ; si la saisie est bonne, la localisation sera retentée cette nuit.
               </p>
             )}
-            {setAside > 0 && (
+            {offMap.length > 0 && (
               <p className={unlocated.length > 0 ? "mt-1" : undefined}>
-                {setAside} client{setAside > 1 ? "s" : ""} hors carte : gestion terminée avant {year},
-                archivé{setAside > 1 ? "s" : ""}, ou pas encore commencé{setAside > 1 ? "s" : ""}.
+                {/*
+                  Situés, mais hors du fond de carte — outre-mer, ou géocodage
+                  parti ailleurs. Ils étaient purement et simplement ignorés :
+                  ni point, ni ligne, ni mention.
+                */}
+                Hors de la France métropolitaine, donc non dessiné
+                {offMap.length > 1 ? "s" : ""} : {offMap.map((c) => c.name).join(", ")}.
+              </p>
+            )}
+            {setAsideTotal > 0 && (
+              <p className="mt-1">
+                Hors carte : {Object.entries(setAside)
+                  .filter(([, count]) => count > 0)
+                  .map(([state, count]) =>
+                    `${count} ${SET_ASIDE_LABELS[state] ?? state}${state === "ended" ? ` ${year}` : ""}`)
+                  .join(", ")}.
+              </p>
+            )}
+            {partialScope && (
+              <p className="mt-1">
+                {/*
+                  La carte ne montre que les clients que la personne connectée
+                  a le droit de voir. Sans cette ligne, un community manager
+                  lisait « Où nous travaillons » sur un portefeuille qui n'est
+                  pas celui de l'agence.
+                */}
+                Cette carte se limite aux clients qui vous sont affectés.
               </p>
             )}
           </footer>

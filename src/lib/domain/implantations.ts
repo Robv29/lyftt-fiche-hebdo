@@ -88,9 +88,23 @@ const SPREAD_RADIUS = 11;
  * identique d'un affichage à l'autre, sans quoi filtrer par secteur ferait
  * danser les points restants.
  */
-export function placeImplantations(clients: readonly ImplantationInput[]): PlacedImplantation[] {
+export interface Placement {
+  placed: PlacedImplantation[];
+  /**
+   * Clients qui ont des coordonnées mais qui ne tombent pas sur le fond de
+   * carte : outre-mer, ou géocodage parti ailleurs.
+   *
+   * Ils étaient simplement ignorés. Un client absent de la carte *et* absent
+   * de toute liste passe pour un client qu'on n'a pas — c'est la pire issue
+   * possible, pire qu'un point mal placé, qui se voit.
+   */
+  offMap: ImplantationInput[];
+}
+
+export function placeImplantations(clients: readonly ImplantationInput[]): Placement {
   const byCommune = new Map<string, ImplantationInput[]>();
   const placed: PlacedImplantation[] = [];
+  const offMap: ImplantationInput[] = [];
 
   for (const client of clients) {
     if (client.longitude === null || client.latitude === null) continue;
@@ -102,7 +116,7 @@ export function placeImplantations(clients: readonly ImplantationInput[]): Place
 
   for (const group of byCommune.values()) {
     const anchor = projectToMap(group[0]!.longitude!, group[0]!.latitude!);
-    if (!anchor) continue;
+    if (!anchor) { offMap.push(...group); continue; }
 
     group.forEach((client, index) => {
       if (group.length === 1) {
@@ -128,7 +142,7 @@ export function placeImplantations(clients: readonly ImplantationInput[]): Place
     });
   }
 
-  return placed;
+  return { placed, offMap };
 }
 
 /**
@@ -224,8 +238,41 @@ export function departmentAt(
       return { code: department.code, name: department.name };
     }
   }
-  return null;
+
+  /*
+   * Rattrapage de bord de trait.
+   *
+   * Le fond de carte est simplifié : le littoral y perd ses découpes, et une
+   * commune côtière ou insulaire peut tomber quelques unités en dehors du
+   * tracé de son propre département. Sans ce rattrapage, elle se retrouvait
+   * dans un fourre-tout « Hors carte », son département ne s'allumait jamais,
+   * et sa liste ne la contenait pas — alors que son point était bien dessiné
+   * au bon endroit.
+   *
+   * On accepte donc le département le plus proche, dans une marge étroite.
+   * Au-delà, mieux vaut ne rien affirmer : un point à cent kilomètres des
+   * terres n'appartient à personne.
+   */
+  let best: { code: string; name: string; distance: number } | null = null;
+  for (const department of departments) {
+    for (const ring of ringsOf(department)) {
+      for (const [px, py] of ring) {
+        const distance = Math.hypot(px - x, py - y);
+        if (distance <= COAST_TOLERANCE && (!best || distance < best.distance)) {
+          best = { code: department.code, name: department.name, distance };
+        }
+      }
+    }
+  }
+
+  return best ? { code: best.code, name: best.name } : null;
 }
+
+/*
+ * Marge du rattrapage littoral, en unités de la vue — la France y fait mille
+ * unités de large, donc une unité vaut environ un kilomètre.
+ */
+const COAST_TOLERANCE = 12;
 
 export interface DepartmentGroup {
   code: string;

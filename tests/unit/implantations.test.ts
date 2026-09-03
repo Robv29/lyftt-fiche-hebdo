@@ -49,13 +49,13 @@ describe("projectToMap", () => {
 
 describe("placeImplantations", () => {
   it("laisse un client seul sur le centre de sa commune", () => {
-    const [placed] = placeImplantations([client({ id: "a" })]);
+    const { placed: [placed] } = placeImplantations([client({ id: "a" })]);
     expect(placed!.x).toBeCloseTo(placed!.anchorX, 10);
     expect(placed!.y).toBeCloseTo(placed!.anchorY, 10);
   });
 
   it("écarte les clients d'une même commune pour qu'aucun n'en cache un autre", () => {
-    const placed = placeImplantations(
+    const { placed } = placeImplantations(
       Array.from({ length: 8 }, (_, i) => client({ id: `c${i}` })),
     );
     expect(placed).toHaveLength(8);
@@ -74,7 +74,7 @@ describe("placeImplantations", () => {
   });
 
   it("ignore un client sans coordonnées plutôt que de l'inventer", () => {
-    const placed = placeImplantations([
+    const { placed } = placeImplantations([
       client({ id: "a" }),
       client({ id: "sans", longitude: null, latitude: null }),
     ]);
@@ -82,7 +82,7 @@ describe("placeImplantations", () => {
   });
 
   it("ne mélange pas deux communes distinctes", () => {
-    const placed = placeImplantations([
+    const { placed } = placeImplantations([
       client({ id: "toulouse" }),
       client({ id: "paris", longitude: 2.3522, latitude: 48.8566 }),
     ]);
@@ -134,7 +134,7 @@ describe("departmentAt", () => {
 
 describe("groupByDepartment", () => {
   it("groupe par département, le plus fourni en tête", () => {
-    const placed = placeImplantations([
+    const { placed } = placeImplantations([
       client({ id: "toulouse1" }),
       client({ id: "toulouse2" }),
       client({ id: "montauban", longitude: 1.3638, latitude: 44.0198 }),
@@ -149,11 +149,65 @@ describe("groupByDepartment", () => {
      * Le rattachement doit suivre le centre, pas la position décalée, sinon
      * un client saute dans le département voisin.
      */
-    const placed = placeImplantations(
+    const { placed } = placeImplantations(
       Array.from({ length: 8 }, (_, i) => client({ id: `c${i}`, longitude: 1.3638, latitude: 44.0198 })),
     );
     const groups = groupByDepartment(placed, FRANCE_DEPARTMENTS);
     expect(groups).toHaveLength(1);
     expect(groups[0]!.code).toBe("82");
+  });
+});
+
+describe("clients hors du fond de carte", () => {
+  it("les signale au lieu de les faire disparaître", () => {
+    /*
+     * Un client outre-mer, ou dont le géocodage est parti ailleurs, a bien des
+     * coordonnées : il ne relève pas de « position inconnue ». Sans cette
+     * liste, il n'apparaissait nulle part — ni sur la carte, ni ailleurs.
+     */
+    const { placed, offMap } = placeImplantations([
+      client({ id: "toulouse" }),
+      client({ id: "fort-de-france", longitude: -61.07, latitude: 14.6 }),
+      client({ id: "berlin", longitude: 13.4, latitude: 52.52 }),
+    ]);
+    expect(placed.map((p) => p.id)).toEqual(["toulouse"]);
+    expect(offMap.map((c) => c.id).sort()).toEqual(["berlin", "fort-de-france"]);
+  });
+
+  it("ne range pas un client sans coordonnées parmi les hors-cadre", () => {
+    const { placed, offMap } = placeImplantations([
+      client({ id: "sans", longitude: null, latitude: null }),
+    ]);
+    expect(placed).toEqual([]);
+    expect(offMap).toEqual([]);
+  });
+});
+
+describe("rattrapage littoral", () => {
+  it("rattache les communes du bord de mer à leur département", () => {
+    /*
+     * Le fond de carte est simplifié : ces communes tombent hors du tracé de
+     * leur propre département. Sans rattrapage elles finissaient « Hors
+     * carte », alors que leur point est dessiné au bon endroit.
+     */
+    const cotes: Array<[string, number, number, string]> = [
+      ["Brest", -4.4861, 48.3904, "29"],
+      ["Sète", 3.6966, 43.4028, "34"],
+      ["Ajaccio", 8.7369, 41.9264, "2A"],
+      ["Le Havre", 0.1079, 49.4944, "76"],
+      ["Biarritz", -1.5586, 43.4832, "64"],
+    ];
+    for (const [nom, lon, lat, attendu] of cotes) {
+      const point = projectToMap(lon, lat)!;
+      expect(point, nom).not.toBeNull();
+      expect(departmentAt(point.x, point.y, FRANCE_DEPARTMENTS), nom)
+        .toMatchObject({ code: attendu });
+    }
+  });
+
+  it("n'invente pas de département en pleine mer", () => {
+    // Au large, bien au-delà de la marge de rattrapage.
+    const point = projectToMap(-2.5, 47.0);
+    if (point) expect(departmentAt(point.x, point.y, FRANCE_DEPARTMENTS)).toBeNull();
   });
 });

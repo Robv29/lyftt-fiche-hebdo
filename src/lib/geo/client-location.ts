@@ -31,7 +31,32 @@ export async function syncClientLocation(
   if (same) return false;
 
   const found = await geocodeCommune(city, postalCode);
-  if (!found) return false;
+
+  if (!found) {
+    /*
+     * Échec après un changement de commune : on efface la position au lieu de
+     * garder l'ancienne.
+     *
+     * La garder était le pire des trois choix possibles. Le point restait sur
+     * la ville quittée, avec son nom, sans que rien ne le signale — et
+     * surtout, il ne pouvait plus jamais être corrigé : au prochain
+     * enregistrement, le raccourci « commune inchangée » constatait une
+     * latitude présente et la même ville qu'en base, et sautait l'appel ; le
+     * rattrapage nocturne, lui, ne reprend que les positions absentes. Un
+     * point faux, définitivement.
+     *
+     * Effacée, la position rend le client visible dans « position inconnue »
+     * et le remet dans la file du rattrapage.
+     */
+    if (previous) {
+      const { error: clearError } = await supabase
+        .from("clients")
+        .update({ latitude: null, longitude: null, geo_label: null, geo_updated_at: null })
+        .eq("id", clientId);
+      if (clearError) console.error("[géocodage] position périmée non effacée", clientId, clearError.message);
+    }
+    return false;
+  }
 
   const { error } = await supabase
     .from("clients")

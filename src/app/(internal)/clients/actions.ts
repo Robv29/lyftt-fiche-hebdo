@@ -591,13 +591,29 @@ export async function setClientActive(
   const profile = await requireEditorial();
   if (!profile) return { ok: false, message: "Action non autorisée." };
 
+  /*
+   * L'écriture passe par le client soumis à RLS, dont la politique réserve les
+   * modifications de la table `clients` à l'encadrement. Un community manager
+   * a le rôle éditorial exigé ci-dessus, mais pas ce droit-là : sa requête ne
+   * touchait aucune ligne — et PostgREST ne lève pas d'erreur pour autant. Le
+   * client n'était pas archivé, et l'écran affichait « Client archivé ».
+   *
+   * On lit donc ce qui a réellement changé. Rien de modifié vaut refus.
+   */
   const supabase = await createSupabaseServerClient();
-  const { error } = await supabase
+  const { data: changed, error } = await supabase
     .from("clients")
     .update({ is_active: isActive })
-    .eq("id", clientId);
+    .eq("id", clientId)
+    .select("id");
 
   if (error) return { ok: false, message: error.message };
+  if (!changed || changed.length === 0) {
+    return {
+      ok: false,
+      message: "Archivage réservé à la direction et au responsable de production.",
+    };
+  }
 
   revalidatePath("/clients");
   // Archiver retire le client de la carte ; le réactiver l'y remet.

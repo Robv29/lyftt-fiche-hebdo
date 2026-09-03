@@ -1,4 +1,4 @@
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { clientLifecycle } from "@/lib/domain/client-lifecycle";
 import { LYFTT_CLIENT_TYPE_IDS, type LyfttClientType } from "@/lib/domain/hashtags";
 import type { ImplantationInput, ImplantationState } from "@/lib/domain/implantations";
@@ -21,7 +21,16 @@ function isImplantation(state: string, endDate: string | null, year: number): bo
   return false;
 }
 
+/*
+ * Rôles qui voient tout le portefeuille. Les autres ne voient, par la RLS, que
+ * les clients qui leur sont affectés — la carte est alors partielle, et le
+ * taire ferait croire à un portefeuille réduit.
+ */
+const FULL_SCOPE_ROLES = ["super_admin", "production_manager", "commercial"];
+
 export default async function ImplantationsPage() {
+  const profile = await getCurrentProfile();
+  const partialScope = !profile || !FULL_SCOPE_ROLES.includes(profile.role);
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("clients")
@@ -41,7 +50,11 @@ export default async function ImplantationsPage() {
 
   const year = new Date().getFullYear();
   const retained: ImplantationInput[] = [];
-  let setAside = 0;
+  /*
+   * Les écartés se comptent par motif. « 3 clients hors carte » sans dire
+   * pourquoi laisse chercher une panne là où il n'y a qu'une règle.
+   */
+  const setAside: Record<string, number> = {};
 
   for (const row of data ?? []) {
     const lifecycle = clientLifecycle({
@@ -53,7 +66,7 @@ export default async function ImplantationsPage() {
     });
 
     if (!isImplantation(lifecycle.state, row.contract_end_date, year)) {
-      setAside += 1;
+      setAside[lifecycle.state] = (setAside[lifecycle.state] ?? 0) + 1;
       continue;
     }
 
@@ -78,5 +91,12 @@ export default async function ImplantationsPage() {
     });
   }
 
-  return <ImplantationsMap clients={retained} setAside={setAside} year={year} />;
+  return (
+    <ImplantationsMap
+      clients={retained}
+      setAside={setAside}
+      year={year}
+      partialScope={partialScope}
+    />
+  );
 }
