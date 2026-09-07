@@ -640,7 +640,7 @@ export function monthsRemainingToBill(input: {
  */
 export function reconcileManagementMonths(
   expected: ManagementMonth[],
-  existing: { id: string; performedOn: string }[],
+  existing: { id: string; performedOn: string; amountCents: number }[],
   options: {
     /**
      * Mois dont la facture est établie ou prélevée, au format `AAAA-MM-01`.
@@ -652,20 +652,47 @@ export function reconcileManagementMonths(
      */
     lockedMonths?: readonly string[];
   } = {},
-): { toInsert: ManagementMonth[]; staleIds: string[] } {
+): { toInsert: ManagementMonth[]; toUpdate: ManagementMonthUpdate[]; staleIds: string[] } {
   const locked = new Set(options.lockedMonths ?? []);
   const isLocked = (date: string) => locked.has(`${date.slice(0, 7)}-01`);
 
   const expectedDates = new Set(expected.map((month) => month.dueOn));
-  const presentDates = new Set(
-    existing.filter((row) => expectedDates.has(row.performedOn)).map((row) => row.performedOn),
-  );
+  const byDate = new Map(expected.map((month) => [month.dueOn, month]));
+  const present = existing.filter((row) => expectedDates.has(row.performedOn));
+  const presentDates = new Set(present.map((row) => row.performedOn));
+
+  /*
+   * Le montant compte autant que la date.
+   *
+   * La réconciliation ne regardait que les dates : un mois déjà inscrit était
+   * laissé tel quel, quel que soit le prix qu'il portait. Vendre deux vidéos
+   * de plus, ou retirer un forfait shooting, ne touchait donc pas les mois en
+   * cours — l'addition restait à l'ancien tarif sans que rien ne le dise.
+   *
+   * Les mois dont la facture est établie ou prélevée restent hors de portée :
+   * ce qui est parti chez le client est un fait, pas une valeur à recalculer.
+   */
+  const toUpdate: ManagementMonthUpdate[] = [];
+  for (const row of present) {
+    if (isLocked(row.performedOn)) continue;
+    const month = byDate.get(row.performedOn)!;
+    if (row.amountCents === month.amountCents) continue;
+    toUpdate.push({ id: row.id, month });
+  }
+
   return {
     toInsert: expected.filter((month) => !presentDates.has(month.dueOn) && !isLocked(month.dueOn)),
+    toUpdate,
     staleIds: existing
       .filter((row) => !expectedDates.has(row.performedOn) && !isLocked(row.performedOn))
       .map((row) => row.id),
   };
+}
+
+/** Ligne de mois déjà inscrite dont le montant ne suit plus la formule. */
+export interface ManagementMonthUpdate {
+  id: string;
+  month: ManagementMonth;
 }
 
 /*

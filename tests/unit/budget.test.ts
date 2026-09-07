@@ -395,7 +395,7 @@ describe("réconciliation des mois inscrits", () => {
   it("ajoute ce qui manque", () => {
     const result = reconcileManagementMonths(
       [mois("2026-05-04", 1), mois("2026-06-04", 2)],
-      [{ id: "a", performedOn: "2026-05-04" }],
+      [{ id: "a", performedOn: "2026-05-04", amountCents: 10_000 }],
     );
     expect(result.toInsert.map((m) => m.dueOn)).toEqual(["2026-06-04"]);
     expect(result.staleIds).toEqual([]);
@@ -404,7 +404,7 @@ describe("réconciliation des mois inscrits", () => {
   it("retire ce qui n'est plus attendu", () => {
     const result = reconcileManagementMonths(
       [mois("2026-05-04")],
-      [{ id: "a", performedOn: "2026-05-04" }, { id: "vieux", performedOn: "2026-06-04" }],
+      [{ id: "a", performedOn: "2026-05-04", amountCents: 10_000 }, { id: "vieux", performedOn: "2026-06-04", amountCents: 10_000 }],
     );
     expect(result.staleIds).toEqual(["vieux"]);
     expect(result.toInsert).toEqual([]);
@@ -413,10 +413,48 @@ describe("réconciliation des mois inscrits", () => {
   it("ne bouge rien quand tout concorde", () => {
     const result = reconcileManagementMonths(
       [mois("2026-05-04")],
-      [{ id: "a", performedOn: "2026-05-04" }],
+      [{ id: "a", performedOn: "2026-05-04", amountCents: 10_000 }],
+    );
+    expect(result.toInsert).toEqual([]);
+    expect(result.toUpdate).toEqual([]);
+    expect(result.staleIds).toEqual([]);
+  });
+
+  /*
+   * La réconciliation ne regardait que les dates : un mois déjà inscrit
+   * gardait son prix quoi qu'il arrive. Changer le forfait d'un client ne
+   * touchait donc pas ses mois en cours, et l'addition restait à l'ancien
+   * tarif sans que rien ne le signale.
+   */
+  it("recale le montant d'un mois dont le forfait a changé", () => {
+    const result = reconcileManagementMonths(
+      [mois("2026-05-04")],
+      [{ id: "a", performedOn: "2026-05-04", amountCents: 6_400 }],
     );
     expect(result.toInsert).toEqual([]);
     expect(result.staleIds).toEqual([]);
+    expect(result.toUpdate).toEqual([{ id: "a", month: mois("2026-05-04") }]);
+  });
+
+  it("ne recale pas un mois dont la facture est partie", () => {
+    const result = reconcileManagementMonths(
+      [mois("2026-05-04")],
+      [{ id: "a", performedOn: "2026-05-04", amountCents: 6_400 }],
+      { lockedMonths: ["2026-05-01"] },
+    );
+    // Ce qui est prélevé est un fait : on ne le recalcule pas au tarif du jour.
+    expect(result.toUpdate).toEqual([]);
+    expect(result.toInsert).toEqual([]);
+    expect(result.staleIds).toEqual([]);
+  });
+
+  it("recale un prorata en gardant sa fraction dans le libellé", () => {
+    const prorata = { index: 1, dueOn: "2026-05-12", amountCents: 7_500, fraction: 0.75 };
+    const result = reconcileManagementMonths(
+      [prorata],
+      [{ id: "a", performedOn: "2026-05-12", amountCents: 5_000 }],
+    );
+    expect(result.toUpdate).toEqual([{ id: "a", month: prorata }]);
   });
 });
 
@@ -430,7 +468,7 @@ describe("mois déjà facturés", () => {
   it("ne supprime pas une ligne appartenant à un mois prélevé", () => {
     const { staleIds } = reconcileManagementMonths(
       [mois("2026-08-01", 2)],
-      [{ id: "ancienne", performedOn: "2026-07-21" }],
+      [{ id: "ancienne", performedOn: "2026-07-21", amountCents: 10_000 }],
       { lockedMonths: ["2026-07-01"] },
     );
     expect(staleIds).toEqual([]);
@@ -448,7 +486,7 @@ describe("mois déjà facturés", () => {
   it("corrige librement les mois encore ouverts", () => {
     const { toInsert, staleIds } = reconcileManagementMonths(
       [mois("2026-08-01", 2)],
-      [{ id: "ancienne", performedOn: "2026-08-21" }],
+      [{ id: "ancienne", performedOn: "2026-08-21", amountCents: 10_000 }],
       { lockedMonths: ["2026-07-01"] },
     );
     expect(toInsert.map((month) => month.dueOn)).toEqual(["2026-08-01"]);
@@ -458,7 +496,7 @@ describe("mois déjà facturés", () => {
   it("se comporte comme avant sans mois verrouillé", () => {
     const { staleIds } = reconcileManagementMonths(
       [mois("2026-08-01", 2)],
-      [{ id: "ancienne", performedOn: "2026-07-21" }],
+      [{ id: "ancienne", performedOn: "2026-07-21", amountCents: 10_000 }],
     );
     expect(staleIds).toEqual(["ancienne"]);
   });

@@ -8,6 +8,7 @@ import {
   parseCustomMonthly,
   parseShootingPlan,
   reconcileManagementMonths,
+  type ManagementMonth,
   type CustomMonthlyService,
   type ShootingPlan,
 } from "@/lib/domain/budget";
@@ -57,7 +58,7 @@ export async function syncManagementMonths(
   const [{ data: existing }, { data: settled }] = await Promise.all([
     supabase
       .from("client_budget_lines")
-      .select("id, performed_on")
+      .select("id, performed_on, unit_price_cents")
       .eq("client_id", client.id)
       .eq("service_key", MANAGEMENT_MONTH_KEY),
     /*
@@ -81,24 +82,40 @@ export async function syncManagementMonths(
    * sinon en place indéfiniment, et s'ajouterait aux nouvelles. On la retire :
    * l'ensemble des mois dus est entièrement déterminé par la fiche client.
    */
-  const { toInsert: missing, staleIds } = reconcileManagementMonths(
+  const { toInsert: missing, toUpdate, staleIds } = reconcileManagementMonths(
     expected,
-    (existing ?? []).map((row) => ({ id: row.id as string, performedOn: row.performed_on as string })),
+    (existing ?? []).map((row) => ({
+      id: row.id as string,
+      performedOn: row.performed_on as string,
+      amountCents: row.unit_price_cents as number,
+    })),
     { lockedMonths: (settled ?? []).map((row) => row.period_month as string) },
   );
 
   if (staleIds.length > 0) {
     await supabase.from("client_budget_lines").delete().in("id", staleIds);
   }
-  if (missing.length === 0) return staleIds.length;
+
+  /*
+   * Mois déjà inscrits dont le montant ne suit plus la formule : on les
+   * recale. La ligne est mise à jour plutôt que supprimée et réinsérée, pour
+   * que son rattachement à une facture et son ancienneté survivent.
+   */
+  for (const { id, month } of toUpdate) {
+    const { error: updateError } = await supabase
+      .from("client_budget_lines")
+      .update({ unit_price_cents: month.amountCents, label: managementMonthLabel(month) })
+      .eq("id", id);
+    if (updateError) console.error("[budget] mois non recalé", id, updateError.message);
+  }
+
+  if (missing.length === 0) return staleIds.length + toUpdate.length;
 
   const { error } = await supabase.from("client_budget_lines").insert(
     missing.map((month) => ({
       client_id: client.id,
       service_key: MANAGEMENT_MONTH_KEY,
-      label: month.fraction < 1
-        ? `Gestion des réseaux · mois ${month.index} (prorata ${Math.round(month.fraction * 4)}/4)`
-        : `Gestion des réseaux · mois ${month.index}`,
+      label: managementMonthLabel(month),
       billing: "ponctuel",
       unit_price_cents: month.amountCents,
       quantity: 1,
@@ -184,4 +201,12 @@ export async function syncAllManagementMonths(
       }),
   );
   return results.reduce((total, count) => total + count, 0);
+}
+
+
+/** Libellé d'un mois de gestion, partagé par l'insertion et le recalage. */
+function managementMonthLabel(month: ManagementMonth): string {
+  return month.fraction < 1
+    ? `Gestion des réseaux · mois ${month.index} (prorata ${Math.round(month.fraction * 4)}/4)`
+    : `Gestion des réseaux · mois ${month.index}`;
 }

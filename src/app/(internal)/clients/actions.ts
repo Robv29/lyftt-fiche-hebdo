@@ -15,6 +15,11 @@ import {
 import { removeClientLogo, uploadClientLogo } from "@/lib/media/client-logo";
 import { rescheduleClientDrafts } from "@/lib/planning/reschedule";
 import { syncClientLocation } from "@/lib/geo/client-location";
+import {
+  customMonthlyFromNotes,
+  shootingPlanFromNotes,
+  syncManagementMonths,
+} from "@/lib/budget/management-months";
 import { normalizeWeekdays } from "@/lib/domain/planning";
 import {
   SHOOTING_PLAN_SERVICES,
@@ -442,7 +447,7 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
   const admin = createSupabaseAdminClient();
   const { data: current } = await admin
     .from("clients")
-    .select("id, notes, logo_url, latitude, client_contacts ( id, is_primary )")
+    .select("id, notes, logo_url, latitude, contract_start_date, contract_end_date, client_contacts ( id, is_primary )")
     .eq("id", clientId.data)
     .maybeSingle();
   if (!current) return { ok: false, message: "Client introuvable." };
@@ -536,6 +541,28 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
     city: existingBrandProfile.city,
     postalCode: existingBrandProfile.postalCode,
     located: current.latitude !== null,
+  });
+
+  /*
+   * Le budget suit la formule sans attendre la nuit.
+   *
+   * Les mois de gestion étaient inscrits et recalés par la tâche planifiée, ou
+   * à l'ouverture de l'écran budget. Changer un forfait ici laissait donc
+   * l'addition à l'ancien tarif jusqu'au lendemain, sans que rien ne l'indique.
+   * Les mois déjà facturés restent hors de portée, comme partout ailleurs.
+   */
+  await syncManagementMonths(admin, {
+    id: clientId.data,
+    contractStartDate: current.contract_start_date,
+    contractEndDate: current.contract_end_date,
+    cadence: {
+      photo: input.photoPerMonth,
+      video: input.videoPerMonth,
+      story: input.storyPerMonth,
+      visual: input.visualPerMonth,
+    },
+    shooting: shootingPlanFromNotes(JSON.stringify(notes)),
+    customMonthly: customMonthlyFromNotes(JSON.stringify(notes)),
   });
 
   const resync = await rescheduleClientDrafts(admin, clientId.data, input.publicationWeekdays, {
