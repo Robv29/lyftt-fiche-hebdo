@@ -135,6 +135,7 @@ export default async function InternalLayout({
           : []),
         { href: "/retours", label: "Tickets clients", icon: "message", badge: openTickets ?? 0 },
         { href: "/production", label: "Production", icon: "layers", badge: productionBadge, alert: productionAlert },
+        { href: "/shootings", label: "Shootings", icon: "camera", badge: null },
         { href: "/indicateurs", label: "Indicateurs", icon: "chart", badge: null },
         { href: "/historique", label: "Historique", icon: "clock", badge: null },
         { href: "/implantations", label: "Nos implantations", icon: "map", badge: null },

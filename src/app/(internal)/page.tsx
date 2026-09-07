@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { readShootings } from "@/lib/shootings/query";
 import { denyCommercial } from "@/lib/internal/authorization";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { deadlineState } from "@/lib/domain/deadline";
@@ -8,19 +9,15 @@ import { requiresProduction } from "@/lib/domain/routing";
 import { Icon } from "@/components/Icon";
 import { isActionableOverdue, planningBucketForPeriod, planningWeekRange, sheetCompletion } from "@/lib/domain/planning";
 import {
-  SHOOTING_LINE_KEYS,
   isShootingLine,
   budgetSummary,
   parseCustomMonthly, parseShootingPlan,
-  shootingPlanSummary,
-  shootingSchedule,
   type BillingMode,
   type BudgetLine,
 } from "@/lib/domain/budget";
 import { clientLifecycle, todayInParis as civilToday } from "@/lib/domain/client-lifecycle";
 import type { MonthlyCadence } from "@/lib/domain/planning";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { ShootingReminders, type ShootingReminderRow } from "./ShootingReminders";
+import { ShootingReminders } from "./ShootingReminders";
 
 function todayInParis(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -115,58 +112,11 @@ export default async function DashboardPage() {
    * de gestion s'il n'y en a pas encore eu — et le rappel s'ouvre un mois avant :
    * c'est le délai qu'il faut pour trouver une date avec un client qui travaille.
    *
-   * Les dates de shooting vivent dans le budget, réservé à la direction par RLS.
-   * La lecture passe donc par la clé service, bornée aux clients déjà filtrés
-   * par le périmètre de la personne connectée.
+   * Le calcul vit dans `@/lib/shootings/query`, partagé avec l'onglet
+   * Shootings. Il était écrit ici ; le recopier là-bas aurait donné deux
+   * réponses à la même question dès la première divergence.
    */
-  const shootingClients = producible
-    .map((client) => ({ client, plan: parseShootingPlan(clientSettings(client.notes).shootingPlan) }))
-    .filter((entry): entry is { client: typeof entry.client; plan: NonNullable<typeof entry.plan> } => Boolean(entry.plan));
-
-  let shootingRows: ShootingReminderRow[] = [];
-  if (shootingClients.length > 0) {
-    const { data: shootingLines } = await createSupabaseAdminClient()
-      .from("client_budget_lines")
-      .select("client_id, performed_on")
-      .in("service_key", SHOOTING_LINE_KEYS)
-      .in("client_id", shootingClients.map((entry) => entry.client.id));
-
-    const datesByClient = new Map<string, string[]>();
-    for (const row of shootingLines ?? []) {
-      const list = datesByClient.get(row.client_id as string) ?? [];
-      list.push(row.performed_on as string);
-      datesByClient.set(row.client_id as string, list);
-    }
-
-    shootingRows = shootingClients.flatMap(({ client, plan }) => {
-      const dates = (datesByClient.get(client.id) ?? []).sort();
-      // Un shooting à venir est une date calée ; le dernier passé sert d'ancre.
-      const lastDoneOn = [...dates].reverse().find((date) => date <= today) ?? null;
-      const plannedOn = dates.find((date) => date > today) ?? null;
-      const schedule = shootingSchedule({
-        plan,
-        lastDoneOn,
-        contractStartDate: client.contract_start_date,
-        today,
-      });
-      if (!schedule) return [];
-      if (!schedule.remindNow && !plannedOn) return [];
-
-      const contacts = client.client_contacts ?? [];
-      const contact = contacts.find((row) => row.is_primary) ?? contacts[0];
-      const reminderSentOn = clientSettings(client.notes).shootingReminderOn;
-      return [{
-        clientId: client.id,
-        clientName: client.name,
-        contactFirstName: contact?.first_name ?? null,
-        planLabel: shootingPlanSummary(plan),
-        dueOn: schedule.dueOn,
-        overdue: schedule.overdue,
-        plannedOn,
-        reminderSentOn: typeof reminderSentOn === "string" ? reminderSentOn : null,
-      }];
-    }).sort((first, second) => first.dueOn.localeCompare(second.dueOn));
-  }
+  const { due: shootingRows } = await readShootings(producible);
 
   /*
    * Budgets à régulariser, pour la direction seule : dates de gestion

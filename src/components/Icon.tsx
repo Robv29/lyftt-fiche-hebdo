@@ -23,6 +23,7 @@ const paths: Record<string, React.ReactNode> = {
   photo: <><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m21 15-4-4L6 20"/></>,
   video: <><rect x="3" y="5" width="14" height="14" rx="3"/><path d="m17 10 4-2v8l-4-2z"/></>,
   warning: <><path d="M10.3 3.7 2.7 17a2 2 0 0 0 1.7 3h15.2a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></>,
+  camera: <><path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.2a2 2 0 0 0 1.7-.95l.6-1.1A2 2 0 0 1 10.7 3h2.6a2 2 0 0 1 1.7 .95l.6 1.1A2 2 0 0 0 17.3 6h1.2A2.5 2.5 0 0 1 21 8.5v8A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"/><circle cx="12" cy="12.5" r="3.2"/></>,
   map: <><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/></>,
   euro: <><path d="M17 5.5A6.5 6.5 0 0 0 7.2 9m0 6A6.5 6.5 0 0 0 17 18.5"/><path d="M4 10.5h9M4 14h9"/></>,
 };
