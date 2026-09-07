@@ -31,6 +31,7 @@ import {
   totalCents,
   type BudgetLine,
   shootingLinePriceCents,
+  parseBaseFee,
 } from "@/lib/domain/budget";
 
 const today = "2026-08-10";
@@ -1095,5 +1096,43 @@ describe("échéances restantes d'un contrat", () => {
       contractEndDate: "2026-12-31",
       today: "2026-09-07",
     })).toBe(0);
+  });
+});
+
+describe("forfait de base négocié", () => {
+  const cadence = { photo: 0, video: 2, story: 0, visual: 0 };
+
+  it("applique le tarif courant quand rien n'est saisi", () => {
+    expect(cadenceMonthlyCostCents(cadence, null, null, null))
+      .toBe(cadenceMonthlyCostCents(cadence, null, null));
+  });
+
+  it("remplace le forfait de base par l'exception du client", () => {
+    /*
+     * Cas réel : E-MOVE est facturé une demi-base, 25 € au lieu de 50.
+     * 25 € + 2 vidéos/mois (0,5/semaine × 220 €) + 49,50 € de sur-mesure.
+     */
+    expect(cadenceMonthlyCostCents(
+      cadence, null, { label: "Shooting 2h en agence", priceCents: 4_950 }, 2_500,
+    )).toBe(18_450);
+  });
+
+  it("accepte un forfait de base nul, qui n'est pas une absence de saisie", () => {
+    expect(cadenceMonthlyCostCents(cadence, null, null, 0)).toBe(11_000);
+  });
+
+  it("ignore une valeur inexploitable plutôt que d'inscrire un montant fantaisiste", () => {
+    for (const mauvais of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(cadenceMonthlyCostCents(cadence, null, null, mauvais))
+        .toBe(BASE_MONTHLY_FEE_CENTS + 11_000);
+    }
+  });
+
+  it("ne retient pas une exception illisible à la lecture des réglages", () => {
+    expect(parseBaseFee(2_500)).toBe(2_500);
+    expect(parseBaseFee(0)).toBe(0);
+    expect(parseBaseFee(null)).toBeNull();
+    expect(parseBaseFee("2500")).toBeNull();
+    expect(parseBaseFee(-100)).toBeNull();
   });
 });

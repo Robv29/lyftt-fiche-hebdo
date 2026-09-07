@@ -16,6 +16,7 @@ import { removeClientLogo, uploadClientLogo } from "@/lib/media/client-logo";
 import { rescheduleClientDrafts } from "@/lib/planning/reschedule";
 import { syncClientLocation } from "@/lib/geo/client-location";
 import {
+  baseFeeFromNotes,
   customMonthlyFromNotes,
   shootingPlanFromNotes,
   syncManagementMonths,
@@ -27,6 +28,7 @@ import {
   type ShootingPlan,
   parseCustomMonthly,
   type CustomMonthlyService,
+  parseBaseFee,
 } from "@/lib/domain/budget";
 
 export interface ClientActionResult {
@@ -115,6 +117,16 @@ const clientSchema = z.object({
     .min(0, "Le prix ne peut pas être négatif.")
     .max(100_000, "Prix trop élevé.")
     .optional(),
+  /*
+   * Forfait de base négocié. Il vaut 50 € pour tout le monde ; certains
+   * comptes ont obtenu autre chose, et cela se saisit plutôt que de se
+   * déduire du rythme — une demi-base ne se calcule pas, elle se décide.
+   * Vide = tarif courant.
+   */
+  baseFeeEuros: z.coerce.number()
+    .min(0, "Le forfait de base ne peut pas être négatif.")
+    .max(10_000, "Forfait de base trop élevé.")
+    .optional(),
 }).superRefine((input, context) => {
   if (input.shootingService && !input.shootingEveryMonths) {
     context.addIssue({
@@ -200,6 +212,13 @@ function clientSettings(
     },
     shootingPlan: shootingPlanFromInput(input),
     customMonthlyService: customMonthlyFromInput(input),
+    /*
+     * `null` quand rien n'est saisi : c'est le tarif courant qui s'applique,
+     * et l'absence se distingue ainsi d'un forfait volontairement mis à zéro.
+     */
+    baseMonthlyFeeCents: input.baseFeeEuros === undefined
+      ? null
+      : parseBaseFee(Math.round(input.baseFeeEuros * 100)),
   };
 }
 
@@ -239,6 +258,7 @@ function clientFormValues(formData: FormData) {
     shootingEveryMonths: formData.get("shootingEveryMonths") || undefined,
     customServiceLabel: formData.get("customServiceLabel") ?? undefined,
     customServicePriceEuros: formData.get("customServicePriceEuros") || undefined,
+    baseFeeEuros: formData.get("baseFeeEuros") || undefined,
   };
 }
 
@@ -563,6 +583,7 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
     },
     shooting: shootingPlanFromNotes(JSON.stringify(notes)),
     customMonthly: customMonthlyFromNotes(JSON.stringify(notes)),
+    baseFeeCents: baseFeeFromNotes(JSON.stringify(notes)),
   });
 
   const resync = await rescheduleClientDrafts(admin, clientId.data, input.publicationWeekdays, {

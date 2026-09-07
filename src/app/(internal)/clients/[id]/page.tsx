@@ -14,6 +14,7 @@ import {
   parseShootingPlan,
   shootingMonthlyCostCents,
   shootingPlanSummary,
+  parseBaseFee,
 } from "@/lib/domain/budget";
 
 const weekDays = ["lundi","mardi","mercredi","jeudi","vendredi","samedi","dimanche"];
@@ -43,6 +44,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
     monthlyCadence?: { photo?: number; video?: number; story?: number; visual?: number };
     shootingPlan?: unknown;
     customMonthlyService?: unknown;
+    baseMonthlyFeeCents?: unknown;
   } = {};
   try { settings = typeof client.notes === "string" ? JSON.parse(client.notes) : {}; } catch { settings = {}; }
   const rawClientType = settings.brandProfile?.clientType;
@@ -64,6 +66,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
   const publicationWeekdays=normalizeWeekdays(settings.publicationWeekdays ?? []);
   const shooting = parseShootingPlan(settings.shootingPlan);
   const customMonthly = parseCustomMonthly(settings.customMonthlyService);
+  const baseFeeCents = parseBaseFee(settings.baseMonthlyFeeCents);
 
   /*
    * Volume de ce qu'une suppression emporterait. Annoncer « définitif » sans
@@ -113,7 +116,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
         keywords:settings.brandProfile?.keywords ?? "",
       },
       networks:networks.length ? networks : ["instagram","facebook"],
-      cadence, publicationWeekdays, shooting, customMonthly,
+      cadence, publicationWeekdays, shooting, customMonthly, baseFeeCents,
       validation:{ deadlineWeekday:client.validation_deadline_weekday, deadlineTime:String(client.validation_deadline_time), approvalPolicy:client.approval_policy as "explicit_required"|"tacit_allowed", tacitNotice:client.tacit_approval_notice ?? "Sans retour avant cette échéance, les contenus seront considérés comme validés, selon les modalités prévues ensemble.", whatsappGroup:client.whatsapp_group_name ?? "", postSignature:client.post_signature ?? "" },
       customHashtags,
     }} managers={(managers ?? []).map((manager)=>({id:manager.id,name:manager.full_name}))}/>}</div></header>

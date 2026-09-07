@@ -421,13 +421,36 @@ export const BASE_MONTHLY_FEE_CENTS = 5_000;
  * du planning, pour que les deux écrans racontent la même chose. Le forfait
  * de base s'ajoute par-dessus.
  */
+/**
+ * Forfait de base d'un client, tel qu'il est rangé dans ses réglages.
+ *
+ * `null` quand rien n'est saisi : c'est le forfait ordinaire qui s'applique.
+ * Une valeur négative ou illisible est traitée comme absente — mieux vaut le
+ * tarif courant qu'un montant fantaisiste inscrit à l'addition.
+ */
+export function parseBaseFee(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
+  return Math.round(value);
+}
+
 export function cadenceMonthlyCostCents(
   cadence: MonthlyCadence,
   shooting?: ShootingPlan | null,
   custom?: CustomMonthlyService | null,
+  /*
+   * Forfait de base négocié pour ce client.
+   *
+   * Il vaut 50 € pour tout le monde ; une exception se saisit sur la fiche
+   * client plutôt que de se déduire du rythme. Une agence facture parfois une
+   * demi-base à un petit compte : cela se décide, cela ne se calcule pas.
+   */
+  baseFeeCents?: number | null,
 ): number {
   const perWeek = (monthly: number | undefined) => Math.max(0, Number(monthly ?? 0)) / 4;
-  return BASE_MONTHLY_FEE_CENTS + Math.round(
+  const base = typeof baseFeeCents === "number" && Number.isFinite(baseFeeCents) && baseFeeCents >= 0
+    ? Math.round(baseFeeCents)
+    : BASE_MONTHLY_FEE_CENTS;
+  return base + Math.round(
     perWeek(cadence.photo) * priceOf("post_photo")
     + perWeek(cadence.video) * priceOf("video")
     + perWeek(cadence.story) * priceOf("story")
@@ -752,6 +775,8 @@ export interface BudgetInput {
   shooting?: ShootingPlan | null;
   /** Prestation sur mesure vendue dans la formule mensuelle. */
   customMonthly?: CustomMonthlyService | null;
+  /** Forfait de base négocié, s'il diffère du tarif courant. */
+  baseFeeCents?: number | null;
   /** Début de gestion, repris de la fiche client. */
   contractStartDate: string | null;
   /** Fin de gestion, reprise de la fiche client. */
@@ -800,6 +825,7 @@ export function budgetSummary(input: BudgetInput): BudgetSummary {
     input.cadence,
     input.shooting ?? null,
     input.customMonthly ?? null,
+    input.baseFeeCents ?? null,
   );
 
   /*

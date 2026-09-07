@@ -3,7 +3,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { logRibAccess } from "@/lib/internal/rib-audit";
 import { syncClientLocation } from "@/lib/geo/client-location";
 import { decideMediaRetention, formatBytes } from "@/lib/domain/media-retention";
-import { cadenceFromNotes, customMonthlyFromNotes, shootingPlanFromNotes, syncManagementMonths } from "@/lib/budget/management-months";
+import { baseFeeFromNotes, cadenceFromNotes, customMonthlyFromNotes, shootingPlanFromNotes, syncManagementMonths } from "@/lib/budget/management-months";
 
 /**
  * Entretien planifié : validations tacites, puis purge des médias.
@@ -100,6 +100,7 @@ async function handle(request: NextRequest) {
          */
         shooting: shootingPlanFromNotes(client.notes),
         customMonthly: customMonthlyFromNotes(client.notes),
+        baseFeeCents: baseFeeFromNotes(client.notes),
       });
     } catch (error) {
       // Un budget en échec ne doit pas empêcher la purge des médias.

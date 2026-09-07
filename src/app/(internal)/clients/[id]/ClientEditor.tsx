@@ -13,7 +13,10 @@ import {
   formatEuros,
   shootingMonthlyCostCents,
   shootingsPerYear,
-  type ShootingPlan, type CustomMonthlyService } from "@/lib/domain/budget";
+  BASE_MONTHLY_FEE_CENTS,
+  type ShootingPlan,
+  type CustomMonthlyService,
+} from "@/lib/domain/budget";
 import {
   hashtagsForClientType,
   LYFTT_CLIENT_TYPES,
@@ -46,6 +49,8 @@ export interface EditableClient {
   shooting: ShootingPlan | null;
   /** Prestation hors carte vendue dans la formule mensuelle. */
   customMonthly: CustomMonthlyService | null;
+  /** Forfait de base négocié, en centimes. `null` = tarif courant. */
+  baseFeeCents: number | null;
   publicationWeekdays: number[];
   validation: {
     deadlineWeekday: number;
@@ -296,6 +301,33 @@ export function ClientEditor({ initial, managers }: { initial: EditableClient; m
                           disabled={!shootingService}
                           required={Boolean(shootingService)}
                           onChange={(event) => setShootingEveryMonths(event.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <div className="mt-4 border-t border-[#d8e4f8] pt-4">
+                      {/*
+                        Forfait de base : 50 € pour tout le monde. Certains
+                        comptes ont négocié autre chose — une demi-base, par
+                        exemple. Cela se saisit ici plutôt que de se déduire du
+                        rythme : c'est une décision commerciale, pas un calcul.
+                      */}
+                      <p className="label">Forfait de base</p>
+                      <p className="mt-1 text-xs text-ink-faint">
+                        {formatEuros(BASE_MONTHLY_FEE_CENTS)} par mois sauf exception négociée. Laissez vide pour le tarif courant.
+                      </p>
+                      <div className="mt-3 max-w-[220px]">
+                        <label className="label sr-only" htmlFor="edit-base-fee">Forfait de base mensuel (€ HT)</label>
+                        <input
+                          id="edit-base-fee"
+                          name="baseFeeEuros"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          className="field bg-white"
+                          placeholder={String(BASE_MONTHLY_FEE_CENTS / 100)}
+                          defaultValue={initial.baseFeeCents === null || initial.baseFeeCents === undefined
+                            ? ""
+                            : initial.baseFeeCents / 100}
                         />
                       </div>
                     </div>

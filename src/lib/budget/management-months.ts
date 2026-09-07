@@ -7,6 +7,7 @@ import {
   dueManagementMonths,
   parseCustomMonthly,
   parseShootingPlan,
+  parseBaseFee,
   reconcileManagementMonths,
   type ManagementMonth,
   type CustomMonthlyService,
@@ -39,6 +40,8 @@ export async function syncManagementMonths(
     shooting?: ShootingPlan | null;
     /** Prestation sur mesure vendue dans la formule mensuelle. */
     customMonthly?: CustomMonthlyService | null;
+    /** Forfait de base négocié, s'il diffère du tarif courant. */
+    baseFeeCents?: number | null;
   },
   today: string = todayInParis(),
 ): Promise<number> {
@@ -46,6 +49,7 @@ export async function syncManagementMonths(
     client.cadence,
     client.shooting ?? null,
     client.customMonthly ?? null,
+    client.baseFeeCents ?? null,
   );
   const expected = dueManagementMonths({
     contractStartDate: client.contractStartDate,
@@ -163,6 +167,15 @@ export function shootingPlanFromNotes(notes: string | null): ShootingPlan | null
 }
 
 /** Prestation sur mesure de la formule mensuelle, lue dans les réglages. */
+export function baseFeeFromNotes(notes: string | null): number | null {
+  try {
+    const settings = typeof notes === "string" ? JSON.parse(notes) : {};
+    return parseBaseFee(settings?.baseMonthlyFeeCents);
+  } catch {
+    return null;
+  }
+}
+
 export function customMonthlyFromNotes(notes: string | null): CustomMonthlyService | null {
   try {
     const settings = typeof notes === "string" ? JSON.parse(notes) : {};
