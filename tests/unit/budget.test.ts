@@ -32,6 +32,7 @@ import {
   type BudgetLine,
   shootingLinePriceCents,
   parseBaseFee,
+  countableShootings,
 } from "@/lib/domain/budget";
 
 const today = "2026-08-10";
@@ -1190,5 +1191,51 @@ describe("pause de gestion", () => {
     expect(dueManagementMonths({
       ...base, pauseStartDate: "2026-04-01", pauseEndDate: "2026-04-30",
     }).map((m) => m.dueOn)).toEqual(["2026-01-05", "2026-02-01", "2026-03-01", "2026-05-01", "2026-06-01"]);
+  });
+});
+
+describe("shootings encore classables", () => {
+  const shooting = (performedOn: string, forfaitIncluded: boolean | null) => ({
+    id: "", serviceKey: "shooting_demi", label: "Shooting ½ journée",
+    billing: "ponctuel" as const, unitPriceCents: 45_000, quantity: 1, months: null,
+    performedOn, billedDirectly: false, forfaitIncluded,
+  });
+
+  const fige = (mois: string[]) => (date: string) => mois.includes(date.slice(0, 7));
+
+  it("écarte les shootings d'un mois déjà facturé, classés ou non", () => {
+    /*
+     * Ne retirer que les non classés gonflerait la note : on garderait les
+     * anciens succès en effaçant les anciens oublis.
+     */
+    const lignes = [
+      shooting("2026-05-07", null),
+      shooting("2026-05-12", true),
+      shooting("2026-09-03", null),
+    ];
+    const restants = countableShootings(lignes, fige(["2026-05"]));
+    expect(restants.map((l) => l.performedOn)).toEqual(["2026-09-03"]);
+  });
+
+  it("ne touche pas aux lignes qui ne sont pas des shootings", () => {
+    const autre = {
+      id: "", serviceKey: "post_photo", label: "Post photo", billing: "mensuel" as const,
+      unitPriceCents: 8_000, quantity: 1, months: null, performedOn: "2026-05-07",
+      billedDirectly: false, forfaitIncluded: null,
+    };
+    expect(countableShootings([autre], fige(["2026-05"]))).toHaveLength(1);
+  });
+
+  it("garde tout quand aucun mois n'est figé", () => {
+    const lignes = [shooting("2026-05-07", null), shooting("2026-09-03", true)];
+    expect(countableShootings(lignes, () => false)).toHaveLength(2);
+  });
+
+  it("rend une note vide plutôt que fausse quand tout est figé", () => {
+    const tally = shootingTally(countableShootings(
+      [shooting("2026-05-07", null), shooting("2026-05-12", true)],
+      fige(["2026-05"]),
+    ));
+    expect(tally).toMatchObject({ included: 0, extra: 0, pending: 0 });
   });
 });

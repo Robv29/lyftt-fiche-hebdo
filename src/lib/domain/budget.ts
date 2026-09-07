@@ -1165,6 +1165,27 @@ export interface ShootingTally {
   pending: number;
 }
 
+/**
+ * Shootings qu'il est encore temps de classer.
+ *
+ * Un shooting dont la facture du mois est partie n'est plus classable : le
+ * requalifier changerait un montant déjà transmis, voire déjà prélevé. La
+ * note pénalisait pourtant ces dossiers-là indéfiniment, sans qu'aucun geste
+ * puisse les corriger — c'est la même règle qu'ailleurs dans l'application,
+ * où un retard ne se signale que tant qu'on peut encore y faire quelque chose.
+ *
+ * Les shootings d'un mois figé sortent donc du compte **des deux côtés** :
+ * ceux qui sont classés comme ceux qui ne le sont pas. Ne retirer que les
+ * seconds gonflerait la note en gardant les anciens succès et en effaçant les
+ * anciens oublis.
+ */
+export function countableShootings<T extends BudgetLine>(
+  lines: readonly T[],
+  isSettledMonth: (performedOn: string) => boolean,
+): T[] {
+  return lines.filter((line) => !isShootingLine(line.serviceKey) || !isSettledMonth(line.performedOn));
+}
+
 export function shootingTally(
   lines: readonly (BudgetLine & { forfaitIncluded?: boolean | null })[],
 ): ShootingTally {

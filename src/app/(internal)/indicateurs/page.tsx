@@ -1,7 +1,16 @@
 import Link from "next/link";
 import { denyCommercial } from "@/lib/internal/authorization";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
-import { budgetPenalty, budgetSummary, parseCustomMonthly, parseShootingPlan, shootingTally, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
+import {
+  budgetPenalty,
+  budgetSummary,
+  countableShootings,
+  parseCustomMonthly,
+  parseShootingPlan,
+  shootingTally,
+  type BillingMode,
+  type BudgetLine,
+} from "@/lib/domain/budget";
 import { healthActions, healthScore, HEALTH_TARGET, type HealthAction, type HealthPillar } from "@/lib/domain/health-score";
 import { clientLifecycle, todayInParis } from "@/lib/domain/client-lifecycle";
 import type { MonthlyCadence } from "@/lib/domain/planning";
@@ -41,11 +50,22 @@ async function budgetHealth(
   if (!isAdmin) return { withIssue: 0, total: 0, shootingsCategorised: 0, shootingsTotal: 0 };
 
   const today = todayInParis();
-  const [{ data: clients }, { data: budgets }, { data: lines }] = await Promise.all([
+  const [{ data: clients }, { data: budgets }, { data: lines }, { data: invoices }] = await Promise.all([
     supabase.from("clients").select("id, notes, is_active, contract_start_date, contract_end_date, pause_start_date, pause_end_date").eq("is_active", true),
     supabase.from("client_budgets").select("client_id, billing_mode, budget_cents"),
     supabase.from("client_budget_lines").select("client_id, service_key, label, billing, unit_price_cents, quantity, months, performed_on, billed_directly, forfait_included"),
+    supabase.from("client_invoices").select("client_id, period_month, status"),
   ]);
+
+  /*
+   * Mois dont la facture est partie. Un shooting qui s'y rattache n'est plus
+   * classable : le requalifier changerait un montant déjà transmis.
+   */
+  const settledMonths = new Set(
+    (invoices ?? [])
+      .filter((row) => row.status === "faite" || row.status === "prelevement_programme")
+      .map((row) => `${row.client_id as string}|${String(row.period_month).slice(0, 7)}`),
+  );
 
   const managed = (clients ?? []).filter((client) => clientLifecycle({
     isActive: client.is_active as boolean,
@@ -97,7 +117,11 @@ async function budgetHealth(
    * compris au forfait ou vendu en plus, il n'est ni facturé ni écarté : c'est
    * exactement le trou par lequel une prestation part sans facture.
    */
-  const tally = shootingTally([...linesByClient.values()].flat());
+  const tally = shootingTally(
+    [...linesByClient.entries()].flatMap(([clientId, clientLines]) =>
+      countableShootings(clientLines, (performedOn) =>
+        settledMonths.has(`${clientId}|${performedOn.slice(0, 7)}`))),
+  );
   const shootingsTotal = tally.included + tally.extra + tally.pending;
 
   return {
