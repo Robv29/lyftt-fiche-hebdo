@@ -53,6 +53,8 @@ export default async function ShootingsPage() {
           leadName: entry.details?.leadName ?? null,
           durationMinutes: entry.details?.durationMinutes ?? null,
           deliveryDays: entry.details?.deliveryDays ?? null,
+          deliveredOn: entry.details?.deliveredOn ?? null,
+          assetsCount: entry.details?.assetsCount ?? null,
         }))}
         clients={clients.map((client) => ({ id: client.id, name: client.name }))}
       />

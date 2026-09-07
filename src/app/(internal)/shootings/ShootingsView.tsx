@@ -10,6 +10,7 @@ import {
   shootingStats,
   shootingsByKind,
   shootingsPerMonth,
+  onTimeRate,
   type ShootingKind,
   type ShootingStatus,
 } from "@/lib/domain/shootings";
@@ -26,6 +27,8 @@ export interface ShootingRow {
   leadName: string | null;
   durationMinutes: number | null;
   deliveryDays: number | null;
+  deliveredOn: string | null;
+  assetsCount: number | null;
 }
 
 const STATUS_STYLE: Record<ShootingStatus, string> = {
@@ -65,6 +68,7 @@ export function ShootingsView({
   }), [shootings, clientId, status, kind, from, to]);
 
   const stats = useMemo(() => shootingStats(shown), [shown]);
+  const punctuality = useMemo(() => onTimeRate(stats), [stats]);
   const perMonth = useMemo(() => shootingsPerMonth(shown), [shown]);
   const byKind = useMemo(() => shootingsByKind(shown), [shown]);
   const peak = Math.max(1, ...perMonth.map((entry) => entry.count));
@@ -72,9 +76,10 @@ export function ShootingsView({
 
   return (
     <div className="space-y-6">
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <Kpi label="Shootings réalisés" value={String(stats.done)} />
         <Kpi label="À venir" value={String(stats.upcoming)} />
+        <Kpi label="Contenus livrés" value={String(stats.assets)} />
         <Kpi
           label="Durée moyenne"
           value={formatDuration(stats.averageMinutes)}
@@ -87,6 +92,18 @@ export function ShootingsView({
             : null}
         />
         <Kpi label="Durée totale" value={formatDuration(stats.totalMinutes)} />
+        {/*
+          Sans délai promis ni date de livraison, il n'y a rien à mesurer :
+          afficher « 0 % à temps » se lirait comme une catastrophe, alors que
+          c'est une absence d'information.
+        */}
+        <Kpi
+          label="Livraisons à temps"
+          value={punctuality === null ? "—" : `${punctuality} %`}
+          detail={stats.measuredDeliveries === 0
+            ? "Aucune livraison datée"
+            : `sur ${stats.measuredDeliveries} livraison${stats.measuredDeliveries > 1 ? "s" : ""} mesurée${stats.measuredDeliveries > 1 ? "s" : ""}`}
+        />
       </section>
 
       <section className="rounded-2xl border border-line bg-white shadow-sm">
@@ -154,8 +171,12 @@ export function ShootingsView({
                 <span className="shrink-0 text-xs text-ink-faint">
                   {formatDuration(shooting.durationMinutes)}
                 </span>
-                <Link href={`/budget/${shooting.clientId}`} className="shrink-0 text-xs font-semibold text-accent hover:underline">
-                  Ouvrir
+                {/*
+                  La fiche du shooting, pas le budget : cet onglet est fait pour
+                  la production, et le budget lui est fermé par la RLS.
+                */}
+                <Link href={`/shootings/${shooting.lineId}`} className="shrink-0 text-xs font-semibold text-accent hover:underline">
+                  Ouvrir la fiche
                 </Link>
               </li>
             ))}

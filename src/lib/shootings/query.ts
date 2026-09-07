@@ -61,6 +61,8 @@ export interface ShootingDetails {
   leadName: string | null;
   durationMinutes: number | null;
   deliveryDays: number | null;
+  deliveredOn: string | null;
+  assetsCount: number | null;
   cancelled: boolean;
 }
 
@@ -111,7 +113,7 @@ export async function readShootings(
       .in("client_id", ids),
     admin
       .from("shootings")
-      .select("budget_line_id, name, kind, place, lead_name, duration_minutes, delivery_days, cancelled")
+      .select("budget_line_id, name, kind, place, lead_name, duration_minutes, delivery_days, delivered_on, assets_count, cancelled")
       .in("client_id", ids),
   ]);
 
@@ -124,6 +126,8 @@ export async function readShootings(
       leadName: (row.lead_name as string | null) ?? null,
       durationMinutes: (row.duration_minutes as number | null) ?? null,
       deliveryDays: (row.delivery_days as number | null) ?? null,
+      deliveredOn: (row.delivered_on as string | null) ?? null,
+      assetsCount: (row.assets_count as number | null) ?? null,
       cancelled: Boolean(row.cancelled),
     });
   }

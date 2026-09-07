@@ -5,6 +5,8 @@ import {
   shootingStats,
   shootingsByKind,
   shootingsPerMonth,
+  deliveryDueOn,
+  onTimeRate,
   type CountedShooting,
 } from "@/lib/domain/shootings";
 
@@ -119,5 +121,53 @@ describe("répartitions", () => {
     ]);
     expect(counts).toEqual({ photo: 2, video: 1, photo_video: 0 });
     expect(unknown).toBe(1);
+  });
+});
+
+describe("livraison et assets", () => {
+  it("compte une livraison faite le jour de l'échéance comme tenue", () => {
+    // 12 janvier + 3 jours = 15 janvier. Livrer le 15 tient la promesse.
+    const stats = shootingStats([
+      s({ date: "2026-01-12", deliveryDays: 3, deliveredOn: "2026-01-15" }),
+    ]);
+    expect(stats).toMatchObject({ measuredDeliveries: 1, onTime: 1 });
+    expect(onTimeRate(stats)).toBe(100);
+  });
+
+  it("compte un jour de retard comme un retard", () => {
+    const stats = shootingStats([
+      s({ date: "2026-01-12", deliveryDays: 3, deliveredOn: "2026-01-16" }),
+    ]);
+    expect(stats).toMatchObject({ measuredDeliveries: 1, onTime: 0 });
+    expect(onTimeRate(stats)).toBe(0);
+  });
+
+  it("n'invente pas un retard quand la livraison n'est pas mesurable", () => {
+    /*
+     * Sans délai promis il n'y a rien à tenir ; sans date de livraison, rien à
+     * comparer. Les compter comme des retards fabriquerait un échec.
+     */
+    const stats = shootingStats([
+      s({ date: "2026-01-12", deliveryDays: 3 }),
+      s({ date: "2026-02-12", deliveredOn: "2026-02-14" }),
+      s({ date: "2026-03-12" }),
+    ]);
+    expect(stats.measuredDeliveries).toBe(0);
+    expect(onTimeRate(stats)).toBeNull();
+  });
+
+  it("franchit les fins de mois dans le calcul de l'échéance", () => {
+    expect(deliveryDueOn("2026-01-30", 3)).toBe("2026-02-02");
+    expect(deliveryDueOn("2026-12-30", 5)).toBe("2027-01-04");
+  });
+
+  it("cumule les assets des seuls shootings réalisés", () => {
+    const stats = shootingStats([
+      s({ date: "2026-01-10", assetsCount: 24 }),
+      s({ date: "2026-02-10", assetsCount: 18 }),
+      s({ date: "2026-12-10", status: "cale", assetsCount: 99 }),
+      s({ date: "2026-03-10", status: "annule", assetsCount: 99 }),
+    ]);
+    expect(stats.assets).toBe(42);
   });
 });
