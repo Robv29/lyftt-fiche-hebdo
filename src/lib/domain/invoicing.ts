@@ -74,7 +74,12 @@ export function monthLabel(month: string): string {
  * comptable qui est décalé, pas la trace de ce qui a été fait.
  */
 export function invoiceMonthFor(
-  line: BudgetLine,
+  /*
+   * Seule la date d'exécution entre dans la règle. La signature le dit, pour
+   * que la suppression d'une facture puisse appeler exactement le même calcul
+   * que son affichage sans avoir à reconstruire une ligne entière.
+   */
+  line: { performedOn: string },
   contractStartDate: string | null,
   statuses: Record<string, InvoiceStatus>,
 ): string {

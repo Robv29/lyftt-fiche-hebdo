@@ -9,7 +9,6 @@ import {
   SERVICE_CATALOGUE,
   isCustomService,
   classifyShootings,
-  findService,
   formatEuros,
   isManagementMonth,
   isShootingLine,
@@ -23,6 +22,8 @@ import {
   type BudgetSummary,
   type ServiceDefinition,
   type ShootingPlan,
+  shootingLinePriceCents,
+  totalCents,
 } from "@/lib/domain/budget";
 import type { MonthlyCadence } from "@/lib/domain/planning";
 import {
@@ -512,7 +513,16 @@ export function BudgetEditor({
           <section className="card overflow-hidden">
             <header className="flex items-center justify-between gap-3 border-b p-5">
               <h2 className="font-semibold">{financed ? "L’addition" : "Toutes les prestations"}</h2>
-              <strong className="text-sm">{formatEuros(summary.lineCents)}</strong>
+              {/*
+                `lineCents` compte ce qui est pris sur l'enveloppe : chez un
+                client comptant, il n'y a pas d'enveloppe, donc ce total valait
+                zéro pendant que les lignes en dessous faisaient des milliers
+                d'euros. Le seul écran où l'on regarde l'argent de ce client
+                annonçait « rien vendu ». On additionne ici ce qui est affiché.
+              */}
+              <strong className="text-sm">
+                {formatEuros(financed ? summary.lineCents : totalCents(lines))}
+              </strong>
             </header>
             {lines.length === 0 ? (
               <p className="px-4 py-8 text-center text-sm text-ink-faint">
@@ -857,7 +867,13 @@ function ShootingPanel({
                     disabled={pending}
                     onClick={() => onDecide(line.id, false)}
                   >
-                    Supplémentaire — {formatEuros(findService(line.serviceKey)?.unitPriceCents ?? 0)} à facturer
+                    {/*
+                      Le tarif vient du forfait vendu, pas de la clé de la
+                      ligne : une date calée porte `shooting_forfait`, absente
+                      du catalogue, et le bouton annonçait « 0 € à facturer »
+                      sur une prestation de 450 €.
+                    */}
+                    Supplémentaire — {formatEuros(shootingLinePriceCents(line.serviceKey, shooting) ?? 0)} à facturer
                   </button>
                 </div>
               </li>

@@ -7,7 +7,17 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sanitizeText } from "@/lib/security/sanitize";
 import { checkAttachment, safeFileName } from "@/lib/security/attachments";
 import { logRibAccess } from "@/lib/internal/rib-audit";
-import { addMonths, findService, isCustomService, formatEuros, isShootingLine, MANAGEMENT_MONTH_KEY, SHOOTING_FORFAIT_KEY } from "@/lib/domain/budget";
+import { invoiceMonthFor } from "@/lib/domain/invoicing";
+import {
+  findService,
+  isCustomService,
+  formatEuros,
+  isShootingLine,
+  parseShootingPlan,
+  shootingLinePriceCents,
+  MANAGEMENT_MONTH_KEY,
+  SHOOTING_FORFAIT_KEY,
+} from "@/lib/domain/budget";
 
 export interface BudgetActionResult {
   ok: boolean;
@@ -328,24 +338,60 @@ export async function deleteMonthInvoice(
     };
   }
 
-  // Bornes du mois : du premier jour inclus au premier jour du mois suivant.
-  const nextMonth = addMonths(parsed.data.periodMonth, 1);
-
   /*
-   * Les mois de gestion et les shootings du forfait survivent à la suppression :
-   * les premiers ont bien été produits, et les seconds ne sont pas une prestation
-   * facturée mais la trace d'une date — c'est d'elle que se déduit l'échéance du
-   * shooting suivant. Les effacer décalerait tout le cycle de planification.
+   * On retire exactement ce que la facture contient — ni plus, ni moins.
+   *
+   * La suppression bornait sur `performed_on`, alors que la facture se compose
+   * avec `invoiceMonthFor` : une prestation notée avant le début de gestion est
+   * reportée sur le mois de démarrage. Les deux règles divergeaient dans les
+   * deux sens. Une prestation reportée AILLEURS était effacée avec ce mois-ci
+   * alors qu'elle n'y figurait pas ; une prestation reportée ICI y survivait,
+   * et la facture « supprimée » se reformait à l'identique au rechargement.
+   *
+   * Une seule règle décide donc de la composition d'une facture, à l'écran
+   * comme à la suppression.
    */
-  const { error, count } = await supabase
-    .from("client_budget_lines")
-    .delete({ count: "exact" })
-    .eq("client_id", parsed.data.clientId)
-    .not("service_key", "in", `(${MANAGEMENT_MONTH_KEY},${SHOOTING_FORFAIT_KEY})`)
-    .gte("performed_on", parsed.data.periodMonth)
-    .lt("performed_on", nextMonth);
+  const [{ data: candidates }, { data: client }, { data: invoices }] = await Promise.all([
+    supabase
+      .from("client_budget_lines")
+      .select("id, performed_on")
+      .eq("client_id", parsed.data.clientId)
+      .not("service_key", "in", `(${MANAGEMENT_MONTH_KEY},${SHOOTING_FORFAIT_KEY})`),
+    supabase
+      .from("clients")
+      .select("contract_start_date")
+      .eq("id", parsed.data.clientId)
+      .maybeSingle(),
+    supabase
+      .from("client_invoices")
+      .select("period_month, status")
+      .eq("client_id", parsed.data.clientId),
+  ]);
 
-  if (error) return { ok: false, message: `Suppression impossible : ${error.message}` };
+  const statuses = Object.fromEntries(
+    (invoices ?? []).map((row) => [
+      String(row.period_month).slice(0, 7),
+      row.status as "a_faire" | "faite" | "prelevement_programme",
+    ]),
+  );
+
+  const targets = (candidates ?? [])
+    .filter((row) => invoiceMonthFor(
+      { performedOn: row.performed_on as string },
+      (client?.contract_start_date as string | null) ?? null,
+      statuses,
+    ) === parsed.data.periodMonth.slice(0, 7))
+    .map((row) => row.id as string);
+
+  let count = 0;
+  if (targets.length > 0) {
+    const { error, count: removed } = await supabase
+      .from("client_budget_lines")
+      .delete({ count: "exact" })
+      .in("id", targets);
+    if (error) return { ok: false, message: `Suppression impossible : ${error.message}` };
+    count = removed ?? 0;
+  }
 
   await supabase
     .from("client_invoices")
@@ -568,13 +614,39 @@ export async function setShootingBilling(
    * Le prix suit la décision : compris dans le forfait, la ligne ne consomme
    * rien ; vendue en plus, elle reprend le tarif du catalogue. Sans cela, la
    * case cochée et le montant facturé pourraient se contredire.
+   *
+   * Le tarif ne se lit pas sur la clé de la ligne. Une date calée porte
+   * `shooting_forfait`, qui n'est pas une prestation du catalogue : la chercher
+   * renvoyait zéro, et requalifier le shooting en « vendu en plus » l'inscrivait
+   * à 0 € — en affichant « 0 € à facturer », donc en offrant 225, 450 ou 850 €
+   * selon le forfait. C'est celui du client qui donne le prix.
    */
-  const catalogPrice = findService(line.service_key as string)?.unitPriceCents ?? 0;
+  const { data: owner } = await supabase
+    .from("clients")
+    .select("notes")
+    .eq("id", parsed.data.clientId)
+    .maybeSingle();
+
+  const catalogPrice = shootingLinePriceCents(
+    line.service_key as string,
+    parseShootingPlan(readShootingPlan(owner?.notes as string | null)),
+  );
+
+  /*
+   * Sans tarif établi, on refuse : écrire zéro se lirait comme une décision
+   * de ne rien facturer, alors que c'est une information manquante.
+   */
+  if (!parsed.data.included && (catalogPrice === null || catalogPrice <= 0)) {
+    return {
+      ok: false,
+      message: "Tarif du shooting introuvable : renseignez le forfait shooting dans la fiche client.",
+    };
+  }
   const { error } = await supabase
     .from("client_budget_lines")
     .update({
       forfait_included: parsed.data.included,
-      unit_price_cents: parsed.data.included ? 0 : catalogPrice,
+      unit_price_cents: parsed.data.included ? 0 : catalogPrice!,
     })
     .eq("id", parsed.data.lineId);
 
@@ -587,6 +659,17 @@ export async function setShootingBilling(
     ok: true,
     message: parsed.data.included
       ? "Shooting compris dans le forfait : inscrit à 0 €."
-      : `Shooting supplémentaire : ${formatEuros(catalogPrice)} à facturer.`,
+      : `Shooting supplémentaire : ${formatEuros(catalogPrice!)} à facturer.`,
   };
+}
+
+
+/** Forfait shooting brut, tel qu'il est rangé dans les réglages du client. */
+function readShootingPlan(notes: string | null): unknown {
+  try {
+    const settings = typeof notes === "string" ? JSON.parse(notes) : {};
+    return settings?.shootingPlan;
+  } catch {
+    return null;
+  }
 }

@@ -53,7 +53,16 @@ export async function syncManagementMonths(
     monthlyCostCents,
     today,
   });
-  if (expected.length === 0) return 0;
+  /*
+   * Sans date de début, rien n'est calculable : on ne retire rien.
+   *
+   * La sortie portait auparavant sur « aucun mois attendu », ce qui court-
+   * circuitait la réconciliation dans le cas même où elle sert le plus :
+   * repousser la date de début rendait tous les mois déjà inscrits caducs, et
+   * ils restaient facturés. Une gestion qui n'a pas commencé n'a pas de mois
+   * dus — mais elle peut en avoir d'inscrits à tort, et il faut les enlever.
+   */
+  if (!client.contractStartDate) return 0;
 
   const [{ data: existing }, { data: settled }] = await Promise.all([
     supabase

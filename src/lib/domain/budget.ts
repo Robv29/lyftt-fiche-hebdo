@@ -507,6 +507,31 @@ export const SHOOTING_LINE_KEYS: readonly string[] = [
   ...SHOOTING_PLAN_SERVICES,
 ];
 
+/**
+ * Tarif catalogue d'une ligne de shooting.
+ *
+ * `shooting_forfait` n'est pas une prestation du catalogue : c'est la trace
+ * d'une date calée, dont le tarif réel dépend du forfait vendu au client. Le
+ * chercher au catalogue renvoyait `undefined`, donc zéro — et requalifier un
+ * shooting en « vendu en plus » l'inscrivait à 0 €, en annonçant à l'écran
+ * qu'il était facturé. Le forfait du client est donc indispensable ici.
+ *
+ * Renvoie `null` quand le prix ne peut pas être établi, pour que l'appelant
+ * refuse plutôt que d'écrire un zéro qui passe pour une décision.
+ */
+export function shootingLinePriceCents(
+  serviceKey: string,
+  plan: ShootingPlan | null,
+): number | null {
+  if (!isShootingLine(serviceKey)) return null;
+
+  const key = serviceKey === SHOOTING_FORFAIT_KEY ? plan?.serviceKey : serviceKey;
+  if (!key) return null;
+
+  const price = findService(key)?.unitPriceCents;
+  return typeof price === "number" ? price : null;
+}
+
 export function shootingMonthlyCostCents(plan: ShootingPlan | null): number {
   if (!plan || !Number.isInteger(plan.everyMonths) || plan.everyMonths < 1) return 0;
   const price = findService(plan.serviceKey)?.unitPriceCents ?? 0;
@@ -621,8 +646,18 @@ export function monthsRemainingToBill(input: {
     return monthsBetween(input.today, input.contractEndDate);
   }
 
-  let count = 0;
-  // Les échéances tombent le 1er de chaque mois, comme la facturation.
+  /*
+   * Le mois de démarrage est une échéance comme les autres.
+   *
+   * La boucle partait du 1er du mois suivant, ce qui convient tant que la
+   * gestion a commencé. Mais pour un contrat signé et pas encore démarré, la
+   * première échéance — celle du jour de départ, au prorata — restait hors du
+   * compte : la projection perdait un mois entier, et le rythme conseillé
+   * s'en trouvait surévalué d'environ 9 %.
+   */
+  let count = input.contractStartDate > input.today
+    && input.contractStartDate <= input.contractEndDate ? 1 : 0;
+  // Les échéances suivantes tombent le 1er de chaque mois, comme la facturation.
   let dueOn = firstOfNextMonth(input.contractStartDate);
   for (let index = 1; index <= 120; index += 1) {
     if (dueOn > input.contractEndDate) break;
@@ -906,12 +941,21 @@ export function budgetSummary(input: BudgetInput): BudgetSummary {
           + `${formatDay(input.contractEndDate)}. Ce reliquat est perdu : ajoutez des `
           + `prestations, ou montez le rythme à ${formatEuros(targetMonthlyCents)} par mois.`,
       });
-    } else {
+    } else if (remainingCents >= 0) {
+      /*
+       * L'écart annoncé était un zéro littéral, quel que soit l'écart réel :
+       * l'alerte disait « à 0 € près » sur un reliquat de plusieurs centaines
+       * d'euros, tant qu'il tenait dans la tolérance.
+       *
+       * Et elle s'affichait même sur une enveloppe déjà dépassée, à côté de
+       * l'alerte « Budget dépassé » : le même écran annonçait la casse et la
+       * bonne santé. Un budget dans le rouge n'a pas de trajectoire cohérente.
+       */
       alerts.push({
         level: "info",
         title: "Trajectoire cohérente",
         detail:
-          `Le rythme actuel consomme le budget à ${formatEuros(0)} près d'ici le `
+          `Le rythme actuel consomme le budget à ${formatEuros(Math.abs(gap))} près d'ici le `
           + `${formatDay(input.contractEndDate)}.`,
       });
     }

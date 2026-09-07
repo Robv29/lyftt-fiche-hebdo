@@ -30,6 +30,7 @@ import {
   shootingsPerYear,
   totalCents,
   type BudgetLine,
+  shootingLinePriceCents,
 } from "@/lib/domain/budget";
 
 const today = "2026-08-10";
@@ -1003,5 +1004,96 @@ describe("prestation sur mesure mensuelle", () => {
   it("laisse le coût inchangé quand il n'y a pas de prestation", () => {
     const cadence = { photo: 4, video: 4 };
     expect(cadenceMonthlyCostCents(cadence, null, null)).toBe(cadenceMonthlyCostCents(cadence));
+  });
+});
+
+describe("tarif d'une ligne de shooting", () => {
+  const forfaitDemi = { serviceKey: "shooting_demi" as const, everyMonths: 3 };
+
+  it("prend le tarif du forfait vendu pour une date calée", () => {
+    /*
+     * `shooting_forfait` n'est pas au catalogue : le chercher renvoyait zéro,
+     * et requalifier le shooting en « vendu en plus » l'offrait au client.
+     */
+    expect(shootingLinePriceCents("shooting_forfait", forfaitDemi)).toBe(45_000);
+    expect(shootingLinePriceCents("shooting_forfait", { serviceKey: "shooting_jour", everyMonths: 6 }))
+      .toBe(85_000);
+    expect(shootingLinePriceCents("shooting_forfait", { serviceKey: "shooting_express", everyMonths: 1 }))
+      .toBe(22_500);
+  });
+
+  it("prend le catalogue quand la ligne porte déjà une vraie prestation", () => {
+    expect(shootingLinePriceCents("shooting_demi", null)).toBe(45_000);
+    expect(shootingLinePriceCents("shooting_jour", forfaitDemi)).toBe(85_000);
+  });
+
+  it("refuse de deviner un prix plutôt que d'inscrire zéro", () => {
+    // Date calée sans forfait vendu : aucun tarif ne s'en déduit.
+    expect(shootingLinePriceCents("shooting_forfait", null)).toBeNull();
+    // Ligne qui n'est pas un shooting.
+    expect(shootingLinePriceCents("post_photo", forfaitDemi)).toBeNull();
+  });
+});
+
+describe("mois de gestion devenus caducs", () => {
+  it("rend caducs tous les mois quand la gestion n'a pas encore commencé", () => {
+    /*
+     * Repousser la date de début rend caducs les mois déjà inscrits. C'est le
+     * cas où la réconciliation sert le plus, et c'était précisément celui
+     * qu'une sortie anticipée empêchait d'atteindre.
+     */
+    const result = reconcileManagementMonths(
+      [],
+      [
+        { id: "a", performedOn: "2026-03-01", amountCents: 35_000 },
+        { id: "b", performedOn: "2026-04-01", amountCents: 35_000 },
+      ],
+    );
+    expect(result.staleIds.sort()).toEqual(["a", "b"]);
+    expect(result.toInsert).toEqual([]);
+    expect(result.toUpdate).toEqual([]);
+  });
+
+  it("garde les mois déjà facturés même devenus caducs", () => {
+    const result = reconcileManagementMonths(
+      [],
+      [
+        { id: "preleve", performedOn: "2026-03-01", amountCents: 35_000 },
+        { id: "ouvert", performedOn: "2026-04-01", amountCents: 35_000 },
+      ],
+      { lockedMonths: ["2026-03-01"] },
+    );
+    expect(result.staleIds).toEqual(["ouvert"]);
+  });
+});
+
+describe("échéances restantes d'un contrat", () => {
+  it("compte le mois de démarrage d'une gestion pas encore commencée", () => {
+    /*
+     * La boucle partait du 1er du mois suivant : pour un contrat signé et pas
+     * encore démarré, la première échéance — celle du jour de départ —
+     * manquait, et la projection perdait un mois entier.
+     */
+    expect(monthsRemainingToBill({
+      contractStartDate: "2026-10-15",
+      contractEndDate: "2026-12-31",
+      today: "2026-09-07",
+    })).toBe(3); // 15 oct., 1er nov., 1er déc.
+  });
+
+  it("ne compte pas deux fois le mois en cours d'une gestion démarrée", () => {
+    expect(monthsRemainingToBill({
+      contractStartDate: "2026-08-11",
+      contractEndDate: "2026-11-30",
+      today: "2026-08-20",
+    })).toBe(3); // 1er sept., 1er oct., 1er nov.
+  });
+
+  it("ignore un démarrage postérieur à la fin de gestion", () => {
+    expect(monthsRemainingToBill({
+      contractStartDate: "2027-01-05",
+      contractEndDate: "2026-12-31",
+      today: "2026-09-07",
+    })).toBe(0);
   });
 });
