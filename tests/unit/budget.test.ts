@@ -1136,3 +1136,59 @@ describe("forfait de base négocié", () => {
     expect(parseBaseFee(-100)).toBeNull();
   });
 });
+
+describe("pause de gestion", () => {
+  const base = {
+    contractStartDate: "2026-01-05",
+    contractEndDate: "2026-06-30",
+    monthlyCostCents: 35_000,
+    today: "2026-06-30",
+  };
+
+  it("ne facture pas les mois couverts par la pause", () => {
+    /*
+     * Rien n'est produit pendant une pause : facturer plein tarif était
+     * d'autant plus invisible que l'écran budget masque justement le client
+     * pendant ce temps.
+     */
+    const mois = dueManagementMonths({
+      ...base, pauseStartDate: "2026-03-01", pauseEndDate: "2026-04-30",
+    });
+    expect(mois.map((m) => m.dueOn)).toEqual(["2026-01-05", "2026-02-01", "2026-05-01", "2026-06-01"]);
+  });
+
+  it("garde le rang du mois, qui compte la relation et non la facturation", () => {
+    const mois = dueManagementMonths({
+      ...base, pauseStartDate: "2026-03-01", pauseEndDate: "2026-04-30",
+    });
+    // Mai reste le cinquième mois de la relation, pas le troisième facturé.
+    expect(mois.find((m) => m.dueOn === "2026-05-01")?.index).toBe(5);
+  });
+
+  it("suspend le premier mois si la gestion démarre pendant une pause", () => {
+    expect(dueManagementMonths({
+      ...base, contractStartDate: "2026-03-10",
+      pauseStartDate: "2026-03-01", pauseEndDate: "2026-03-31",
+    }).map((m) => m.dueOn)).toEqual(["2026-04-01", "2026-05-01", "2026-06-01"]);
+  });
+
+  it("suspend indéfiniment une pause sans date de reprise", () => {
+    // Tant qu'on n'a pas dit quand le client reprend, on ne lui facture rien.
+    expect(dueManagementMonths({
+      ...base, pauseStartDate: "2026-03-01", pauseEndDate: null,
+    }).map((m) => m.dueOn)).toEqual(["2026-01-05", "2026-02-01"]);
+  });
+
+  it("facture normalement sans pause déclarée", () => {
+    expect(dueManagementMonths(base)).toEqual(
+      dueManagementMonths({ ...base, pauseStartDate: null, pauseEndDate: null }),
+    );
+  });
+
+  it("reprend la facturation le mois suivant la fin de pause, bornes incluses", () => {
+    // Pause du 1er au 30 avril : avril sauté, mai facturé.
+    expect(dueManagementMonths({
+      ...base, pauseStartDate: "2026-04-01", pauseEndDate: "2026-04-30",
+    }).map((m) => m.dueOn)).toEqual(["2026-01-05", "2026-02-01", "2026-03-01", "2026-05-01", "2026-06-01"]);
+  });
+});

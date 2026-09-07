@@ -1,7 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { requestShooting, type ShootingActionResult } from "./actions";
 import {
   SHOOTING_KIND_LABELS,
   SHOOTING_STATUS_LABELS,
@@ -53,6 +55,10 @@ export function ShootingsView({
   shootings: ShootingRow[];
   clients: { id: string; name: string }[];
 }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [asking, setAsking] = useState(false);
+  const [feedback, setFeedback] = useState<ShootingActionResult | null>(null);
   const [clientId, setClientId] = useState("");
   const [status, setStatus] = useState("");
   const [kind, setKind] = useState("");
@@ -76,6 +82,64 @@ export function ShootingsView({
 
   return (
     <div className="space-y-6">
+      {/*
+        Demander un shooting ne crée pas de shooting : cela passe par les
+        tickets clients, où le chef de projet accuse réception. Créer une date
+        ici sans qu'il l'ait validée aurait mis deux personnes en désaccord sur
+        un tournage à organiser.
+      */}
+      <section className="rounded-2xl border border-line bg-white p-4 shadow-sm">
+        {feedback?.message && (
+          <p className={`mb-3 rounded-xl border px-4 py-3 text-sm ${
+            feedback.ok
+              ? "border-state-approved/30 bg-state-approved/5 text-state-approved"
+              : "border-state-changes/30 bg-state-changes/5 text-state-changes"
+          }`}>
+            {feedback.message}
+          </p>
+        )}
+        {asking ? (
+          <form
+            action={(formData) => startTransition(async () => {
+              const result = await requestShooting(formData);
+              setFeedback(result);
+              if (result.ok) { setAsking(false); router.refresh(); }
+            })}
+            className="grid gap-3 sm:grid-cols-[220px_minmax(0,1fr)_auto] sm:items-end"
+          >
+            <Field label="Client">
+              <select name="clientId" required className="field bg-white" defaultValue={clientId}>
+                <option value="">Choisir…</option>
+                {clients.map((client) => (
+                  <option key={client.id} value={client.id}>{client.name}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Ce qui est demandé">
+              <input name="note" required maxLength={2000} className="field bg-white"
+                placeholder="Tournage produits, prévoir une demi-journée en boutique"/>
+            </Field>
+            <div className="flex gap-2">
+              <button type="submit" className="btn-primary" disabled={pending}>
+                {pending ? "Envoi…" : "Envoyer"}
+              </button>
+              <button type="button" className="btn-secondary" onClick={() => setAsking(false)}>
+                Annuler
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-ink-soft">
+              Un shooting à organiser&nbsp;? La demande part au chef de projet, qui en accuse réception.
+            </p>
+            <button type="button" className="btn-primary" onClick={() => { setAsking(true); setFeedback(null); }}>
+              Demander un shooting
+            </button>
+          </div>
+        )}
+      </section>
+
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <Kpi label="Shootings réalisés" value={String(stats.done)} />
         <Kpi label="À venir" value={String(stats.upcoming)} />

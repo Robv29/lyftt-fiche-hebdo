@@ -42,6 +42,9 @@ export async function syncManagementMonths(
     customMonthly?: CustomMonthlyService | null;
     /** Forfait de base négocié, s'il diffère du tarif courant. */
     baseFeeCents?: number | null;
+    /** Pause de gestion : les mois qu'elle couvre ne sont pas facturés. */
+    pauseStartDate?: string | null;
+    pauseEndDate?: string | null;
   },
   today: string = todayInParis(),
 ): Promise<number> {
@@ -56,6 +59,8 @@ export async function syncManagementMonths(
     contractEndDate: client.contractEndDate,
     monthlyCostCents,
     today,
+    pauseStartDate: client.pauseStartDate ?? null,
+    pauseEndDate: client.pauseEndDate ?? null,
   });
   /*
    * Sans date de début, rien n'est calculable : on ne retire rien.

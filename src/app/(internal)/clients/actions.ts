@@ -467,7 +467,7 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
   const admin = createSupabaseAdminClient();
   const { data: current } = await admin
     .from("clients")
-    .select("id, notes, logo_url, latitude, contract_start_date, contract_end_date, client_contacts ( id, is_primary )")
+    .select("id, notes, logo_url, latitude, contract_start_date, contract_end_date, pause_start_date, pause_end_date, client_contacts ( id, is_primary )")
     .eq("id", clientId.data)
     .maybeSingle();
   if (!current) return { ok: false, message: "Client introuvable." };
@@ -584,6 +584,8 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
     shooting: shootingPlanFromNotes(JSON.stringify(notes)),
     customMonthly: customMonthlyFromNotes(JSON.stringify(notes)),
     baseFeeCents: baseFeeFromNotes(JSON.stringify(notes)),
+    pauseStartDate: current.pause_start_date,
+    pauseEndDate: current.pause_end_date,
   });
 
   const resync = await rescheduleClientDrafts(admin, clientId.data, input.publicationWeekdays, {

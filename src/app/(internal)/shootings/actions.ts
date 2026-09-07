@@ -118,3 +118,88 @@ export async function saveShootingDetails(formData: FormData): Promise<ShootingA
   revalidatePath("/");
   return { ok: true, message: "Fiche enregistrée." };
 }
+
+
+const requestSchema = z.object({
+  clientId: z.string().uuid(),
+  note: z.string().trim().min(3, "Dites en deux mots ce qui est demandé.").max(2_000),
+});
+
+/**
+ * Demande de shooting adressée au chef de projet.
+ *
+ * Elle emprunte le circuit des tickets clients, qui sait déjà router, assigner
+ * et clore — plutôt qu'un mécanisme parallèle qui aurait tout redemandé. Le
+ * type `shooting_request` existait déjà pour les demandes venues du portail
+ * client ; celle-ci vient de l'équipe, ce que dit `created_by_type: staff`.
+ *
+ * Le chef de projet la ferme depuis l'écran des tickets, ce qui vaut accusé de
+ * réception : c'est exactement ce que fait `resolveServiceRequest`.
+ */
+export async function requestShooting(formData: FormData): Promise<ShootingActionResult> {
+  const profile = await getCurrentProfile();
+  if (!profile || !PRODUCING_ROLES.includes(profile.role)) {
+    return { ok: false, message: "Action réservée à l'équipe de production." };
+  }
+
+  const parsed = requestSchema.safeParse({
+    clientId: formData.get("clientId"),
+    note: formData.get("note"),
+  });
+  if (!parsed.success) {
+    return { ok: false, message: parsed.error.issues[0]?.message ?? "Demande invalide." };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const { data: client } = await supabase
+    .from("clients")
+    .select("id, name")
+    .eq("id", parsed.data.clientId)
+    .maybeSingle();
+  if (!client) return { ok: false, message: "Client introuvable ou accès refusé." };
+
+  /*
+   * Un ticket doit se rattacher à une fiche : c'est ce qui lui donne son
+   * contexte de semaine. Une demande de shooting ne porte sur aucune
+   * publication, on la rattache donc à la fiche la plus récente du client,
+   * comme le fait déjà le portail client pour ses demandes hors publication.
+   */
+  const { data: sheet } = await supabase
+    .from("weekly_sheets")
+    .select("id")
+    .eq("client_id", client.id)
+    .order("period_start", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!sheet) {
+    return {
+      ok: false,
+      message: "Ce client n'a encore aucune fiche : créez-en une avant de demander un shooting.",
+    };
+  }
+
+  const note = sanitizeText(parsed.data.note, 2_000);
+  const { error } = await createSupabaseAdminClient().from("client_tickets").insert({
+    client_id: client.id,
+    weekly_sheet_id: sheet.id as string,
+    weekly_sheet_item_id: null,
+    ticket_type: "shooting_request",
+    category: "scope",
+    title: `Demande de shooting — ${client.name}`,
+    description: note,
+    details: {},
+    priority: "normal",
+    status: "new",
+    created_by_type: "staff",
+    created_by_name: profile.full_name,
+  });
+
+  if (error) return { ok: false, message: `Demande non enregistrée : ${error.message}` };
+
+  revalidatePath("/retours");
+  revalidatePath("/shootings");
+  return {
+    ok: true,
+    message: "Demande envoyée au chef de projet. Elle apparaît dans les tickets clients.",
+  };
+}

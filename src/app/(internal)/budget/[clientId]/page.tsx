@@ -56,6 +56,8 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
       shooting: shootingPlanFromNotes(client.notes),
       customMonthly: customMonthlyFromNotes(client.notes),
       baseFeeCents: baseFeeFromNotes(client.notes),
+      pauseStartDate: client.pause_start_date,
+      pauseEndDate: client.pause_end_date,
     });
   }
 

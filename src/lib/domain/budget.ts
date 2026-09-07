@@ -375,8 +375,29 @@ export function dueManagementMonths(input: {
   contractEndDate: string | null;
   monthlyCostCents: number;
   today: string;
+  /*
+   * Pause de gestion. Rien n'est produit pendant, donc rien n'est facturé :
+   * l'application inscrivait le mois plein tarif, sur un écran budget qui
+   * venait précisément de masquer le client.
+   */
+  pauseStartDate?: string | null;
+  pauseEndDate?: string | null;
 }): ManagementMonth[] {
   if (!input.contractStartDate || input.monthlyCostCents <= 0) return [];
+
+  /*
+   * Un mois tombe dans la pause si sa date d'échéance y tombe. La pause est
+   * bornes incluses, comme partout ailleurs dans l'application — c'est déjà la
+   * règle de `clientLifecycle`, et deux définitions de « en pause » finiraient
+   * par se contredire.
+   *
+   * Une pause sans date de fin suspend indéfiniment : tant qu'on n'a pas dit
+   * quand le client reprend, on ne lui facture rien.
+   */
+  const paused = (dueOn: string) => {
+    if (!input.pauseStartDate || dueOn < input.pauseStartDate) return false;
+    return !input.pauseEndDate || dueOn <= input.pauseEndDate;
+  };
 
   const limit = input.contractEndDate && input.contractEndDate < input.today
     ? input.contractEndDate
@@ -385,7 +406,7 @@ export function dueManagementMonths(input: {
   const months: ManagementMonth[] = [];
   // Premier mois : entamé, donc au prorata, et daté du jour de départ.
   const firstFraction = monthStartFraction(input.contractStartDate);
-  if (input.contractStartDate <= limit) {
+  if (input.contractStartDate <= limit && !paused(input.contractStartDate)) {
     months.push({
       index: 1,
       dueOn: input.contractStartDate,
@@ -399,7 +420,14 @@ export function dueManagementMonths(input: {
   // Une gestion de plusieurs années reste bornée : 120 mois suffisent.
   for (let index = 2; index <= 120; index += 1) {
     if (dueOn > limit) break;
-    months.push({ index, dueOn, fraction: 1, amountCents: input.monthlyCostCents });
+    /*
+     * Le rang du mois continue d'avancer pendant la pause : « mois 7 » reste
+     * le septième mois de la relation, pas le septième mois facturé. Décaler
+     * le compteur rendrait les libellés incomparables d'un client à l'autre.
+     */
+    if (!paused(dueOn)) {
+      months.push({ index, dueOn, fraction: 1, amountCents: input.monthlyCostCents });
+    }
     dueOn = firstOfNextMonth(dueOn);
   }
   return months;

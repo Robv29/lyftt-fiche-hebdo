@@ -81,7 +81,7 @@ async function handle(request: NextRequest) {
   let managementMonths = 0;
   const { data: managed } = await admin
     .from("clients")
-    .select("id, notes, contract_start_date, contract_end_date")
+    .select("id, notes, contract_start_date, contract_end_date, pause_start_date, pause_end_date")
     .eq("is_active", true)
     .not("contract_start_date", "is", null);
 
@@ -101,6 +101,8 @@ async function handle(request: NextRequest) {
         shooting: shootingPlanFromNotes(client.notes),
         customMonthly: customMonthlyFromNotes(client.notes),
         baseFeeCents: baseFeeFromNotes(client.notes),
+        pauseStartDate: client.pause_start_date,
+        pauseEndDate: client.pause_end_date,
       });
     } catch (error) {
       // Un budget en échec ne doit pas empêcher la purge des médias.
