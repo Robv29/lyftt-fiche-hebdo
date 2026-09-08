@@ -10,6 +10,7 @@ import {
   shootingTally,
   type BillingMode,
   type BudgetLine,
+  SHOOTING_SCORING_FROM,
 } from "@/lib/domain/budget";
 import { healthActions, healthScore, HEALTH_TARGET, type HealthAction, type HealthPillar } from "@/lib/domain/health-score";
 import { clientLifecycle, todayInParis } from "@/lib/domain/client-lifecycle";
@@ -119,8 +120,12 @@ async function budgetHealth(
    */
   const tally = shootingTally(
     [...linesByClient.entries()].flatMap(([clientId, clientLines]) =>
-      countableShootings(clientLines, (performedOn) =>
-        settledMonths.has(`${clientId}|${performedOn.slice(0, 7)}`))),
+      countableShootings(clientLines, {
+        isSettledMonth: (performedOn) =>
+          settledMonths.has(`${clientId}|${performedOn.slice(0, 7)}`),
+        // La note ne juge que ce qui a été tourné depuis la bascule.
+        since: SHOOTING_SCORING_FROM,
+      })),
   );
   const shootingsTotal = tally.included + tally.extra + tally.pending;
 

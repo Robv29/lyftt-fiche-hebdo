@@ -1181,10 +1181,37 @@ export interface ShootingTally {
  */
 export function countableShootings<T extends BudgetLine>(
   lines: readonly T[],
-  isSettledMonth: (performedOn: string) => boolean,
+  options: {
+    isSettledMonth: (performedOn: string) => boolean;
+    /*
+     * Date à partir de laquelle le tri est noté. Ce qui a été tourné avant
+     * sort du calcul : le retard accumulé ne se rattrape pas en une fois, et
+     * une note qu'on ne peut pas remonter cesse d'être un objectif.
+     *
+     * Ces shootings restent listés dans l'onglet Shootings — ils portent de
+     * vraies prestations à facturer. C'est la note qui les ignore, pas
+     * l'application.
+     */
+    since?: string | null;
+  },
 ): T[] {
-  return lines.filter((line) => !isShootingLine(line.serviceKey) || !isSettledMonth(line.performedOn));
+  return lines.filter((line) => {
+    if (!isShootingLine(line.serviceKey)) return true;
+    if (options.isSettledMonth(line.performedOn)) return false;
+    if (options.since && line.performedOn < options.since) return false;
+    return true;
+  });
 }
+
+/**
+ * Premier jour où le tri des shootings compte dans la note.
+ *
+ * Fixé au jour où la règle a été posée, et non calculé par rapport à
+ * aujourd'hui : une fenêtre glissante ferait ressortir un shooting du calcul
+ * en vieillissant, et la note baisserait toute seule sans que personne n'ait
+ * rien fait.
+ */
+export const SHOOTING_SCORING_FROM = "2026-09-08";
 
 export function shootingTally(
   lines: readonly (BudgetLine & { forfaitIncluded?: boolean | null })[],

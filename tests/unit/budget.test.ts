@@ -1213,7 +1213,7 @@ describe("shootings encore classables", () => {
       shooting("2026-05-12", true),
       shooting("2026-09-03", null),
     ];
-    const restants = countableShootings(lignes, fige(["2026-05"]));
+    const restants = countableShootings(lignes, { isSettledMonth: fige(["2026-05"]) });
     expect(restants.map((l) => l.performedOn)).toEqual(["2026-09-03"]);
   });
 
@@ -1223,19 +1223,57 @@ describe("shootings encore classables", () => {
       unitPriceCents: 8_000, quantity: 1, months: null, performedOn: "2026-05-07",
       billedDirectly: false, forfaitIncluded: null,
     };
-    expect(countableShootings([autre], fige(["2026-05"]))).toHaveLength(1);
+    expect(countableShootings([autre], { isSettledMonth: fige(["2026-05"]) })).toHaveLength(1);
   });
 
   it("garde tout quand aucun mois n'est figé", () => {
     const lignes = [shooting("2026-05-07", null), shooting("2026-09-03", true)];
-    expect(countableShootings(lignes, () => false)).toHaveLength(2);
+    expect(countableShootings(lignes, { isSettledMonth: () => false })).toHaveLength(2);
   });
 
   it("rend une note vide plutôt que fausse quand tout est figé", () => {
     const tally = shootingTally(countableShootings(
       [shooting("2026-05-07", null), shooting("2026-05-12", true)],
-      fige(["2026-05"]),
+      { isSettledMonth: fige(["2026-05"]) },
     ));
     expect(tally).toMatchObject({ included: 0, extra: 0, pending: 0 });
+  });
+});
+
+describe("la note ne juge que les shootings à venir", () => {
+  const shooting = (performedOn: string, forfaitIncluded: boolean | null) => ({
+    id: "", serviceKey: "shooting_demi", label: "Shooting ½ journée",
+    billing: "ponctuel" as const, unitPriceCents: 45_000, quantity: 1, months: null,
+    performedOn, billedDirectly: false, forfaitIncluded,
+  });
+
+  it("écarte ce qui a été tourné avant la date de bascule", () => {
+    /*
+     * Le retard accumulé ne se rattrape pas en une fois : une note qu'on ne
+     * peut pas remonter cesse d'être un objectif.
+     */
+    const restants = countableShootings(
+      [shooting("2026-09-07", null), shooting("2026-09-08", null), shooting("2026-10-02", null)],
+      { isSettledMonth: () => false, since: "2026-09-08" },
+    );
+    expect(restants.map((l) => l.performedOn)).toEqual(["2026-09-08", "2026-10-02"]);
+  });
+
+  it("compte le jour de bascule lui-même", () => {
+    expect(countableShootings([shooting("2026-09-08", null)],
+      { isSettledMonth: () => false, since: "2026-09-08" })).toHaveLength(1);
+  });
+
+  it("cumule les deux exclusions sans que l'une annule l'autre", () => {
+    const restants = countableShootings(
+      [shooting("2026-10-02", null), shooting("2026-11-02", true)],
+      { isSettledMonth: (d) => d.startsWith("2026-11"), since: "2026-09-08" },
+    );
+    expect(restants.map((l) => l.performedOn)).toEqual(["2026-10-02"]);
+  });
+
+  it("garde tout quand aucune date de bascule n'est posée", () => {
+    expect(countableShootings([shooting("2020-01-01", null)],
+      { isSettledMonth: () => false })).toHaveLength(1);
   });
 });

@@ -184,8 +184,8 @@ export function healthScore(input: HealthInputs): HealthScore {
              il fallait ouvrir les fiches une à une pour les trouver. L'onglet
              Shootings en donne désormais la liste nommée.
            */
-          advice: "Onglet Shootings, encadré « À classer » : dites pour chacun s'il est compris au forfait ou vendu en plus. Un shooting non classé n'est jamais facturé. Ceux dont la facture est déjà partie ne comptent plus.",
-          missingAdvice: "Aucun shooting encore classable : ceux dont la facture est partie ne se requalifient plus.",
+          advice: "Onglet Shootings, encadré « À classer » : dites pour chacun s'il est compris au forfait ou vendu en plus. Un shooting non classé n'est jamais facturé. Seuls les shootings tournés depuis la bascule sont notés — le retard antérieur reste listé, mais ne pèse plus.",
+          missingAdvice: "Aucun shooting à noter pour l'instant : le tri se juge sur les tournages à venir.",
         },
         {
           key: "tickets",
