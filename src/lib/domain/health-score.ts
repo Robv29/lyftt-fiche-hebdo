@@ -179,8 +179,13 @@ export function healthScore(input: HealthInputs): HealthScore {
           key: "shootings",
           label: "Shootings catégorisés",
           percentage: input.shootingsCategorised,
-          advice: "Classez les shootings en attente dans l'onglet Budget : compris au forfait ou vendu en plus. Un shooting non classé n'est jamais facturé.",
-          missingAdvice: "Aucun shooting enregistré : rien à trier.",
+          /*
+             L'ancien conseil renvoyait « à l'onglet Budget » sans dire lesquels :
+             il fallait ouvrir les fiches une à une pour les trouver. L'onglet
+             Shootings en donne désormais la liste nommée.
+           */
+          advice: "Onglet Shootings, encadré « À classer » : dites pour chacun s'il est compris au forfait ou vendu en plus. Un shooting non classé n'est jamais facturé. Ceux dont la facture est déjà partie ne comptent plus.",
+          missingAdvice: "Aucun shooting encore classable : ceux dont la facture est partie ne se requalifient plus.",
         },
         {
           key: "tickets",
