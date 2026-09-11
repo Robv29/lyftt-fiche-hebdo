@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { clientFormula } from "@/lib/domain/client-formula";
 import { z } from "zod";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -16,9 +17,6 @@ import { removeClientLogo, uploadClientLogo } from "@/lib/media/client-logo";
 import { rescheduleClientDrafts } from "@/lib/planning/reschedule";
 import { syncClientLocation } from "@/lib/geo/client-location";
 import {
-  baseFeeFromNotes,
-  customMonthlyFromNotes,
-  shootingPlanFromNotes,
   syncManagementMonths,
 } from "@/lib/budget/management-months";
 import { normalizeWeekdays } from "@/lib/domain/planning";
@@ -573,19 +571,13 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
    */
   await syncManagementMonths(admin, {
     id: clientId.data,
-    contractStartDate: current.contract_start_date,
-    contractEndDate: current.contract_end_date,
-    cadence: {
-      photo: input.photoPerMonth,
-      video: input.videoPerMonth,
-      story: input.storyPerMonth,
-      visual: input.visualPerMonth,
-    },
-    shooting: shootingPlanFromNotes(JSON.stringify(notes)),
-    customMonthly: customMonthlyFromNotes(JSON.stringify(notes)),
-    baseFeeCents: baseFeeFromNotes(JSON.stringify(notes)),
-    pauseStartDate: current.pause_start_date,
-    pauseEndDate: current.pause_end_date,
+    ...clientFormula({
+      notes: JSON.stringify(notes),
+      contract_start_date: current.contract_start_date,
+      contract_end_date: current.contract_end_date,
+      pause_start_date: current.pause_start_date,
+      pause_end_date: current.pause_end_date,
+    }),
   });
 
   const resync = await rescheduleClientDrafts(admin, clientId.data, input.publicationWeekdays, {

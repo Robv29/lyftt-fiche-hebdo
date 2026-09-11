@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { clientFormula } from "@/lib/domain/client-formula";
 import { readShootings } from "@/lib/shootings/query";
 import { denyCommercial } from "@/lib/internal/authorization";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
@@ -11,12 +12,10 @@ import { isActionableOverdue, planningBucketForPeriod, planningWeekRange, sheetC
 import {
   isShootingLine,
   budgetSummary,
-  parseCustomMonthly, parseShootingPlan,
   type BillingMode,
   type BudgetLine,
 } from "@/lib/domain/budget";
 import { clientLifecycle, todayInParis as civilToday } from "@/lib/domain/client-lifecycle";
-import type { MonthlyCadence } from "@/lib/domain/planning";
 import { ShootingReminders } from "./ShootingReminders";
 
 function todayInParis(): string {
@@ -24,14 +23,6 @@ function todayInParis(): string {
 }
 
 /** Réglages du client, stockés en JSON libre dans le champ `notes`. */
-function clientSettings(notes: string | null): Record<string, unknown> {
-  try {
-    const parsed = typeof notes === "string" ? JSON.parse(notes) : {};
-    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
-  } catch {
-    return {};
-  }
-}
 
 /** Vue opérationnelle du jour, exclusivement alimentée par Supabase. */
 export default async function DashboardPage() {
@@ -159,19 +150,14 @@ export default async function DashboardPage() {
     }
 
     budgetIssues = producible.filter((client) => {
-      const settings = clientSettings(client.notes) as { monthlyCadence?: MonthlyCadence; shootingPlan?: unknown; customMonthlyService?: unknown };
       const budget = budgetByClient.get(client.id);
       const summary = budgetSummary({
         billingMode: (budget?.billing_mode ?? "comptant") as BillingMode,
         annualBudgetCents: budget?.budget_cents ?? 0,
         lines: linesByClient.get(client.id) ?? [],
-        cadence: settings.monthlyCadence ?? {},
-        shooting: parseShootingPlan(settings.shootingPlan),
-        customMonthly: parseCustomMonthly(settings.customMonthlyService),
+        ...clientFormula(client),
         // Un RIB manquant se compte comme un dossier à régulariser.
         ribOnFile: Boolean(budget?.rib_storage_path),
-        contractStartDate: client.contract_start_date,
-        contractEndDate: client.contract_end_date,
         today: civilToday(),
       });
       // Sans date de début, rien n'est décompté : le dossier est à l'aveugle.

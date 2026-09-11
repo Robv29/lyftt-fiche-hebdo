@@ -1,12 +1,11 @@
 import Link from "next/link";
+import { clientFormula } from "@/lib/domain/client-formula";
 import { denyCommercial } from "@/lib/internal/authorization";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import {
   budgetPenalty,
   budgetSummary,
   countableShootings,
-  parseCustomMonthly,
-  parseShootingPlan,
   shootingTally,
   type BillingMode,
   type BudgetLine,
@@ -14,7 +13,6 @@ import {
 } from "@/lib/domain/budget";
 import { healthActions, healthScore, HEALTH_TARGET, type HealthAction, type HealthPillar } from "@/lib/domain/health-score";
 import { clientLifecycle, todayInParis } from "@/lib/domain/client-lifecycle";
-import type { MonthlyCadence } from "@/lib/domain/planning";
 import { satisfactionPercentage, satisfactionSummary, SATISFACTION_LABELS } from "@/lib/domain/planning";
 import { productionPunctuality } from "@/lib/domain/production-requests";
 import { ticketSlaSummary, TICKET_SLA_HOURS } from "@/lib/domain/ticket-sla";
@@ -94,20 +92,18 @@ async function budgetHealth(
 
   const withIssue = managed.filter((client) => {
     if (!client.contract_start_date) return true;
-    let settings: { monthlyCadence?: MonthlyCadence; shootingPlan?: unknown; customMonthlyService?: unknown } = {};
-    try { settings = client.notes ? JSON.parse(client.notes as string) : {}; } catch { settings = {}; }
     const budget = budgetByClient.get(client.id as string);
     const summary = budgetSummary({
       billingMode: (budget?.billing_mode ?? "comptant") as BillingMode,
       annualBudgetCents: budget?.budget_cents ?? 0,
       lines: linesByClient.get(client.id as string) ?? [],
-      cadence: settings.monthlyCadence ?? {},
-      // Le forfait shooting et le supplément mensuel manquaient : le coût
-      // mensuel servant aux alertes était inférieur au coût réel.
-      shooting: parseShootingPlan(settings.shootingPlan),
-      customMonthly: parseCustomMonthly(settings.customMonthlyService),
-      contractStartDate: client.contract_start_date as string | null,
-      contractEndDate: client.contract_end_date as string | null,
+      /*
+       * Le forfait shooting et le supplément mensuel avaient déjà manqué ici,
+       * puis le forfait de base négocié : chaque paramètre ajouté à la
+       * formule devait être recopié à la main, et ne l'était jamais partout.
+       * `clientFormula` est désormais la seule lecture.
+       */
+      ...clientFormula(client as never),
       today,
     });
     return summary.alerts.some((alert) => alert.level === "critique" || alert.level === "attention");

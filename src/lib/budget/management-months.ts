@@ -14,6 +14,7 @@ import {
   type ShootingPlan,
 } from "@/lib/domain/budget";
 import { todayInParis } from "@/lib/domain/client-lifecycle";
+import { clientFormula, type ClientFormula, type ClientFormulaRow } from "@/lib/domain/client-formula";
 import type { MonthlyCadence } from "@/lib/domain/planning";
 
 /**
@@ -31,21 +32,12 @@ import type { MonthlyCadence } from "@/lib/domain/planning";
  */
 export async function syncManagementMonths(
   supabase: SupabaseClient,
-  client: {
-    id: string;
-    contractStartDate: string | null;
-    contractEndDate: string | null;
-    cadence: MonthlyCadence;
-    /** Forfait shooting vendu, lissé sur sa période. */
-    shooting?: ShootingPlan | null;
-    /** Prestation sur mesure vendue dans la formule mensuelle. */
-    customMonthly?: CustomMonthlyService | null;
-    /** Forfait de base négocié, s'il diffère du tarif courant. */
-    baseFeeCents?: number | null;
-    /** Pause de gestion : les mois qu'elle couvre ne sont pas facturés. */
-    pauseStartDate?: string | null;
-    pauseEndDate?: string | null;
-  },
+  /*
+   * La formule vient toujours de `clientFormula` : c'est ce qui garantit que
+   * tous les appelants facturent la même chose. La reconstruire à la main est
+   * précisément ce qui avait fait diverger les écrans.
+   */
+  client: { id: string } & ClientFormula,
   today: string = todayInParis(),
 ): Promise<number> {
   const monthlyCostCents = cadenceMonthlyCostCents(
@@ -200,12 +192,7 @@ export function customMonthlyFromNotes(notes: string | null): CustomMonthlyServi
  */
 export async function syncAllManagementMonths(
   supabase: SupabaseClient,
-  clients: Array<{
-    id: string;
-    notes: string | null;
-    contract_start_date: string | null;
-    contract_end_date: string | null;
-  }>,
+  clients: Array<{ id: string } & ClientFormulaRow>,
   today: string = todayInParis(),
 ): Promise<number> {
   const results = await Promise.all(
@@ -213,14 +200,13 @@ export async function syncAllManagementMonths(
       .filter((client) => client.contract_start_date)
       .map(async (client) => {
         try {
-          return await syncManagementMonths(supabase, {
-            id: client.id,
-            contractStartDate: client.contract_start_date,
-            contractEndDate: client.contract_end_date,
-            cadence: cadenceFromNotes(client.notes),
-            shooting: shootingPlanFromNotes(client.notes),
-            customMonthly: customMonthlyFromNotes(client.notes),
-          }, today);
+          /*
+           * La formule complète, forfait négocié et pause compris. Cette
+           * fonction en omettait deux : ouvrir la liste des budgets
+           * refacturait 50 € de base à un client qui en paie 25, et les mois
+           * de pause, que l'écran du client retirait aussitôt.
+           */
+          return await syncManagementMonths(supabase, { id: client.id, ...clientFormula(client) }, today);
         } catch {
           // Un client en échec ne doit pas vider l'écran des autres.
           return 0;

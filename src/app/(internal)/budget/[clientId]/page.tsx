@@ -1,11 +1,11 @@
 import Link from "next/link";
+import { clientFormula } from "@/lib/domain/client-formula";
 import { notFound, redirect } from "next/navigation";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { billableLines, budgetSummary, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
 import { todayInParis } from "@/lib/domain/client-lifecycle";
-import type { MonthlyCadence } from "@/lib/domain/planning";
 import { BudgetEditor } from "./BudgetEditor";
-import { baseFeeFromNotes, cadenceFromNotes, customMonthlyFromNotes, shootingPlanFromNotes, syncManagementMonths } from "@/lib/budget/management-months";
+import { syncManagementMonths } from "@/lib/budget/management-months";
 import { invoiceMonths, type InvoiceStatus } from "@/lib/domain/invoicing";
 import { resolveMediaUrl } from "@/lib/media/signed-url";
 import { logRibAccess } from "@/lib/internal/rib-audit";
@@ -48,17 +48,7 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
    * jour. L'opération est sans effet quand il n'y a rien à ajouter.
    */
   {
-    await syncManagementMonths(supabase, {
-      id: client.id,
-      contractStartDate: client.contract_start_date,
-      contractEndDate: client.contract_end_date,
-      cadence: cadenceFromNotes(client.notes),
-      shooting: shootingPlanFromNotes(client.notes),
-      customMonthly: customMonthlyFromNotes(client.notes),
-      baseFeeCents: baseFeeFromNotes(client.notes),
-      pauseStartDate: client.pause_start_date,
-      pauseEndDate: client.pause_end_date,
-    });
+    await syncManagementMonths(supabase, { id: client.id, ...clientFormula(client) });
   }
 
   const { data: invoices } = await supabase
@@ -72,12 +62,6 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
     .eq("client_id", clientId)
     .order("performed_on", { ascending: false });
 
-  let settings: { monthlyCadence?: MonthlyCadence } = {};
-  try {
-    settings = typeof client.notes === "string" ? JSON.parse(client.notes) : {};
-  } catch {
-    settings = {};
-  }
 
   const lines: (BudgetLine & { note: string | null; forfaitIncluded: boolean | null })[] = (rawLines ?? []).map((row) => ({
     id: row.id as string,
@@ -106,21 +90,17 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
     client.contract_start_date as string | null,
   );
 
-  const cadence = settings.monthlyCadence ?? {};
-  const shooting = shootingPlanFromNotes(client.notes);
-  const customMonthly = customMonthlyFromNotes(client.notes);
+  // Une seule lecture de la formule, pour le calcul comme pour l'affichage.
+  const formula = clientFormula(client);
+  const cadence = formula.cadence;
+  const shooting = formula.shooting;
   const today = todayInParis();
   const summary = budgetSummary({
     billingMode: mode,
     annualBudgetCents: budget?.budget_cents ?? 0,
     lines,
-    cadence,
-    shooting,
-    customMonthly,
-    baseFeeCents: baseFeeFromNotes(client.notes),
+    ...formula,
     ribOnFile: Boolean(budget?.rib_storage_path),
-    contractStartDate: client.contract_start_date,
-    contractEndDate: client.contract_end_date,
     today,
   });
 

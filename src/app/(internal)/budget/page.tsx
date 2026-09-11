@@ -1,10 +1,10 @@
 import Link from "next/link";
+import { clientFormula } from "@/lib/domain/client-formula";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { Icon } from "@/components/Icon";
-import { BILLING_MODE_LABELS, billableLines, budgetSummary, formatEuros, parseCustomMonthly, parseShootingPlan, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
+import { BILLING_MODE_LABELS, billableLines, budgetSummary, formatEuros, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
 import { clientLifecycle, todayInParis } from "@/lib/domain/client-lifecycle";
-import type { MonthlyCadence } from "@/lib/domain/planning";
 import { invoiceMonths, pendingInvoiceCount, type InvoiceStatus } from "@/lib/domain/invoicing";
 import { syncAllManagementMonths } from "@/lib/budget/management-months";
 
@@ -100,12 +100,6 @@ export default async function BudgetPage() {
   }, today).canProduce);
 
   const rows = managed.map((client) => {
-    let settings: { monthlyCadence?: MonthlyCadence; shootingPlan?: unknown; customMonthlyService?: unknown } = {};
-    try {
-      settings = typeof client.notes === "string" ? JSON.parse(client.notes) : {};
-    } catch {
-      settings = {};
-    }
     const budget = budgetByClient.get(client.id);
     const mode = (budget?.billing_mode ?? "comptant") as BillingMode;
     const ribOnFile = Boolean(budget?.rib_storage_path);
@@ -113,12 +107,9 @@ export default async function BudgetPage() {
       billingMode: mode,
       annualBudgetCents: budget?.budget_cents ?? 0,
       lines: linesByClient.get(client.id) ?? [],
-      cadence: settings.monthlyCadence ?? {},
-      shooting: parseShootingPlan(settings.shootingPlan),
-      customMonthly: parseCustomMonthly(settings.customMonthlyService),
+      // Formule complète, forfait négocié compris : voir `clientFormula`.
+      ...clientFormula(client),
       ribOnFile,
-      contractStartDate: client.contract_start_date,
-      contractEndDate: client.contract_end_date,
       today,
     });
     // Factures en attente : tout le comptant, et les refus de prise en charge.
