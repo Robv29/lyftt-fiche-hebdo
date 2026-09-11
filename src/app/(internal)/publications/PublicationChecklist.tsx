@@ -2,7 +2,8 @@
 
 import { useState, useTransition } from "react";
 import Image from "next/image";
-import { completePublicationStep, setCollaborationDone, setPublicationPublished, togglePublishedNetwork } from "./actions";
+import { useRouter } from "next/navigation";
+import { completePublicationStep, reprogramPublication, setCollaborationDone, setPublicationPublished, togglePublishedNetwork } from "./actions";
 import { Icon } from "@/components/Icon";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
@@ -20,6 +21,8 @@ function dayLabel(day:string):string {
 export interface DailyPublication {
   id:string; scheduledDate:string; clientName:string; scheduledTime:string|null; format:MediaFormat; formatLabel:string; networks:string[];
   caption:string; hashtags:string[]; approvalLabel:string; approved:boolean; publishedAt:string|null;
+  /** Première date prévue avant un changement de programme. Non nulle = pastille. */
+  reprogrammedFrom:string|null;
   mediaDownloadedAt:string|null; contentCopiedAt:string|null; mediaUrl:string|null; mediaFileName:string|null;
   mediaKind:"image"|"video"|"document"|null; mediaRequired:boolean;
   /** Toutes les images de la publication, dans l'ordre du carrousel. */
@@ -206,7 +209,7 @@ function PublicationCard({item,pending,onDownload,onCopy,onPublished,onNetwork,o
    */
   const locked=!item.approved&&!done;
   return <article className={`card lift-card overflow-hidden transition-colors ${done?"border-state-approved/30 bg-[#fbfffd]":locked?"border-state-progress/30":""}`}>
-    <header className="flex flex-wrap items-start justify-between gap-3 border-b p-5"><div><div className="flex items-center gap-2"><h3 className="font-semibold">{item.clientName}</h3><span className="text-xs font-medium text-ink-faint">{item.scheduledTime?.slice(0,5)??"Heure libre"}</span>{done&&<span className="badge gap-1 bg-[#e8f8f1] text-state-approved"><Icon name="check" className="h-3 w-3"/>Publié</span>}</div><p className="mt-1 text-xs text-ink-faint">{item.formatLabel} · {item.networks.join(", ")}</p></div><span className={`badge ${item.approved?"bg-[#e8f8f1] text-state-approved":"bg-[#fff4e5] text-state-progress"}`}>{item.approvalLabel}</span></header>
+    <header className="flex flex-wrap items-start justify-between gap-3 border-b p-5"><div><div className="flex items-center gap-2"><h3 className="font-semibold">{item.clientName}</h3><span className="text-xs font-medium text-ink-faint">{item.scheduledTime?.slice(0,5)??"Heure libre"}</span>{done&&<span className="badge gap-1 bg-[#e8f8f1] text-state-approved"><Icon name="check" className="h-3 w-3"/>Publié</span>}{item.reprogrammedFrom&&<span className="badge bg-[#fff1e6] text-[#b04a00]" title={`Prévu à l'origine le ${frenchDay(item.reprogrammedFrom)}`}>Changement de programme&nbsp;!</span>}</div><p className="mt-1 text-xs text-ink-faint">{item.formatLabel} · {item.networks.join(", ")}</p></div><span className={`badge ${item.approved?"bg-[#e8f8f1] text-state-approved":"bg-[#fff4e5] text-state-progress"}`}>{item.approvalLabel}</span></header>
     <div className="grid gap-5 p-5 sm:grid-cols-[168px_1fr]">
       <MediaPreview item={item}/>
       <div className="min-w-0"><p className="line-clamp-6 whitespace-pre-wrap text-sm leading-relaxed">{item.caption||"Texte vide"}</p>{item.hashtags.length>0&&<p className="mt-3 break-words text-xs leading-relaxed text-[#0b63ad]">{item.hashtags.join(" ")}</p>}</div>
@@ -214,6 +217,53 @@ function PublicationCard({item,pending,onDownload,onCopy,onPublished,onNetwork,o
     <div className="border-t bg-[#fbfcfe] p-4">{locked&&<p className="mb-3 rounded-xl bg-[#fff4e5] px-3 py-2 text-xs leading-relaxed text-[#8a5700]">En attente de validation client. Le média est téléchargeable pour préparer, mais la publication reste bloquée tant que le client n&apos;a pas validé.</p>}<div className="grid gap-2 sm:grid-cols-2"><button type="button" className={mediaDone?"btn-secondary border-state-approved/30 text-state-approved":"btn-secondary"} disabled={pending||(!item.mediaUrl&&item.mediaRequired)} onClick={onDownload}>{mediaDone?<Icon name="check" className="h-4 w-4"/>:<Icon name="download" className="h-4 w-4"/>}{mediaDone?"Média téléchargé":item.mediaRequired?(item.gallery.length>1?`Télécharger les ${item.gallery.length} images`:"Télécharger le média"):"Aucun média requis"}</button><button type="button" className={contentDone?"btn-secondary border-state-approved/30 text-state-approved":"btn-primary"} disabled={pending||locked} onClick={onCopy}>{contentDone?<Icon name="check" className="h-4 w-4"/>:<Icon name="copy" className="h-4 w-4"/>}{contentDone?"Texte copié":"Copier texte + hashtags"}</button></div>
 
       <PublishPanel item={item} pending={pending} locked={locked} onPublished={onPublished} onNetwork={onNetwork} onCollaboration={onCollaboration}/>
+      {item.reprogrammedFrom&&<p className="mt-3 text-[11px] text-[#b04a00]">Prévue à l&apos;origine le {frenchDay(item.reprogrammedFrom)} — reportée sans nouvel accord du client.</p>}
+      {!done&&<ReprogramPanel item={item}/>}
     </div>
   </article>;
+}
+
+function frenchDay(date:string):string {
+  return new Intl.DateTimeFormat("fr-FR",{weekday:"long",day:"numeric",month:"long",timeZone:"UTC"}).format(new Date(`${date}T00:00:00Z`));
+}
+
+/** Lendemain d'une date civile, au format AAAA-MM-JJ. */
+function dayAfter(date:string):string {
+  const next=new Date(`${date}T00:00:00Z`); next.setUTCDate(next.getUTCDate()+1);
+  return next.toISOString().slice(0,10);
+}
+
+/*
+ * Changement de programme : reporter à un jour suivant, sans repasser par le
+ * client. Ouvert même sur une semaine déjà validée — c'est tout l'objet. Le
+ * contenu ne change pas, seule la date bouge, et la validation reste valable.
+ */
+function ReprogramPanel({item}:{item:DailyPublication}) {
+  const router=useRouter();
+  const [open,setOpen]=useState(false);
+  const [pending,startTransition]=useTransition();
+  const [message,setMessage]=useState<{ok:boolean;text:string}|null>(null);
+  const today=new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Paris"}).format(new Date());
+  // Au plus tôt le lendemain de la date prévue, et jamais dans le passé.
+  const earliest=[dayAfter(item.scheduledDate),today].sort().at(-1)!;
+
+  if(!open) return <button type="button" className="mt-3 text-xs font-semibold text-[#b04a00] hover:underline" onClick={()=>{setOpen(true);setMessage(null);}}>
+    Reporter à un autre jour
+  </button>;
+
+  return <form className="mt-3 grid gap-2 rounded-xl border border-[#f3c9a6] bg-[#fff8f2] p-3 sm:grid-cols-[160px_1fr_auto] sm:items-end" action={(formData)=>startTransition(async()=>{
+    const result=await reprogramPublication(item.id,String(formData.get("newDate")??""),String(formData.get("note")??""));
+    setMessage({ok:result.ok,text:result.message??(result.ok?"Reporté.":"Report impossible.")});
+    if(result.ok){setOpen(false);router.refresh();}
+  })}>
+    <label className="grid gap-1"><span className="text-[11px] font-semibold text-ink-soft">Nouvelle date</span>
+      <input type="date" name="newDate" required min={earliest} defaultValue={earliest} className="field bg-white"/></label>
+    <label className="grid gap-1"><span className="text-[11px] font-semibold text-ink-soft">Raison (facultatif)</span>
+      <input name="note" maxLength={300} placeholder="Météo, rupture de stock…" className="field bg-white"/></label>
+    <div className="flex gap-2">
+      <button type="submit" className="btn-primary" disabled={pending}>{pending?"Report…":"Reporter"}</button>
+      <button type="button" className="btn-secondary" onClick={()=>setOpen(false)}>Annuler</button>
+    </div>
+    {message&&<p className={`sm:col-span-3 text-xs ${message.ok?"text-state-approved":"text-state-changes"}`}>{message.text}</p>}
+  </form>;
 }

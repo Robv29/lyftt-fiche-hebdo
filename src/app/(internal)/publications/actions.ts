@@ -5,6 +5,9 @@ import { z } from "zod";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { publicationReadiness } from "@/lib/domain/publication-checklist";
 import { SOCIAL_NETWORKS } from "@/lib/domain/types";
+import { todayInParis } from "@/lib/domain/client-lifecycle";
+import { originalDate, reprogrammingRefusal, REPROGRAMMING_REFUSALS } from "@/lib/domain/reprogramming";
+import { sanitizeText } from "@/lib/security/sanitize";
 import {
   ACCESS_DENIED_MESSAGE,
   requireEditorialProfile,
@@ -159,4 +162,79 @@ export async function togglePublishedNetwork(itemId:string, network:string, on:b
 
   revalidatePath("/publications");
   return { ok:true, published:Boolean(item.published_at) };
+}
+
+
+const reprogramSchema = z.object({
+  itemId: z.string().uuid(),
+  newDate: z.string(),
+  note: z.string().trim().max(300).optional(),
+});
+
+/**
+ * Changement de programme : reporte une publication à un jour suivant.
+ *
+ * Sans accord du client, et même sur une semaine déjà validée — c'est tout
+ * l'objet. Seule la date bouge : le contenu reste celui qu'il a approuvé, et
+ * sa validation reste donc valable. Le déclencheur qui recalcule l'état d'une
+ * fiche ne réagit qu'à l'approbation et à l'annulation, pas à la date.
+ *
+ * La pastille « Changement de programme » garde la trace de la date d'origine.
+ */
+export async function reprogramPublication(
+  itemId: string,
+  newDate: string,
+  note?: string,
+): Promise<PublicationActionResult> {
+  const profile = await requireEditorialProfile();
+  if (!profile) return { ok: false, published: false, message: ACCESS_DENIED_MESSAGE };
+
+  const parsed = reprogramSchema.safeParse({ itemId, newDate, note: note || undefined });
+  if (!parsed.success) return { ok: false, published: false, message: "Demande invalide." };
+
+  // Périmètre vérifié sous RLS, comme partout : la politique SQL reste seule juge.
+  const accessible = await resolveAccessibleItem(parsed.data.itemId);
+  if (!accessible) return { ok: false, published: false, message: ACCESS_DENIED_MESSAGE };
+
+  const admin = createSupabaseAdminClient();
+  const { data: item } = await admin
+    .from("weekly_sheet_items")
+    .select("id, scheduled_date, published_at, is_cancelled, reprogrammed_from")
+    .eq("id", parsed.data.itemId)
+    .maybeSingle();
+  if (!item) return { ok: false, published: false, message: ACCESS_DENIED_MESSAGE };
+
+  const refusal = reprogrammingRefusal({
+    scheduledDate: item.scheduled_date as string,
+    publishedAt: (item.published_at as string | null) ?? null,
+    isCancelled: Boolean(item.is_cancelled),
+  }, parsed.data.newDate, todayInParis());
+  if (refusal) return { ok: false, published: false, message: REPROGRAMMING_REFUSALS[refusal] };
+
+  const { error } = await admin
+    .from("weekly_sheet_items")
+    .update({
+      scheduled_date: parsed.data.newDate,
+      reprogrammed_from: originalDate(
+        item.scheduled_date as string,
+        (item.reprogrammed_from as string | null) ?? null,
+      ),
+      reprogrammed_at: new Date().toISOString(),
+      reprogrammed_by: profile.id,
+      reprogrammed_note: parsed.data.note ? sanitizeText(parsed.data.note, 300) : null,
+    })
+    .eq("id", parsed.data.itemId);
+
+  if (error) return { ok: false, published: false, message: `Report impossible : ${error.message}` };
+
+  revalidatePath("/publications");
+  revalidatePath("/fiches");
+  revalidatePath(`/fiches/${accessible.sheetId}`);
+  return {
+    ok: true,
+    published: false,
+    message: `Publication reportée au ${new Intl.DateTimeFormat("fr-FR", {
+      weekday: "long", day: "numeric", month: "long", timeZone: "UTC",
+    }).format(new Date(`${parsed.data.newDate}T00:00:00Z`))}.`,
+  };
 }
