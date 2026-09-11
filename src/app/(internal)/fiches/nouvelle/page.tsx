@@ -18,6 +18,12 @@ export default async function NewSheetPage({
     .from("clients")
     .select("id, name, notes, post_signature")
     .eq("is_active", true)
+    /*
+     * Un client ponctuel n'a pas de fiche hebdomadaire. Le proposer ici, c'était
+     * ouvrir un formulaire que le serveur refuserait à l'enregistrement — ou,
+     * pire, le mettre en tête de liste et le présélectionner.
+     */
+    .eq("client_kind", "gestion")
     .order("name", { ascending: true });
 
   if (!clients || clients.length === 0) {

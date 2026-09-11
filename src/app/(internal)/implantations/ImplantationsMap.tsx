@@ -16,6 +16,7 @@ const STATES: ReadonlyArray<{ id: ImplantationState; label: string; color: strin
   { id: "active", label: "En gestion", color: "#16a36a" },
   { id: "paused", label: "En pause", color: "#b76200" },
   { id: "ended", label: "Gestion terminée", color: "#667085" },
+  { id: "one_shot", label: "Prestation ponctuelle", color: "#7c5cd6" },
 ];
 
 const COLOR_OF = new Map(STATES.map((s) => [s.id, s.color]));

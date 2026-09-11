@@ -2,12 +2,14 @@
 
 import Link from "next/link";
 import { useState, useTransition } from "react";
-import { createClient, setClientActive, updateClientLifecycle, type ClientActionResult } from "./actions";
-import { clientLifecycle } from "@/lib/domain/client-lifecycle";
+import { createClient, createOneShotClient, setClientActive, updateClientLifecycle, type ClientActionResult } from "./actions";
+import { OneShotClientForm } from "./OneShotClientForm";
+import { clientLifecycle, type ClientKind } from "@/lib/domain/client-lifecycle";
 
-function lifecycleOf(client:{isActive:boolean;contractEndDate:string|null;pauseStartDate:string|null;pauseEndDate:string|null}) {
+function lifecycleOf(client:{isActive:boolean;kind:ClientKind;contractEndDate:string|null;pauseStartDate:string|null;pauseEndDate:string|null}) {
   return clientLifecycle({
     isActive: client.isActive,
+    kind: client.kind,
     contractEndDate: client.contractEndDate,
     pauseStartDate: client.pauseStartDate,
     pauseEndDate: client.pauseEndDate,
@@ -60,6 +62,8 @@ const WEEKDAYS = [
 
 interface ClientRow {
   id: string;
+  /** Gestion des réseaux, ou prestation ponctuelle. */
+  kind: ClientKind;
   name: string;
   isActive: boolean;
   deadlineWeekday: number;
@@ -115,6 +119,12 @@ export function ClientAdmin({
   const [pending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<ClientActionResult | null>(null);
   const [showForm, setShowForm] = useState(Boolean(prefillName) && !readOnly);
+  /*
+   * Nature du client à créer. Une prestation ponctuelle n'a pas de gestion des
+   * réseaux : elle ouvre un formulaire court, et le client n'aura ni fiche ni
+   * mois facturés.
+   */
+  const [newKind, setNewKind] = useState<"gestion" | "ponctuel">("gestion");
   const [query, setQuery] = useState("");
   const [tacit, setTacit] = useState(false);
   const [clientType, setClientType] = useState<LyfttClientType>("restaurant");
@@ -192,6 +202,37 @@ export function ClientAdmin({
       {!showForm && clients.length > 0 && <div className="relative max-w-lg"><Icon name="search" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint"/><label className="sr-only" htmlFor="client-search">Rechercher un client</label><input id="client-search" type="search" className="field bg-white pl-10" placeholder="Rechercher un client, un contact ou un responsable…" value={query} onChange={(event)=>setQuery(event.target.value)}/></div>}
 
       {showForm && !readOnly && (
+        <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Nature du client">
+          {([
+            ["gestion", "Gestion des réseaux sociaux"],
+            ["ponctuel", "Prestation ponctuelle (one-shot)"],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={newKind === value}
+              onClick={() => { setNewKind(value); setFeedback(null); }}
+              className={`rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
+                newKind === value ? "bg-accent text-white" : "bg-[#eef3f9] text-ink-soft hover:bg-[#e2eaf3]"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {showForm && !readOnly && newKind === "ponctuel" && (
+        <OneShotClientForm
+          pending={pending}
+          prefillName={prefillName}
+          transmissionId={transmissionId}
+          onSubmit={(formData) => run(() => createOneShotClient(formData))}
+        />
+      )}
+
+      {showForm && !readOnly && newKind === "gestion" && (
         <form
           /*
             `onSubmit` plutôt que `action` : React réinitialise automatiquement
@@ -607,12 +648,22 @@ export function ClientAdmin({
                 ? <p className={`mt-1 text-xs ${lifecycle.canProduce ? "text-ink-faint" : "text-state-progress"}`}>{lifecycle.detail}</p>
                 : null}
               lines={<>
+                {/*
+                  Un client ponctuel n'a ni échéance de validation ni rythme :
+                  afficher « échéance mardi 10 h · 0 photo · 0 vidéo » lui
+                  prêterait une gestion qu'il n'a pas.
+                */}
                 <p className="mt-1 text-xs leading-relaxed text-ink-faint">
-                  {client.contactName ?? "Aucun contact"} · échéance{" "}
-                  {WEEKDAYS.find((d) => d.value === client.deadlineWeekday)?.label.toLowerCase()}{" "}
-                  {client.deadlineTime.slice(0, 5).replace(":", " h ")}
+                  {client.contactName ?? "Aucun contact"}
+                  {client.kind === "gestion" && <>
+                    {" · échéance "}
+                    {WEEKDAYS.find((d) => d.value === client.deadlineWeekday)?.label.toLowerCase()}{" "}
+                    {client.deadlineTime.slice(0, 5).replace(":", " h ")}
+                  </>}
                 </p>
-                <p className="mt-2 text-xs text-ink-soft">{client.managerName} · {client.cadenceLabel}</p>
+                <p className="mt-2 text-xs text-ink-soft">
+                  {client.managerName} · {client.kind === "gestion" ? client.cadenceLabel : "Prestation ponctuelle"}
+                </p>
                 {/*
                   Montant mensuel de l'abonnement : le rythme vendu ne disait
                   pas ce qu'il rapporte, et c'est la question qui vient juste
@@ -634,7 +685,7 @@ export function ClientAdmin({
                     </Link>
                   ) : (
                     <span className="btn-secondary col-span-2 order-1 cursor-not-allowed text-xs opacity-60 sm:col-span-1 sm:order-2" aria-disabled="true" title={lifecycle.detail ?? lifecycle.label}>
-                      Production suspendue
+                      {client.kind === "ponctuel" ? "Sans fiche hebdo" : "Production suspendue"}
                     </span>
                   ))}
                   {!readOnly && (

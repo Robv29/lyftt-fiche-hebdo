@@ -46,7 +46,7 @@ export function projectToMap(longitude: number, latitude: number): { x: number; 
   return { x, y };
 }
 
-export type ImplantationState = "active" | "paused" | "ended";
+export type ImplantationState = "active" | "paused" | "ended" | "one_shot";
 
 export interface ImplantationInput {
   id: string;

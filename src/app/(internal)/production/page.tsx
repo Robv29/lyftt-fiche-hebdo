@@ -7,7 +7,7 @@ import { deadlineState, formatPeriod } from "@/lib/domain/deadline";
 import { ticketPriorityLabel, ticketStatusLabel, type MediaFormat } from "@/lib/domain/types";
 import { PageHeader } from "@/components/ui";
 import { resolveMediaUrl } from "@/lib/media/signed-url";
-import { clientLifecycleForWeek, todayInParis } from "@/lib/domain/client-lifecycle";
+import { clientLifecycleForWeek, todayInParis, parseClientKind } from "@/lib/domain/client-lifecycle";
 import { contentBucketStatuses, isoWeekIdentity, planningWeekRange, sheetCompletion, weeklyFormatsForCadence, type BucketStatus, type MonthlyCadence } from "@/lib/domain/planning";
 import { bucketForFormat, CONTENT_BUCKETS, type ContentBucket } from "@/lib/domain/content-buckets";
 import { ProductionRequests, type ProductionRequestRow } from "./ProductionRequests";
@@ -64,7 +64,7 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
       .order("due_on", { ascending: true }),
     supabase
       .from("clients")
-      .select("id, name, notes, is_active, contract_start_date, contract_end_date, pause_start_date, pause_end_date")
+      .select("id, name, notes, is_active, client_kind, contract_start_date, contract_end_date, pause_start_date, pause_end_date")
       .eq("is_active", true)
       .order("name"),
     supabase
@@ -180,6 +180,7 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
   const overviewRows: OverviewRow[] = (overviewClients ?? [])
     .filter((client) => clientLifecycleForWeek({
       isActive: client.is_active,
+      kind: parseClientKind(client.client_kind),
       contractStartDate: client.contract_start_date,
       contractEndDate: client.contract_end_date,
       pauseStartDate: client.pause_start_date,

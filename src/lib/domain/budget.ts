@@ -805,6 +805,12 @@ export interface BudgetInput {
   customMonthly?: CustomMonthlyService | null;
   /** Forfait de base négocié, s'il diffère du tarif courant. */
   baseFeeCents?: number | null;
+  /*
+   * Faux pour une prestation ponctuelle. Absent vaut gestion : c'est le cas
+   * de tous les clients historiques. Mais tout appelant passe par
+   * `clientFormula`, qui le renseigne toujours.
+   */
+  managed?: boolean;
   /** Début de gestion, repris de la fiche client. */
   contractStartDate: string | null;
   /** Fin de gestion, reprise de la fiche client. */
@@ -849,12 +855,21 @@ export function budgetSummary(input: BudgetInput): BudgetSummary {
   const charged = envelopeLines(input.lines, input.billingMode);
   const lineCents = totalCents(charged);
   const budgetCents = Math.max(0, input.annualBudgetCents);
-  const monthlyCadenceCostCents = cadenceMonthlyCostCents(
-    input.cadence,
-    input.shooting ?? null,
-    input.customMonthly ?? null,
-    input.baseFeeCents ?? null,
-  );
+  /*
+   * Un client ponctuel n'a pas de coût mensuel : le forfait de base de 50 €
+   * s'ajoutant même à rythme nul, le calcul lui en aurait prêté un. Ce zéro
+   * éteint du même coup les alertes de gestion — date de début manquante,
+   * rythme, reliquat — sans objet pour un one-shot.
+   */
+  const managed = input.managed !== false;
+  const monthlyCadenceCostCents = managed
+    ? cadenceMonthlyCostCents(
+      input.cadence,
+      input.shooting ?? null,
+      input.customMonthly ?? null,
+      input.baseFeeCents ?? null,
+    )
+    : 0;
 
   /*
    * Chaque mois de gestion écoulé est inscrit à l'addition dès qu'il s'achève.
@@ -936,7 +951,7 @@ export function budgetSummary(input: BudgetInput): BudgetSummary {
    * l'enveloppe : celle-ci ne porte que du ponctuel, dont le rythme ne se
    * déduit d'aucune date de fin. L'alerte n'aurait rien à signaler.
    */
-  if (!input.contractEndDate && input.billingMode !== "hybride") {
+  if (managed && !input.contractEndDate && input.billingMode !== "hybride") {
     alerts.push({
       level: "critique",
       title: "Date de fin de gestion manquante",

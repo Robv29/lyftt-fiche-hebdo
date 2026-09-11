@@ -30,7 +30,7 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
   const [{ data: client }, { data: budget }] = await Promise.all([
     supabase
       .from("clients")
-      .select("id, name, notes, contract_start_date, contract_end_date, pause_start_date, pause_end_date")
+      .select("id, name, client_kind, notes, contract_start_date, contract_end_date, pause_start_date, pause_end_date")
       .eq("id", clientId)
       .maybeSingle(),
     supabase

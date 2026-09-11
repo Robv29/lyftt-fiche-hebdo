@@ -12,7 +12,7 @@ import {
 } from "@/lib/domain/planning";
 import { sheetStatusLabel, type MediaFormat, type SheetStatus, type TicketPriority, type TicketStatus } from "@/lib/domain/types";
 import { isClientValidated, validationRate } from "@/lib/domain/sheet-status";
-import { clientLifecycleForWeek } from "@/lib/domain/client-lifecycle";
+import { clientLifecycleForWeek, parseClientKind } from "@/lib/domain/client-lifecycle";
 import { isTicketOpen } from "@/lib/domain/workflow";
 import { PlanningTabs } from "./PlanningTabs";
 import { isPlanningTab } from "./planning-tab";
@@ -116,7 +116,7 @@ export default async function SheetsPage({ searchParams }: { searchParams: Promi
       .limit(300),
     supabase
       .from("clients")
-      .select("id, name, notes, is_active, contract_start_date, contract_end_date, pause_start_date, pause_end_date")
+      .select("id, name, notes, is_active, client_kind, contract_start_date, contract_end_date, pause_start_date, pause_end_date")
       .eq("is_active", true)
       .order("name", { ascending: true }),
   ]);
@@ -141,6 +141,7 @@ export default async function SheetsPage({ searchParams }: { searchParams: Promi
     if (!client) return true;
     return clientLifecycleForWeek({
       isActive: client.is_active,
+      kind: parseClientKind(client.client_kind),
       contractStartDate: client.contract_start_date,
       contractEndDate: client.contract_end_date,
       pauseStartDate: client.pause_start_date,

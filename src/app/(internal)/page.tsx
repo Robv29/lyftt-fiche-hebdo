@@ -15,7 +15,7 @@ import {
   type BillingMode,
   type BudgetLine,
 } from "@/lib/domain/budget";
-import { clientLifecycle, todayInParis as civilToday } from "@/lib/domain/client-lifecycle";
+import { clientLifecycle, todayInParis as civilToday, parseClientKind } from "@/lib/domain/client-lifecycle";
 import { ShootingReminders } from "./ShootingReminders";
 
 function todayInParis(): string {
@@ -42,7 +42,7 @@ export default async function DashboardPage() {
      */
     supabase.from("weekly_sheets").select("id, iso_week, status, period_start, period_end, validation_deadline_at, clients ( name ), client_message_dispatches ( template_type, sent_at )").in("status", ["sent_to_client", "partially_approved", "changes_requested", "corrections_in_progress", "new_version_to_send", "awaiting_revalidation"]).order("validation_deadline_at", { ascending: true }).limit(120),
     supabase.from("weekly_sheet_items").select("id, published_at").eq("scheduled_date", today).eq("is_cancelled", false),
-    supabase.from("clients").select("id, name, is_active, notes, contract_start_date, contract_end_date, pause_start_date, pause_end_date, client_contacts ( first_name, is_primary )").eq("is_active", true),
+    supabase.from("clients").select("id, name, is_active, client_kind, notes, contract_start_date, contract_end_date, pause_start_date, pause_end_date, client_contacts ( first_name, is_primary )").eq("is_active", true),
     /*
      * Fiches de la semaine prochaine, avec de quoi juger si elles sont prêtes.
      * Un simple comptage de brouillons ne disait pas si le travail était fait :
@@ -64,6 +64,7 @@ export default async function DashboardPage() {
     id: string;
     name: string;
     is_active: boolean;
+    client_kind: string | null;
     notes: string | null;
     contract_start_date: string | null;
     contract_end_date: string | null;
@@ -90,6 +91,7 @@ export default async function DashboardPage() {
   const coveredClients = new Set(nextWeekSheets.map((sheet) => sheet.client_id));
   const producible = (activeClients ?? []).filter((client) => clientLifecycle({
     isActive: client.is_active,
+    kind: parseClientKind(client.client_kind),
     contractEndDate: client.contract_end_date,
     pauseStartDate: client.pause_start_date,
     pauseEndDate: client.pause_end_date,

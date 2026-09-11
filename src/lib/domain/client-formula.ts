@@ -6,6 +6,7 @@ import {
   type ShootingPlan,
 } from "./budget";
 import type { MonthlyCadence } from "./planning";
+import { parseClientKind } from "./client-lifecycle";
 
 /**
  * Formule de facturation d'un client, lue une seule fois depuis sa fiche.
@@ -23,6 +24,11 @@ import type { MonthlyCadence } from "./planning";
  */
 
 export interface ClientFormulaRow {
+  /*
+   * Obligatoire : une requête qui l'oublierait facturerait un client ponctuel
+   * comme une gestion. Le compilateur signale ainsi chaque requête incomplète.
+   */
+  client_kind: string | null;
   notes: string | null;
   contract_start_date: string | null;
   contract_end_date: string | null;
@@ -31,6 +37,12 @@ export interface ClientFormulaRow {
 }
 
 export interface ClientFormula {
+  /**
+   * Faux pour une prestation ponctuelle : ni mois de gestion, ni coût mensuel.
+   * Le forfait de base de 50 € s'ajoutant même à rythme nul, seul ce drapeau
+   * empêche de facturer une gestion à un client qui n'en a pas.
+   */
+  managed: boolean;
   cadence: MonthlyCadence;
   shooting: ShootingPlan | null;
   customMonthly: CustomMonthlyService | null;
@@ -54,6 +66,7 @@ export function clientFormula(row: ClientFormulaRow): ClientFormula {
   const settings = settingsOf(row.notes);
   const cadence = settings.monthlyCadence;
   return {
+    managed: parseClientKind(row.client_kind) === "gestion",
     cadence: cadence && typeof cadence === "object" ? (cadence as MonthlyCadence) : {},
     shooting: parseShootingPlan(settings.shootingPlan),
     customMonthly: parseCustomMonthly(settings.customMonthlyService),
@@ -67,4 +80,4 @@ export function clientFormula(row: ClientFormulaRow): ClientFormula {
 
 /** Colonnes qu'une requête doit ramener pour que la formule soit complète. */
 export const CLIENT_FORMULA_COLUMNS =
-  "notes, contract_start_date, contract_end_date, pause_start_date, pause_end_date";
+  "client_kind, notes, contract_start_date, contract_end_date, pause_start_date, pause_end_date";

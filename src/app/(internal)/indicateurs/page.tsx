@@ -12,7 +12,7 @@ import {
   SHOOTING_SCORING_FROM,
 } from "@/lib/domain/budget";
 import { healthActions, healthScore, HEALTH_TARGET, type HealthAction, type HealthPillar } from "@/lib/domain/health-score";
-import { clientLifecycle, todayInParis } from "@/lib/domain/client-lifecycle";
+import { clientLifecycle, todayInParis, parseClientKind } from "@/lib/domain/client-lifecycle";
 import { satisfactionPercentage, satisfactionSummary, SATISFACTION_LABELS } from "@/lib/domain/planning";
 import { productionPunctuality } from "@/lib/domain/production-requests";
 import { ticketSlaSummary, TICKET_SLA_HOURS } from "@/lib/domain/ticket-sla";
@@ -50,7 +50,7 @@ async function budgetHealth(
 
   const today = todayInParis();
   const [{ data: clients }, { data: budgets }, { data: lines }, { data: invoices }] = await Promise.all([
-    supabase.from("clients").select("id, notes, is_active, contract_start_date, contract_end_date, pause_start_date, pause_end_date").eq("is_active", true),
+    supabase.from("clients").select("id, notes, is_active, client_kind, contract_start_date, contract_end_date, pause_start_date, pause_end_date").eq("is_active", true),
     supabase.from("client_budgets").select("client_id, billing_mode, budget_cents"),
     supabase.from("client_budget_lines").select("client_id, service_key, label, billing, unit_price_cents, quantity, months, performed_on, billed_directly, forfait_included"),
     supabase.from("client_invoices").select("client_id, period_month, status"),
@@ -68,6 +68,7 @@ async function budgetHealth(
 
   const managed = (clients ?? []).filter((client) => clientLifecycle({
     isActive: client.is_active as boolean,
+    kind: parseClientKind(client.client_kind),
     contractEndDate: client.contract_end_date as string | null,
     pauseStartDate: client.pause_start_date as string | null,
     pauseEndDate: client.pause_end_date as string | null,

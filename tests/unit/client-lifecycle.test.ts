@@ -8,6 +8,7 @@ import {
 
 const base: ClientLifecycleInput = {
   isActive: true,
+  kind: "gestion",
   contractEndDate: null,
   pauseStartDate: null,
   pauseEndDate: null,
@@ -226,5 +227,36 @@ describe("pause jugée à la semaine de production", () => {
       semaine34,
     );
     expect(lifecycle.canProduce).toBe(true);
+  });
+});
+
+
+describe("prestation ponctuelle", () => {
+  it("ne propose aucune fiche à un client ponctuel", () => {
+    /*
+     * Sans ce cas, un client venu pour un seul shooting apparaissait dans le
+     * planning comme « fiche à préparer », et comptait parmi les clients en
+     * gestion au tableau de bord.
+     */
+    const cycle = clientLifecycle({ ...base, kind: "ponctuel" }, today);
+    expect(cycle.state).toBe("one_shot");
+    expect(cycle.canProduce).toBe(false);
+    expect(cycle.label).toBe("Prestation ponctuelle");
+  });
+
+  it("laisse l'archivage primer sur le ponctuel", () => {
+    expect(clientLifecycle({ ...base, kind: "ponctuel", isActive: false }, today).state).toBe("archived");
+  });
+
+  it("ignore les dates de gestion, sans objet pour un one-shot", () => {
+    const cycle = clientLifecycle({
+      ...base, kind: "ponctuel",
+      pauseStartDate: "2026-08-01", pauseEndDate: "2026-08-31",
+    }, today);
+    expect(cycle.state).toBe("one_shot");
+  });
+
+  it("vaut aussi à la semaine", () => {
+    expect(clientLifecycleForWeek({ ...base, kind: "ponctuel" }, "2026-08-10").canProduce).toBe(false);
   });
 });

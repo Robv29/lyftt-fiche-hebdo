@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { Icon } from "@/components/Icon";
 import { BILLING_MODE_LABELS, billableLines, budgetSummary, formatEuros, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
-import { clientLifecycle, todayInParis } from "@/lib/domain/client-lifecycle";
+import { clientLifecycle, todayInParis, parseClientKind } from "@/lib/domain/client-lifecycle";
 import { invoiceMonths, pendingInvoiceCount, type InvoiceStatus } from "@/lib/domain/invoicing";
 import { syncAllManagementMonths } from "@/lib/budget/management-months";
 
@@ -19,6 +19,7 @@ interface ClientRow {
   pause_start_date: string | null;
   pause_end_date: string | null;
   is_active: boolean;
+  client_kind: string | null;
 }
 
 export default async function BudgetPage() {
@@ -37,7 +38,7 @@ export default async function BudgetPage() {
 
   const { data: clients } = await supabase
     .from("clients")
-    .select("id, name, notes, contract_start_date, contract_end_date, pause_start_date, pause_end_date, is_active")
+    .select("id, name, notes, contract_start_date, contract_end_date, pause_start_date, pause_end_date, is_active, client_kind")
     .eq("is_active", true)
     .order("name");
 
@@ -94,6 +95,7 @@ export default async function BudgetPage() {
    */
   const managed = ((clients ?? []) as ClientRow[]).filter((client) => clientLifecycle({
     isActive: client.is_active,
+    kind: parseClientKind(client.client_kind),
     contractEndDate: client.contract_end_date,
     pauseStartDate: client.pause_start_date,
     pauseEndDate: client.pause_end_date,

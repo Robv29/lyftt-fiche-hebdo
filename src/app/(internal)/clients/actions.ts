@@ -298,6 +298,157 @@ function slugify(name: string): string {
     .slice(0, 60) || "client";
 }
 
+/*
+ * Prestation ponctuelle : ce qu'il faut, et rien de ce qui ne sert qu'à la
+ * gestion. Pas de hashtags, de réseaux, de groupe WhatsApp, de jours de
+ * publication, d'échéance de validation ni de rythme — tout cela alimente les
+ * fiches hebdomadaires, qu'un one-shot n'aura jamais.
+ *
+ * Schéma séparé plutôt que champs rendus facultatifs dans celui de la gestion :
+ * le chemin de la gestion reste ainsi identique à l'octet près, et un client en
+ * gestion ne peut pas se retrouver créé à moitié parce qu'une case serait
+ * devenue facultative.
+ */
+const oneShotSchema = z.object({
+  name: z.string().trim().min(2, "Le nom du client est requis.").max(120, "Nom de client trop long (120 caractères maximum)."),
+  contacts: z.array(z.object({
+    firstName: z.string().trim().min(1, "Le prénom du contact est requis."),
+    lastName: z.string().trim().min(1, "Le nom du contact est requis."),
+    phone: z.string().trim().min(8, "Le téléphone du contact est requis.").max(30, "Téléphone trop long (30 caractères maximum)."),
+    email: z.string().trim().email("E-mail invalide."),
+  })).min(1, "Au moins un contact est requis."),
+  activity: z.string().trim().min(2, "L’activité est requise.").max(120, "Activité trop longue (120 caractères maximum)."),
+  // Facultatif : un client venu pour un seul shooting n'a pas toujours de site.
+  website: z.string().trim().url("L’adresse du site internet est invalide.").optional().or(z.literal("")),
+  // La commune place le client sur la carte des implantations.
+  city: z.string().trim().min(2, "La ville est requise.").max(100, "Ville trop longue (100 caractères maximum)."),
+  postalCode: z.string().regex(/^\d{5}$/, "Le code postal doit contenir 5 chiffres."),
+  clientType: z.enum(LYFTT_CLIENT_TYPE_IDS),
+  prestation: z.string().trim().min(3, "Décrivez la prestation vendue.").max(300, "Description trop longue (300 caractères maximum)."),
+});
+
+export async function createOneShotClient(formData: FormData): Promise<ClientActionResult> {
+  const profile = await requireEditorial();
+  if (!profile) return { ok: false, message: "Action non autorisée." };
+
+  const contacts = clientFormValues(formData).contacts;
+  const parsed = oneShotSchema.safeParse({
+    name: formData.get("name"),
+    contacts,
+    activity: formData.get("activity"),
+    // Même normalisation que la gestion : « monsite.fr » devient une adresse valide.
+    website: normalizeWebsite(formData.get("website")) ?? "",
+    city: formData.get("city"),
+    postalCode: formData.get("postalCode"),
+    clientType: formData.get("clientType"),
+    prestation: formData.get("prestation"),
+  });
+  if (!parsed.success) {
+    return {
+      ok: false,
+      message: parsed.error.issues[0]?.message ?? "Formulaire invalide.",
+      fieldErrors: fieldErrorsFrom(parsed.error),
+    };
+  }
+  const input = parsed.data;
+  const admin = createSupabaseAdminClient();
+
+  let slug = slugify(input.name);
+  const { data: taken, error: slugError } = await admin.from("clients").select("id").eq("slug", slug).maybeSingle();
+  if (slugError) return { ok: false, message: `Création impossible : ${slugError.message}` };
+  if (taken) slug = `${slug}-${Date.now().toString(36).slice(-4)}`;
+
+  /*
+   * Aucun réglage de gestion n'est écrit : pas de rythme, pas de forfait.
+   * Seul le profil utile ailleurs est conservé — l'activité et la commune
+   * pour la carte, le secteur pour ses filtres, et la prestation vendue.
+   */
+  const { data: client, error } = await admin
+    .from("clients")
+    .insert({
+      name: sanitizeText(input.name, 120),
+      slug,
+      client_kind: "ponctuel",
+      notes: JSON.stringify({
+        brandProfile: {
+          clientType: input.clientType,
+          activity: sanitizeText(input.activity, 120),
+          website: input.website || "",
+          city: sanitizeText(input.city, 100),
+          postalCode: input.postalCode,
+        },
+        prestationPonctuelle: sanitizeText(input.prestation, 300),
+      }),
+    })
+    .select("id")
+    .single();
+  if (error || !client) return { ok: false, message: `Client non créé : ${error?.message ?? "erreur"}` };
+
+  // Le logo est facultatif pour un one-shot : on le prend s'il est fourni.
+  const logo = await uploadClientLogo(client.id, formData.get("logo"), false);
+  if (logo.error) {
+    await admin.from("clients").delete().eq("id", client.id);
+    return { ok: false, message: logo.error };
+  }
+  if (logo.path) {
+    await admin.from("clients").update({ logo_url: logo.path }).eq("id", client.id);
+  }
+
+  const { error: contactError } = await admin.from("client_contacts").insert(
+    input.contacts.map((contact) => ({
+      client_id: client.id,
+      first_name: sanitizeText(contact.firstName, 80),
+      last_name: sanitizeText(contact.lastName, 80),
+      phone: contact.phone || null,
+      email: contact.email || null,
+      is_primary: true,
+      // Aucun planning n'est envoyé à un client ponctuel.
+      receives_planning: false,
+    })),
+  );
+  if (contactError) {
+    if (logo.path) await removeClientLogo(logo.path);
+    await admin.from("clients").delete().eq("id", client.id);
+    return { ok: false, message: `Contact non enregistré : ${contactError.message}` };
+  }
+
+  /*
+   * La personne qui crée le client en devient le référent : sans rattachement,
+   * seule la direction le verrait, et le commercial qui a vendu la prestation
+   * perdrait la trace de son propre client.
+   */
+  const { error: assignmentError } = await admin.from("client_assignments").insert({
+    client_id: client.id,
+    profile_id: profile.id,
+    role: "community_manager",
+  });
+  if (assignmentError) {
+    if (logo.path) await removeClientLogo(logo.path);
+    await admin.from("clients").delete().eq("id", client.id);
+    return { ok: false, message: `Référent non enregistré : ${assignmentError.message}` };
+  }
+
+  await syncClientLocation(admin, client.id, input.city, input.postalCode);
+
+  const transmissionId = z.string().uuid().safeParse(formData.get("transmissionId"));
+  if (transmissionId.success) {
+    const { error: transmissionError } = await admin
+      .from("client_transmissions")
+      .update({ client_id: client.id, statut: "traite" })
+      .eq("id", transmissionId.data);
+    if (transmissionError) console.error("[clients] fiche transmise non rattachée", transmissionError.message);
+    else revalidatePath("/transmission");
+  }
+
+  revalidatePath("/clients");
+  revalidatePath("/implantations");
+  return {
+    ok: true,
+    message: `${input.name} a été créé en prestation ponctuelle. Ajoutez la prestation vendue dans son budget.`,
+    clientId: client.id,
+  };
+}
+
 export async function createClient(formData: FormData): Promise<ClientActionResult> {
   const profile = await requireEditorial();
   if (!profile) return { ok: false, message: "Action non autorisée." };
@@ -465,7 +616,7 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
   const admin = createSupabaseAdminClient();
   const { data: current } = await admin
     .from("clients")
-    .select("id, notes, logo_url, latitude, contract_start_date, contract_end_date, pause_start_date, pause_end_date, client_contacts ( id, is_primary )")
+    .select("id, client_kind, notes, logo_url, latitude, contract_start_date, contract_end_date, pause_start_date, pause_end_date, client_contacts ( id, is_primary )")
     .eq("id", clientId.data)
     .maybeSingle();
   if (!current) return { ok: false, message: "Client introuvable." };
@@ -572,6 +723,7 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
   await syncManagementMonths(admin, {
     id: clientId.data,
     ...clientFormula({
+      client_kind: current.client_kind,
       notes: JSON.stringify(notes),
       contract_start_date: current.contract_start_date,
       contract_end_date: current.contract_end_date,
@@ -805,4 +957,42 @@ export async function deleteClient(
   revalidatePath("/publications");
   revalidatePath("/implantations");
   return { ok: true, message: `${client.name} a été supprimé.` };
+}
+
+
+/**
+ * Passe un client ponctuel en gestion des réseaux sociaux.
+ *
+ * Seul le type change. Les réglages de gestion — rythme, jours, hashtags —
+ * se saisissent ensuite dans l'éditeur habituel, qui apparaît dès que le
+ * client est en gestion. Rien n'est inventé à sa place.
+ *
+ * L'inverse n'est pas proposé ici : retirer la gestion d'un client en cours
+ * ferait disparaître ses mois non facturés et ses fiches du planning, un
+ * geste trop lourd pour un simple bouton.
+ */
+export async function convertToManagement(clientId: string): Promise<ClientActionResult> {
+  const profile = await requireEditorial();
+  if (!profile) return { ok: false, message: "Action non autorisée." };
+
+  const id = z.string().uuid().safeParse(clientId);
+  if (!id.success) return { ok: false, message: "Client invalide." };
+
+  // Périmètre vérifié sous RLS, comme partout ailleurs.
+  const scoped = await createSupabaseServerClient();
+  const { data: allowed } = await scoped.from("clients").select("id").eq("id", id.data).maybeSingle();
+  if (!allowed) return { ok: false, message: "Client introuvable ou accès refusé." };
+
+  const { error } = await createSupabaseAdminClient()
+    .from("clients")
+    .update({ client_kind: "gestion" })
+    .eq("id", id.data)
+    .eq("client_kind", "ponctuel");
+  if (error) return { ok: false, message: `Conversion impossible : ${error.message}` };
+
+  revalidatePath("/clients");
+  revalidatePath(`/clients/${id.data}`);
+  revalidatePath("/fiches");
+  revalidatePath("/");
+  return { ok: true, message: "Client passé en gestion. Renseignez maintenant son rythme et ses jours de publication." };
 }

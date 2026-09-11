@@ -1277,3 +1277,34 @@ describe("la note ne juge que les shootings à venir", () => {
       { isSettledMonth: () => false })).toHaveLength(1);
   });
 });
+
+describe("client ponctuel dans la synthèse budget", () => {
+  const base = {
+    billingMode: "comptant" as const,
+    annualBudgetCents: 0,
+    lines: [],
+    cadence: { photo: 0, video: 0, story: 0, visual: 0 },
+    contractStartDate: null,
+    contractEndDate: null,
+    today: "2026-09-11",
+  };
+
+  it("ne prête aucun coût mensuel à un client ponctuel", () => {
+    /*
+     * Le forfait de base de 50 € s'ajoute même à rythme nul : sans drapeau, un
+     * client venu pour un seul shooting se voyait attribuer un abonnement.
+     */
+    expect(budgetSummary({ ...base, managed: false }).monthlyCadenceCostCents).toBe(0);
+    expect(budgetSummary({ ...base, managed: true }).monthlyCadenceCostCents).toBe(BASE_MONTHLY_FEE_CENTS);
+  });
+
+  it("ne réclame pas de dates de gestion à un client ponctuel", () => {
+    const titres = budgetSummary({ ...base, managed: false }).alerts.map((a) => a.title);
+    expect(titres).not.toContain("Date de début de gestion manquante");
+    expect(titres).not.toContain("Date de fin de gestion manquante");
+  });
+
+  it("garde le comportement historique quand le drapeau est absent", () => {
+    expect(budgetSummary(base).monthlyCadenceCostCents).toBe(BASE_MONTHLY_FEE_CENTS);
+  });
+});

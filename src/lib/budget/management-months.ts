@@ -46,14 +46,22 @@ export async function syncManagementMonths(
     client.customMonthly ?? null,
     client.baseFeeCents ?? null,
   );
-  const expected = dueManagementMonths({
-    contractStartDate: client.contractStartDate,
-    contractEndDate: client.contractEndDate,
-    monthlyCostCents,
-    today,
-    pauseStartDate: client.pauseStartDate ?? null,
-    pauseEndDate: client.pauseEndDate ?? null,
-  });
+  /*
+   * Prestation ponctuelle : aucun mois n'est dû. On réconcilie quand même,
+   * avec une liste vide — c'est ce qui retire les mois inscrits du temps où le
+   * client était en gestion et qui ne sont pas encore facturés. Sauter l'appel
+   * les aurait laissés à l'addition indéfiniment.
+   */
+  const expected = client.managed
+    ? dueManagementMonths({
+      contractStartDate: client.contractStartDate,
+      contractEndDate: client.contractEndDate,
+      monthlyCostCents,
+      today,
+      pauseStartDate: client.pauseStartDate ?? null,
+      pauseEndDate: client.pauseEndDate ?? null,
+    })
+    : [];
   /*
    * Sans date de début, rien n'est calculable : on ne retire rien.
    *
@@ -63,7 +71,8 @@ export async function syncManagementMonths(
    * ils restaient facturés. Une gestion qui n'a pas commencé n'a pas de mois
    * dus — mais elle peut en avoir d'inscrits à tort, et il faut les enlever.
    */
-  if (!client.contractStartDate) return 0;
+  // Un client ponctuel se réconcilie même sans date : il n'a pas de mois dus.
+  if (client.managed && !client.contractStartDate) return 0;
 
   const [{ data: existing }, { data: settled }] = await Promise.all([
     supabase
@@ -197,7 +206,8 @@ export async function syncAllManagementMonths(
 ): Promise<number> {
   const results = await Promise.all(
     clients
-      .filter((client) => client.contract_start_date)
+      // Un ponctuel passe même sans date : il faut retirer ses mois caducs.
+      .filter((client) => client.contract_start_date || clientFormula(client).managed === false)
       .map(async (client) => {
         try {
           /*

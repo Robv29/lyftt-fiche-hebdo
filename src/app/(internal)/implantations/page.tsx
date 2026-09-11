@@ -1,5 +1,5 @@
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
-import { clientLifecycle } from "@/lib/domain/client-lifecycle";
+import { clientLifecycle, parseClientKind } from "@/lib/domain/client-lifecycle";
 import { LYFTT_CLIENT_TYPE_IDS, type LyfttClientType } from "@/lib/domain/hashtags";
 import type { ImplantationInput, ImplantationState } from "@/lib/domain/implantations";
 import { ImplantationsMap } from "./ImplantationsMap";
@@ -15,7 +15,11 @@ export const dynamic = "force-dynamic";
  */
 
 function isImplantation(state: string, endDate: string | null, year: number): boolean {
-  if (state === "active" || state === "paused") return true;
+  /*
+   * Un client ponctuel est un endroit où l'agence a travaillé : il figure sur
+   * la carte, sous sa propre couleur.
+   */
+  if (state === "active" || state === "paused" || state === "one_shot") return true;
   // Une gestion terminée ne reste sur la carte que le temps de l'année civile.
   if (state === "ended" && endDate) return Number(endDate.slice(0, 4)) === year;
   return false;
@@ -34,7 +38,7 @@ export default async function ImplantationsPage() {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("clients")
-    .select("id, name, notes, latitude, longitude, geo_label, is_active, contract_start_date, contract_end_date, pause_start_date, pause_end_date")
+    .select("id, name, notes, latitude, longitude, geo_label, is_active, client_kind, contract_start_date, contract_end_date, pause_start_date, pause_end_date")
     .order("name");
 
   if (error) {
@@ -59,6 +63,7 @@ export default async function ImplantationsPage() {
   for (const row of data ?? []) {
     const lifecycle = clientLifecycle({
       isActive: row.is_active,
+      kind: parseClientKind(row.client_kind),
       contractStartDate: row.contract_start_date,
       contractEndDate: row.contract_end_date,
       pauseStartDate: row.pause_start_date,

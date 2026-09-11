@@ -3,6 +3,7 @@ import { clientFormula } from "@/lib/domain/client-formula";
 import { cadenceMonthlyCostCents } from "@/lib/domain/budget";
 
 const row = (notes: Record<string, unknown>, over: Record<string, unknown> = {}) => ({
+  client_kind: "gestion",
   notes: JSON.stringify(notes),
   contract_start_date: "2026-09-01",
   contract_end_date: null,
@@ -32,9 +33,22 @@ describe("clientFormula", () => {
   });
 
   it("résiste à des réglages illisibles plutôt que de planter l'écran", () => {
-    const f = clientFormula({ notes: "{pas du json", contract_start_date: null, contract_end_date: null });
+    const f = clientFormula({ client_kind: null, notes: "{pas du json", contract_start_date: null, contract_end_date: null });
     expect(f.cadence).toEqual({});
     expect(f.baseFeeCents).toBeNull();
     expect(f.pauseStartDate).toBeNull();
+  });
+});
+
+describe("prestation ponctuelle", () => {
+  it("marque la formule comme hors gestion", () => {
+    expect(clientFormula(row({}, { client_kind: "ponctuel" })).managed).toBe(false);
+    expect(clientFormula(row({})).managed).toBe(true);
+  });
+
+  it("traite une valeur inconnue comme une gestion, le cas historique", () => {
+    // Les 33 clients existants n'ont jamais eu d'autre nature.
+    expect(clientFormula(row({}, { client_kind: null })).managed).toBe(true);
+    expect(clientFormula(row({}, { client_kind: "autre" })).managed).toBe(true);
   });
 });

@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { parseClientKind } from "@/lib/domain/client-lifecycle";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { ClientAdmin } from "./ClientAdmin";
 import { resolveClientLogoUrl } from "@/lib/media/client-logo";
@@ -23,7 +24,7 @@ export default async function ClientsPage({
   const supabase = await createSupabaseServerClient();
 
   const [{ data: clients }, { data: managers }] = await Promise.all([
-    supabase.from("clients").select("id, name, logo_url, notes, is_active, validation_deadline_weekday, validation_deadline_time, approval_policy, contract_start_date, contract_end_date, pause_start_date, pause_end_date, client_contacts ( first_name, last_name, phone, email ), client_assignments ( role, profiles ( full_name ) )").order("name"),
+    supabase.from("clients").select("id, name, logo_url, notes, is_active, client_kind, validation_deadline_weekday, validation_deadline_time, approval_policy, contract_start_date, contract_end_date, pause_start_date, pause_end_date, client_contacts ( first_name, last_name, phone, email ), client_assignments ( role, profiles ( full_name ) )").order("name"),
     supabase.from("profiles").select("id, full_name").in("role", ["community_manager", "super_admin", "production_manager"]).eq("is_active", true).order("full_name"),
   ]);
 
@@ -43,7 +44,8 @@ export default async function ClientsPage({
        * Réservé à la direction, comme tout l'écran budget : un montant lisible
        * par toute l'équipe n'était pas le choix fait jusqu'ici.
        */
-      const monthlyCostCents = profile.role === "super_admin"
+      // Un client ponctuel n'a pas d'abonnement : aucun montant mensuel à afficher.
+      const monthlyCostCents = profile.role === "super_admin" && parseClientKind(c.client_kind) === "gestion"
         ? cadenceMonthlyCostCents(
             cadence,
             parseShootingPlan(settings.shootingPlan),
@@ -51,7 +53,7 @@ export default async function ClientsPage({
             parseBaseFee(settings.baseMonthlyFeeCents),
           )
         : null;
-      return { id:c.id, name:c.name, isActive:c.is_active, deadlineWeekday:c.validation_deadline_weekday, deadlineTime:c.validation_deadline_time, approvalPolicy:c.approval_policy, contactName:contact ? `${contact.first_name} ${contact.last_name ?? ""}`.trim() : null, contactEmail:contact?.email ?? null, contactPhone:contact?.phone ?? null, managerName:assignments.find((assignment)=>assignment.role==="community_manager")?.profiles?.full_name ?? "Non assigné", contractStartDate:c.contract_start_date, contractEndDate:c.contract_end_date, pauseStartDate:c.pause_start_date, pauseEndDate:c.pause_end_date, logoUrl:await resolveClientLogoUrl(c.logo_url), cadenceLabel:`${Number(cadence.photo??0)} photo · ${Number(cadence.video??0)} vidéo · ${Number(cadence.story??0)} story · ${Number(cadence.visual??0)} visuel`, monthlyCostCents };
+      return { id:c.id, name:c.name, kind:parseClientKind(c.client_kind), isActive:c.is_active, deadlineWeekday:c.validation_deadline_weekday, deadlineTime:c.validation_deadline_time, approvalPolicy:c.approval_policy, contactName:contact ? `${contact.first_name} ${contact.last_name ?? ""}`.trim() : null, contactEmail:contact?.email ?? null, contactPhone:contact?.phone ?? null, managerName:assignments.find((assignment)=>assignment.role==="community_manager")?.profiles?.full_name ?? "Non assigné", contractStartDate:c.contract_start_date, contractEndDate:c.contract_end_date, pauseStartDate:c.pause_start_date, pauseEndDate:c.pause_end_date, logoUrl:await resolveClientLogoUrl(c.logo_url), cadenceLabel:`${Number(cadence.photo??0)} photo · ${Number(cadence.video??0)} vidéo · ${Number(cadence.story??0)} story · ${Number(cadence.visual??0)} visuel`, monthlyCostCents };
     }))} managers={(managers ?? []).map((m) => ({ id:m.id, name:m.full_name }))} readOnly={readOnly} prefillName={(nom ?? "").slice(0, 120)} transmissionId={transmission ?? ""}/>
   </div>;
 }

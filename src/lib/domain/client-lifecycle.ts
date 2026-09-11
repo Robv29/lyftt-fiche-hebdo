@@ -8,11 +8,32 @@
  * Ici, la lecture est toujours juste.
  */
 
-export type ClientLifecycleState = "active" | "not_started" | "paused" | "ended" | "archived";
+export type ClientLifecycleState = "active" | "not_started" | "paused" | "ended" | "archived" | "one_shot";
+
+/**
+ * Nature de la relation.
+ *
+ * `gestion` : gestion des réseaux sociaux, avec fiches hebdomadaires et mois
+ * facturés. `ponctuel` : une prestation one-shot — un shooting, un site —
+ * sans rien de tout cela.
+ */
+export type ClientKind = "gestion" | "ponctuel";
+
+/** Lecture tolérante d'une valeur venue de la base : l'inconnu vaut gestion. */
+export function parseClientKind(value: unknown): ClientKind {
+  return value === "ponctuel" ? "ponctuel" : "gestion";
+}
 
 export interface ClientLifecycleInput {
   /** Archivage manuel, qui prime sur tout le reste. */
   isActive: boolean;
+  /*
+   * Obligatoire, et c'est voulu. Un appelant qui l'omettrait traiterait un
+   * client ponctuel comme une gestion : il lui proposerait des fiches, le
+   * compterait « en gestion », le mettrait en retard. Le rendre obligatoire
+   * fait trouver chaque appelant par le compilateur plutôt que par un bug.
+   */
+  kind: ClientKind;
   /** Début de gestion. Rien n'est produit avant cette date. */
   contractStartDate?: string | null;
   /** Fin de gestion. Le client est archivé le lendemain de cette date. */
@@ -60,6 +81,20 @@ export function clientLifecycle(
       canProduce: false,
       label: "Archivé",
       detail: "Archivé manuellement.",
+    };
+  }
+
+  /*
+   * Prestation ponctuelle : pas de gestion, donc pas de fiche à produire.
+   * Placée juste après l'archivage, qui prime sur tout ; avant les dates de
+   * gestion, qui n'ont pas de sens pour un one-shot.
+   */
+  if (input.kind === "ponctuel") {
+    return {
+      state: "one_shot",
+      canProduce: false,
+      label: "Prestation ponctuelle",
+      detail: "Sans gestion des réseaux : aucune fiche hebdomadaire.",
     };
   }
 

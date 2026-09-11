@@ -9,7 +9,7 @@ import {
   requireEditorialProfile,
 } from "@/lib/internal/authorization";
 import { isoWeekStart } from "@/lib/domain/deadline";
-import { clientLifecycleForWeek, productionBlockedMessage } from "@/lib/domain/client-lifecycle";
+import { clientLifecycleForWeek, productionBlockedMessage, parseClientKind } from "@/lib/domain/client-lifecycle";
 import { normalizeHashtags, sanitizeText } from "@/lib/security/sanitize";
 import { SOCIAL_NETWORKS } from "@/lib/domain/types";
 
@@ -94,13 +94,14 @@ export async function createSheet(formData: FormData): Promise<SheetActionResult
   const admin = createSupabaseAdminClient();
   const { data: clientRow } = await admin
     .from("clients")
-    .select("is_active, contract_start_date, contract_end_date, pause_start_date, pause_end_date")
+    .select("is_active, client_kind, contract_start_date, contract_end_date, pause_start_date, pause_end_date")
     .eq("id", input.clientId)
     .maybeSingle();
 
   if (clientRow) {
     const lifecycle = clientLifecycleForWeek({
       isActive: clientRow.is_active,
+      kind: parseClientKind(clientRow.client_kind),
       contractStartDate: clientRow.contract_start_date,
       contractEndDate: clientRow.contract_end_date,
       pauseStartDate: clientRow.pause_start_date,
