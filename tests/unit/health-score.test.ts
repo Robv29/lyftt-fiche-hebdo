@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { delayScore, healthActions, healthScore, MIN_SATISFACTION_ANSWERS } from "@/lib/domain/health-score";
+import {
+  delayScore,
+  HEALTH_ALERT,
+  HEALTH_TARGET,
+  healthActions,
+  healthScore,
+  healthTone,
+  MIN_SATISFACTION_ANSWERS,
+  topHealthAction,
+} from "@/lib/domain/health-score";
 
 const vide = {
   satisfactionPercentage: null, satisfactionAnswers: 0,
@@ -125,5 +134,50 @@ describe("conseils pour atteindre l'objectif", () => {
       ...complet, satisfactionPercentage: 95, shootingsCategorised: 95,
     }));
     expect(actions.filter((action) => action.percentage !== null)).toHaveLength(0);
+  });
+});
+
+describe("score lu d'un coup d'œil", () => {
+  it("colore selon l'objectif et le seuil d'alerte", () => {
+    expect(healthTone(HEALTH_TARGET)).toBe("success");
+    expect(healthTone(100)).toBe("success");
+    expect(healthTone(HEALTH_TARGET - 1)).toBe("warning");
+    expect(healthTone(HEALTH_ALERT)).toBe("warning");
+    expect(healthTone(HEALTH_ALERT - 1)).toBe("danger");
+    expect(healthTone(0)).toBe("danger");
+  });
+
+  // Une période sans donnée n'est pas une agence en alerte.
+  it("ne colore pas un score absent", () => {
+    expect(healthTone(null)).toBe("info");
+  });
+
+  const complet = {
+    ...vide,
+    satisfactionPercentage: 80, satisfactionAnswers: 5,
+    viewRate: 100, noCorrectionRate: 100,
+    sentBeforeDeadlineRate: 100, correctionHours: 1, productionPunctuality: null,
+    budgetsComplete: 100, shootingsCategorised: 20, ticketsOnTime: 100,
+  };
+
+  it("retient l'action la plus payante parmi les mesures", () => {
+    const action = topHealthAction(healthActions(healthScore(complet)));
+    expect(action?.key).toBe("shootings");
+  });
+
+  /*
+   * Les mesures absentes sont en fin de liste, mais une liste qui n'a qu'elles
+   * ne doit pas en faire l'action du jour : elles ne rapportent rien.
+   */
+  it("ne propose jamais une mesure absente", () => {
+    const actions = healthActions(healthScore({
+      ...complet, satisfactionPercentage: 95, shootingsCategorised: 95,
+    }));
+    expect(actions.some((action) => action.percentage === null)).toBe(true);
+    expect(topHealthAction(actions)).toBeNull();
+  });
+
+  it("ne propose rien sur une période vide", () => {
+    expect(topHealthAction(healthActions(healthScore(vide)))).toBeNull();
   });
 });

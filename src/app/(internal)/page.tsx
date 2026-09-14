@@ -16,6 +16,9 @@ import {
   type BudgetLine,
 } from "@/lib/domain/budget";
 import { clientLifecycle, todayInParis as civilToday, parseClientKind } from "@/lib/domain/client-lifecycle";
+import { HEALTH_TARGET, healthTone, topHealthAction } from "@/lib/domain/health-score";
+import { defaultMetricsSince, readAgencyMetrics, type AgencyMetrics } from "@/lib/metrics/agency-metrics";
+import { ScoreRing } from "@/components/ScoreRing";
 import { ShootingReminders } from "./ShootingReminders";
 
 function todayInParis(): string {
@@ -32,6 +35,19 @@ export default async function DashboardPage() {
   const today = todayInParis();
 
   const isAdmin = profile?.role === "super_admin";
+
+  /*
+   * Score de santé, lu exactement comme Indicateurs le lit sans paramètre :
+   * même module, même fenêtre, même rôle. Les logos des clients qui ont noté
+   * ne sont pas signés : l'encart ne les montre pas.
+   *
+   * Il part tout de suite mais n'est attendu qu'au rendu. Placé dans le premier
+   * lot, il retenait les shootings et les budgets, qui n'ont besoin que des
+   * clients. Le `catch` vide évite un rejet non suivi pendant ces attentes ;
+   * l'`await` plus bas relève toujours l'erreur.
+   */
+  const metricsPromise = readAgencyMetrics(supabase, { since: defaultMetricsSince(), isAdmin, withSatisfactionLogos: false });
+  metricsPromise.catch(() => {});
 
   const [ticketsResult, sheetsResult, publicationsResult, clientsResult, preparationResult] = await Promise.all([
     supabase.from("client_tickets").select("id, ticket_number, title, ticket_type, status, priority, due_at, created_at, clients ( name )").not("status", "in", "(closed,cancelled,rejected,approved_by_client)").order("created_at", { ascending: false }).limit(50),
@@ -173,6 +189,7 @@ export default async function DashboardPage() {
     }).length;
   }
 
+  const metrics = await metricsPromise;
   const tickets = ticketsResult.data ?? [];
   const sheets = sheetsResult.data ?? [];
   const publications = publicationsResult.data ?? [];
@@ -394,10 +411,101 @@ export default async function DashboardPage() {
           )}
         </section>
 
-        {/* Rien à afficher tant qu'aucun shooting n'arrive à échéance. */}
-        <ShootingReminders rows={shootingRows}/>
+        {/*
+          Colonne de droite : la santé de l'agence, puis les shootings. L'encart
+          de santé est toujours là ; les shootings n'apparaissent qu'à
+          l'approche d'une échéance, et la colonne ne reste donc jamais vide.
+        */}
+        <div className="grid min-w-0 content-start gap-4 xl:gap-3">
+          <AgencyHealth metrics={metrics}/>
+          {/* Rien à afficher tant qu'aucun shooting n'arrive à échéance. */}
+          <ShootingReminders rows={shootingRows}/>
+        </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Santé de l'agence, en encart.
+ *
+ * Le score ne vivait que dans Indicateurs : on ne le voyait qu'en allant le
+ * chercher, donc rarement. L'accueil en montre l'essentiel — la note, ses
+ * trois piliers et le geste qui rapporte le plus — et renvoie au détail pour
+ * le reste. Rien n'est recalculé ici : chaque chiffre vient de
+ * `readAgencyMetrics`, la lecture d'Indicateurs.
+ */
+function AgencyHealth({ metrics }: { metrics: AgencyMetrics }) {
+  const { health } = metrics;
+  const tone = healthTone(health.score);
+  const next = topHealthAction(metrics.healthActions);
+
+  return (
+    <section className="section-card" aria-labelledby="agency-health-title">
+      <div className="section-card-header">
+        <div className="min-w-0">
+          <p className="eyebrow">Score de santé · {metrics.periodLabel}</p>
+          <h2 id="agency-health-title" className="mt-1 font-semibold">Santé de l’agence</h2>
+        </div>
+        {/* L'objectif prend la couleur du score : on sait d'un regard s'il est tenu. */}
+        <span className={`badge shrink-0 insights-tone-${tone} bg-[var(--kpi-soft)] text-[var(--kpi-accent)]`}>
+          Objectif {HEALTH_TARGET} %
+        </span>
+      </div>
+
+      <div className="flex items-center gap-4 px-5 py-4">
+        <ScoreRing value={health.score} label="santé" tone={tone} compact/>
+        {/*
+          Les piliers disent d'où vient la note. « non mesuré » plutôt qu'un
+          zéro : une période sans commande interne n'est pas une agence lente.
+        */}
+        <ul className="min-w-0 flex-1 space-y-2.5">
+          {health.pillars.map((pillar) => (
+            <li key={pillar.key}>
+              <div className="flex items-baseline justify-between gap-2 text-xs">
+                <span className="truncate text-ink-soft">{pillar.label}</span>
+                <strong className={`shrink-0 ${pillar.percentage === null ? "font-medium text-ink-faint" : "text-ink"}`}>
+                  {pillar.percentage === null ? "non mesuré" : `${pillar.percentage} %`}
+                </strong>
+              </div>
+              <div className="progress-track mt-1 h-1.5" role="presentation">
+                <span className="progress-fill" style={{ transform: `scaleX(${(pillar.percentage ?? 0) / 100})` }}/>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      {/*
+        Un seul conseil, le plus payant. La liste complète est dans Indicateurs ;
+        ici, une ligne suffit pour savoir par où commencer aujourd'hui.
+      */}
+      <div className="border-t border-line px-5 py-3">
+        {health.score === null ? (
+          <p className="text-xs text-ink-faint">Pas encore assez de données sur la période pour noter l’agence.</p>
+        ) : next ? (
+          <div className="min-w-0">
+            <p className="text-[11px] text-ink-faint">Action la plus payante</p>
+            <div className="mt-1 flex min-w-0 items-center gap-2">
+              <span className="badge shrink-0 bg-[#e8f2ff] text-[#0b5e9f]">+{next.gain} pts</span>
+              <strong className="min-w-0 truncate text-sm">{next.label}</strong>
+            </div>
+            <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-ink-soft">{next.advice}</p>
+          </div>
+        ) : (
+          <p className="flex items-center gap-2 text-sm font-semibold">
+            <Icon name="check" className="h-4 w-4 text-[#2bb981]"/>Objectif atteint
+          </p>
+        )}
+      </div>
+
+      <Link
+        href="/indicateurs"
+        className="block border-t border-line px-5 py-2.5 text-center text-xs font-semibold text-[#0b63ad] hover:bg-[#f7fafe]"
+      >
+        Voir le détail →
+      </Link>
+    </section>
   );
 }
 

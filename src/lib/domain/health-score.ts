@@ -297,3 +297,35 @@ export function healthActions(health: HealthScore, target: number = HEALTH_TARGE
     return b.gain - a.gain;
   });
 }
+
+/**
+ * Seuil d'alerte du score global.
+ *
+ * Entre l'objectif et ce seuil, l'écart se rattrape en quelques gestes ; en
+ * deçà, près d'un tiers de la note manque et ce n'est plus un détail à
+ * surveiller. Le seuil vit ici plutôt que dans un écran : sans lui, chaque
+ * écran choisirait sa couleur, et l'accueil pourrait dire « orange » là où
+ * Indicateurs dirait « rouge ».
+ */
+export const HEALTH_ALERT = 70;
+
+export type HealthTone = "success" | "warning" | "danger" | "info";
+
+/** Niveau du score global : objectif tenu, à surveiller, en alerte — ou non mesuré. */
+export function healthTone(score: number | null): HealthTone {
+  if (score === null) return "info";
+  if (score >= HEALTH_TARGET) return "success";
+  if (score >= HEALTH_ALERT) return "warning";
+  return "danger";
+}
+
+/**
+ * Le geste le plus payant, pour un encart qui n'a la place que d'un conseil.
+ *
+ * Les actions arrivent triées par gain et les mesures absentes ferment la
+ * marche. On prend donc la première mesurée : une mesure vide ne rapporte
+ * rien, et la mettre en tête promettrait « +0 pts » à la place d'un vrai levier.
+ */
+export function topHealthAction(actions: readonly HealthAction[]): HealthAction | null {
+  return actions.find((action) => action.percentage !== null) ?? null;
+}

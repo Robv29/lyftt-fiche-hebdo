@@ -237,6 +237,10 @@
 .insights-ring.light>span { background:rgba(14,67,112,.72); box-shadow:inset 0 0 0 1px rgba(255,255,255,.12); backdrop-filter:blur(8px); }
 .insights-ring.light strong { color:#fff; }
 .insights-ring.light small { color:rgba(255,255,255,.65); }
+/* Version d'encart, pour le tableau de bord : le même anneau, à la taille de trois lignes. */
+.insights-ring.compact { width:76px; height:76px; padding:7px; box-shadow:none; }
+.insights-ring.compact strong { font-size:18px; }
+.insights-ring.compact small { margin-top:0; font-size:8px; }
 .insights-overview-kpis { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
 .insights-kpi { position:relative; min-width:0; overflow:hidden; padding:18px; border:1px solid rgba(219,228,238,.9); border-radius:21px; background:linear-gradient(155deg,#fff 28%,var(--kpi-soft,#edf6ff) 120%); box-shadow:0 12px 32px rgba(43,82,116,.07); }
 .insights-kpi::after { content:""; position:absolute; width:90px; height:90px; right:-45px; bottom:-50px; border-radius:50%; background:var(--kpi-accent,#1b87dd); opacity:.09; }

@@ -1,140 +1,26 @@
 import Link from "next/link";
-import { clientFormula } from "@/lib/domain/client-formula";
 import { denyCommercial } from "@/lib/internal/authorization";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
-import {
-  budgetPenalty,
-  budgetSummary,
-  countableShootings,
-  shootingTally,
-  type BillingMode,
-  type BudgetLine,
-  SHOOTING_SCORING_FROM,
-} from "@/lib/domain/budget";
-import { healthActions, healthScore, HEALTH_TARGET, type HealthAction, type HealthPillar } from "@/lib/domain/health-score";
-import { clientLifecycle, todayInParis, parseClientKind } from "@/lib/domain/client-lifecycle";
-import { satisfactionPercentage, satisfactionSummary, SATISFACTION_LABELS } from "@/lib/domain/planning";
-import { productionPunctuality } from "@/lib/domain/production-requests";
-import { ticketSlaSummary, TICKET_SLA_HOURS } from "@/lib/domain/ticket-sla";
+import { HEALTH_TARGET, type HealthAction, type HealthPillar } from "@/lib/domain/health-score";
+import { satisfactionPercentage, SATISFACTION_LABELS } from "@/lib/domain/planning";
+import { TICKET_SLA_HOURS } from "@/lib/domain/ticket-sla";
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
-import { resolveClientLogoUrl } from "@/lib/media/client-logo";
-import type { TicketType } from "@/lib/domain/ticket-types";
+import {
+  CHART_COLORS,
+  dateDaysAgo,
+  defaultMetricsSince,
+  formatHours as hours,
+  readAgencyMetrics,
+  type AgencyMetrics,
+  type MetricsTone,
+} from "@/lib/metrics/agency-metrics";
 import { Icon } from "@/components/Icon";
+import { ScoreRing } from "@/components/ScoreRing";
 import Image from "next/image";
 
-const CHART_COLORS = ["#1b87dd", "#34c5bb", "#78d6a3", "#ef9c50", "#e65b67", "#7768e8"];
-/**
- * Statuts d'un ticket encore à traiter.
- *
- * Le suivi interne se juge sur ce qui reste ouvert : un ticket clos, refusé ou
- * hors périmètre n'attend plus personne, et le compter en retard salirait la
- * note sans rien dire d'utile.
- */
-const OPEN_TICKET_STATUSES = "(approved_by_client,closed,rejected,out_of_scope,cancelled)";
 const METRICS_VIEWS = ["overview", "validation", "returns", "satisfaction", "clients"] as const;
 type MetricsView = typeof METRICS_VIEWS[number];
-type Tone = "info" | "success" | "warning" | "danger" | "violet";
-
-/**
- * Santé des budgets, réservée à la direction.
- *
- * Les tables budgétaires sont fermées aux autres rôles : la requête ne
- * renverrait rien, et un malus silencieux fondé sur zéro donnée serait pire
- * qu'aucun malus.
- */
-async function budgetHealth(
-  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
-  isAdmin: boolean,
-): Promise<{ withIssue: number; total: number; shootingsCategorised: number; shootingsTotal: number }> {
-  if (!isAdmin) return { withIssue: 0, total: 0, shootingsCategorised: 0, shootingsTotal: 0 };
-
-  const today = todayInParis();
-  const [{ data: clients }, { data: budgets }, { data: lines }, { data: invoices }] = await Promise.all([
-    supabase.from("clients").select("id, notes, is_active, client_kind, contract_start_date, contract_end_date, pause_start_date, pause_end_date").eq("is_active", true),
-    supabase.from("client_budgets").select("client_id, billing_mode, budget_cents"),
-    supabase.from("client_budget_lines").select("client_id, service_key, label, billing, unit_price_cents, quantity, months, performed_on, billed_directly, forfait_included"),
-    supabase.from("client_invoices").select("client_id, period_month, status"),
-  ]);
-
-  /*
-   * Mois dont la facture est partie. Un shooting qui s'y rattache n'est plus
-   * classable : le requalifier changerait un montant déjà transmis.
-   */
-  const settledMonths = new Set(
-    (invoices ?? [])
-      .filter((row) => row.status === "faite" || row.status === "prelevement_programme")
-      .map((row) => `${row.client_id as string}|${String(row.period_month).slice(0, 7)}`),
-  );
-
-  const managed = (clients ?? []).filter((client) => clientLifecycle({
-    isActive: client.is_active as boolean,
-    kind: parseClientKind(client.client_kind),
-    contractEndDate: client.contract_end_date as string | null,
-    pauseStartDate: client.pause_start_date as string | null,
-    pauseEndDate: client.pause_end_date as string | null,
-  }, today).canProduce);
-
-  const budgetByClient = new Map((budgets ?? []).map((row) => [row.client_id as string, row]));
-  const linesByClient = new Map<string, (BudgetLine & { forfaitIncluded: boolean | null })[]>();
-  for (const row of lines ?? []) {
-    const list = linesByClient.get(row.client_id as string) ?? [];
-    list.push({
-      id: "", serviceKey: row.service_key as string, label: row.label as string,
-      billing: row.billing as BudgetLine["billing"],
-      unitPriceCents: row.unit_price_cents as number,
-      quantity: Number(row.quantity),
-      months: row.months as number | null,
-      performedOn: row.performed_on as string,
-      billedDirectly: Boolean(row.billed_directly),
-      forfaitIncluded: row.forfait_included as boolean | null,
-    });
-    linesByClient.set(row.client_id as string, list);
-  }
-
-  const withIssue = managed.filter((client) => {
-    if (!client.contract_start_date) return true;
-    const budget = budgetByClient.get(client.id as string);
-    const summary = budgetSummary({
-      billingMode: (budget?.billing_mode ?? "comptant") as BillingMode,
-      annualBudgetCents: budget?.budget_cents ?? 0,
-      lines: linesByClient.get(client.id as string) ?? [],
-      /*
-       * Le forfait shooting et le supplément mensuel avaient déjà manqué ici,
-       * puis le forfait de base négocié : chaque paramètre ajouté à la
-       * formule devait être recopié à la main, et ne l'était jamais partout.
-       * `clientFormula` est désormais la seule lecture.
-       */
-      ...clientFormula(client as never),
-      today,
-    });
-    return summary.alerts.some((alert) => alert.level === "critique" || alert.level === "attention");
-  }).length;
-
-  /*
-   * Shootings en attente de tri. Tant qu'on ne sait pas si un shooting est
-   * compris au forfait ou vendu en plus, il n'est ni facturé ni écarté : c'est
-   * exactement le trou par lequel une prestation part sans facture.
-   */
-  const tally = shootingTally(
-    [...linesByClient.entries()].flatMap(([clientId, clientLines]) =>
-      countableShootings(clientLines, {
-        isSettledMonth: (performedOn) =>
-          settledMonths.has(`${clientId}|${performedOn.slice(0, 7)}`),
-        // La note ne juge que ce qui a été tourné depuis la bascule.
-        since: SHOOTING_SCORING_FROM,
-        // Une date calée d'avance n'a pas encore été tournée.
-        until: today,
-      })),
-  );
-  const shootingsTotal = tally.included + tally.extra + tally.pending;
-
-  return {
-    withIssue,
-    total: managed.length,
-    shootingsCategorised: tally.included + tally.extra,
-    shootingsTotal,
-  };
-}
+type Tone = MetricsTone;
 
 export default async function MetricsPage({
   searchParams,
@@ -150,7 +36,7 @@ export default async function MetricsPage({
    */
   const since = /^\d{4}-\d{2}-\d{2}$/.test(filters.depuis ?? "")
     ? filters.depuis!
-    : dateDaysAgo(90);
+    : defaultMetricsSince();
   const view: MetricsView = METRICS_VIEWS.includes(filters.vue as MetricsView)
     ? filters.vue as MetricsView
     : "overview";
@@ -158,271 +44,16 @@ export default async function MetricsPage({
   const supabase = await createSupabaseServerClient();
 
   /*
-   * La fenêtre porte sur les **événements**, pas sur la semaine des fiches.
-   *
-   * Le filtre s'appliquait à `period_start`, le lundi de la semaine produite.
-   * Deux erreurs en découlaient : une fiche préparée pour la semaine prochaine
-   * a un lundi dans le futur, donc postérieur à la borne, et entrait dans « les
-   * 7 derniers jours » ; à l'inverse, une fiche envoyée hier pour une semaine
-   * ancienne en était écartée. Chaque mesure se compte désormais à la date de
-   * ce qu'elle mesure — envoi, validation, retour.
+   * Tout le calcul vit dans `@/lib/metrics/agency-metrics`, partagé avec le
+   * tableau de bord qui affiche le même score de santé. Il était écrit ici ;
+   * le recopier sur l'accueil aurait donné deux notes à la même agence dès la
+   * première règle corrigée d'un seul côté. Cet écran ne fait qu'afficher.
    */
-  const sinceDate = new Date(`${since}T00:00:00Z`);
-  const sinceTs = sinceDate.toISOString();
-  const inWindow = (value: string | null | undefined) => Boolean(value) && new Date(value!) >= sinceDate;
-
-  /*
-   * Deux requêtes par famille plutôt qu'un `or` : un filtre composé mal
-   * interprété ne lève pas d'erreur visible, il renvoie une liste vide — et
-   * l'écran afficherait des zéros comme s'il ne s'était rien passé. Ici, chaque
-   * requête ne dit qu'une chose, et les résultats se rejoignent en mémoire.
-   */
-  const SHEET_FIELDS = "id, status, sent_to_client_at, first_viewed_at, approved_at, validation_deadline_at, clients ( name )";
-  const TICKET_FIELDS = "id, weekly_sheet_id, ticket_type, status, submitted_at, resolved_at, clients ( name )";
-
-  const [
-    { data: sentSheets }, { data: approvedSheets },
-    { data: receivedTickets }, { data: resolvedTickets },
-    { data: versions }, { data: ratings }, { data: deliveries }, { data: openTickets }, { count: overdueCount },
-  ] = await Promise.all([
-    supabase.from("weekly_sheets").select(SHEET_FIELDS).gte("sent_to_client_at", sinceTs),
-    supabase.from("weekly_sheets").select(SHEET_FIELDS).gte("approved_at", sinceTs),
-    supabase.from("client_tickets").select(TICKET_FIELDS).gte("submitted_at", sinceTs),
-    supabase.from("client_tickets").select(TICKET_FIELDS).gte("resolved_at", sinceTs),
-    supabase.from("weekly_sheet_versions").select("weekly_sheet_id, version_number, source_ticket_id, sent_to_client_at"),
-    /*
-     * Notes données par les clients sur la période. Une note par fiche validée,
-     * posée à l'écran de validation : c'est la voix du client, à côté des
-     * comportements que le reste de l'écran observe.
-     */
-    supabase.from("client_sheet_ratings")
-      .select("score, comment, submitted_at, weekly_sheet_id, clients ( id, name, logo_url )")
-      .gte("submitted_at", sinceTs),
-    /*
-     * Commandes internes livrées sur la période. La ponctualité se mesure à la
-     * livraison, pas à la commande : ce qui traîne encore se lit sur l'écran de
-     * production, où l'on peut agir.
-     */
-    supabase.from("production_requests")
-      .select("due_on, delivered_at")
-      .gte("delivered_at", sinceTs),
-    /*
-     * Le retard n'est pas un événement de la période : c'est l'état du jour.
-     * Le borner à la fenêtre revenait à oublier les fiches en souffrance depuis
-     * plus longtemps — précisément celles qu'il faut voir.
-     */
-    /*
-     * Tickets encore ouverts. Comme le retard des fiches, c'est un état du
-     * jour : le borner à la fenêtre masquerait les plus anciens. L'échéance ne
-     * vient plus de la base mais de l'heure d'arrivée — vingt heures ouvrées
-     * pour renvoyer la correction.
-     */
-    supabase.from("client_tickets")
-      .select("id, submitted_at, resolved_at")
-      .not("status", "in", OPEN_TICKET_STATUSES),
-    supabase.from("weekly_sheets")
-      .select("id", { count: "exact", head: true })
-      .lt("validation_deadline_at", new Date().toISOString())
-      // `archived` n'existe pas dans l'énumération : la base refuse la requête
-      // et le compte revient vide, c'est-à-dire zéro retard affiché à tort.
-      .not("status", "in", "(approved_by_client,tacitly_approved,rejected,expired)"),
-  ]);
-
-  // Une fiche envoyée puis validée dans la période ne doit compter qu'une fois.
-  const sheetList = [...new Map(
-    [...(sentSheets ?? []), ...(approvedSheets ?? [])].map((sheet) => [sheet.id as string, sheet]),
-  ).values()];
-  const ticketList = [...new Map(
-    [...(receivedTickets ?? []), ...(resolvedTickets ?? [])].map((ticket) => [ticket.id as string, ticket]),
-  ).values()];
-  const sent = sheetList.filter((sheet) => inWindow(sheet.sent_to_client_at));
-  const viewed = sent.filter((sheet) => sheet.first_viewed_at);
-  const approved = sheetList.filter((sheet) =>
-    inWindow(sheet.approved_at) && ["approved_by_client", "tacitly_approved"].includes(sheet.status));
-  const sheetIds = new Set(sheetList.map((sheet) => sheet.id));
-  // Retours reçus pendant la période : c'est eux que comptent les répartitions.
-  const received = ticketList.filter((ticket) => inWindow(ticket.submitted_at));
-  const sheetsWithTickets = new Set(ticketList.map((ticket) => ticket.weekly_sheet_id).filter(Boolean));
-  const approvedWithoutCorrection = sent.filter((sheet) => !sheetsWithTickets.has(sheet.id) && sheet.status === "approved_by_client");
-  const beforeDeadline = approved.filter((sheet) => sheet.approved_at && sheet.validation_deadline_at && new Date(sheet.approved_at) <= new Date(sheet.validation_deadline_at));
-  const overdue = overdueCount ?? 0;
-
-  const responseDelays = sent.filter((sheet) => sheet.first_viewed_at && sheet.sent_to_client_at).map((sheet) => (new Date(sheet.first_viewed_at!).getTime() - new Date(sheet.sent_to_client_at!).getTime()) / 3_600_000);
-  // Délai de correction : les retours clos pendant la période, quelle que soit
-  // leur date d'arrivée — sans quoi une correction longue n'est jamais comptée.
-  const correctionDelays = ticketList.filter((ticket) => inWindow(ticket.resolved_at)).map((ticket) => (new Date(ticket.resolved_at!).getTime() - new Date(ticket.submitted_at).getTime()) / 3_600_000);
-  const averageResponse = average(responseDelays);
-  const averageCorrection = average(correctionDelays);
-
-  const byType = new Map<TicketType, number>();
-  const byClient = new Map<string, number>();
-  for (const ticket of received) {
-    byType.set(ticket.ticket_type, (byType.get(ticket.ticket_type) ?? 0) + 1);
-    const name = (ticket.clients as unknown as { name: string } | null)?.name ?? "—";
-    byClient.set(name, (byClient.get(name) ?? 0) + 1);
-  }
-
-  const versionCounts = new Map<string, number>();
-  for (const version of versions ?? []) {
-    if (!sheetIds.has(version.weekly_sheet_id)) continue;
-    versionCounts.set(version.weekly_sheet_id, Math.max(versionCounts.get(version.weekly_sheet_id) ?? 0, version.version_number));
-  }
-
-  const averageVersions = average([...versionCounts.values()]);
-  /*
-   * Satisfaction : la moyenne des notes, en pourcentage, et surtout le taux de
-   * réponse à côté. Une satisfaction de 100 % sur une seule réponse ne dit
-   * rien, et l'oublier conduit à décider sur du vide.
-   */
-  const satisfaction = satisfactionSummary({
-    scores: (ratings ?? []).map((row) => row.score as number),
-    eligible: approved.length,
+  const data = await readAgencyMetrics(supabase, {
+    since,
+    isAdmin: profile?.role === "super_admin",
+    withSatisfactionLogos: true,
   });
-  const punctuality = productionPunctuality(
-    (deliveries ?? [])
-      .filter((row) => row.delivered_at)
-      .map((row) => ({ dueOn: row.due_on as string, deliveredAt: row.delivered_at as string })),
-  );
-  /*
-   * Qui a noté quoi.
-   *
-   * La moyenne de satisfaction dit un chiffre ; elle ne dit pas quel client a
-   * trouvé la semaine décevante. Chaque note reste attachée à son client, avec
-   * son logo, pour qu'un signal faible se voie avant de devenir un signal fort.
-   */
-  const satisfactionEntries = await Promise.all((ratings ?? []).map(async (row) => {
-    const client = row.clients as unknown as { id: string; name: string; logo_url: string | null } | null;
-    const score = row.score as number;
-    return {
-      clientId: client?.id ?? row.weekly_sheet_id,
-      clientName: client?.name ?? "Client",
-      clientLogoUrl: await resolveClientLogoUrl(client?.logo_url ?? null),
-      score,
-      percentage: satisfactionPercentage(score),
-      comment: row.comment as string | null,
-      submittedAt: row.submitted_at as string,
-    };
-  }));
-  const outOfScope = received.filter((ticket) => ticket.status === "out_of_scope").length;
-  const ticketsPerSheet = sent.length ? received.length / sent.length : 0;
-  const viewRate = ratio(viewed.length, sent.length);
-  const noCorrectionRate = ratio(approvedWithoutCorrection.length, sent.length);
-  const deadlineRate = ratio(beforeDeadline.length, approved.length);
-  /*
-   * Malus budgétaire.
-   *
-   * Le score ne regardait que la relation client : on pouvait valider vite et
-   * bien tout en pilotant ses enveloppes à l'aveugle. Les budgets en défaut
-   * — dates manquantes, enveloppe non renseignée, dépassement — retirent donc
-   * des points, dans la limite d'un tiers.
-   */
-  const budget = await budgetHealth(supabase, profile?.role === "super_admin");
-  const relationScore = average([viewRate, noCorrectionRate, deadlineRate].filter((value) => Number.isFinite(value)));
-  const penalty = budgetPenalty({ clientsWithIssue: budget.withIssue, clientsTotal: budget.total });
-
-  /*
-   * Score de santé, en trois piliers.
-   *
-   * Une mesure sans donnée vaut `null` et non zéro : sur sept jours, une
-   * semaine sans commande interne ou sans note client ne doit pas faire
-   * plonger l'agence. C'est le module qui écarte ces mesures et redistribue
-   * les poids ; ici on se contente de dire ce qu'on sait vraiment.
-   */
-  /*
-   * Respect du délai de retour.
-   *
-   * Deux populations, un seul barème : les tickets reçus dans la fenêtre, qui
-   * disent la tenue de la période, et les tickets encore ouverts hors fenêtre,
-   * qui traînent depuis plus longtemps. Ne compter que les premiers laisserait
-   * les retards les plus anciens hors du score.
-   */
-  /*
-   * La réponse au client, c'est le lien corrigé qui part — pas la clôture du
-   * ticket, qu'on oublie de poser. On prend donc le premier envoi d'une
-   * version issue du ticket, et `resolved_at` seulement en repli.
-   */
-  const answeredAt = new Map<string, string>();
-  for (const version of versions ?? []) {
-    const ticketId = version.source_ticket_id as string | null;
-    const sentAt = version.sent_to_client_at as string | null;
-    if (!ticketId || !sentAt) continue;
-    const known = answeredAt.get(ticketId);
-    if (!known || new Date(sentAt) < new Date(known)) answeredAt.set(ticketId, sentAt);
-  }
-  const slaInput = (ticket: { id: string; submitted_at: string; resolved_at: string | null }) => ({
-    submittedAt: ticket.submitted_at,
-    respondedAt: answeredAt.get(ticket.id) ?? ticket.resolved_at ?? null,
-  });
-  const slaTickets = [
-    ...ticketList.filter((ticket) => inWindow(ticket.submitted_at)).map(slaInput),
-    ...(openTickets ?? []).filter((ticket) => !inWindow(ticket.submitted_at)).map(slaInput),
-  ];
-  const sla = ticketSlaSummary(slaTickets);
-  const health = healthScore({
-    satisfactionPercentage: satisfaction.percentage,
-    satisfactionAnswers: satisfaction.answers,
-    viewRate: sent.length ? viewRate : null,
-    noCorrectionRate: sent.length ? noCorrectionRate : null,
-    sentBeforeDeadlineRate: approved.length ? deadlineRate : null,
-    correctionHours: correctionDelays.length ? averageCorrection : null,
-    productionPunctuality: punctuality.percentage,
-    budgetsComplete: budget.total ? ratio(budget.total - budget.withIssue, budget.total) : null,
-    shootingsCategorised: budget.shootingsTotal
-      ? ratio(budget.shootingsCategorised, budget.shootingsTotal)
-      : null,
-    ticketsOnTime: sla.percentage,
-  });
-  const overallScore = health.score ?? Math.max(0, relationScore - penalty);
-  const typeEntries = [...byType.entries()].sort((a, b) => b[1] - a[1]);
-  const clientEntries = [...byClient.entries()].sort((a, b) => b[1] - a[1]).slice(0, 7);
-  const ticketTotal = typeEntries.reduce((total, entry) => total + entry[1], 0);
-  const donutGradient = buildDonut(typeEntries.map(([, count]) => count), ticketTotal);
-  const signals = [
-    overdue > 0
-      ? { tone:"danger" as const, icon:"warning", title:`${overdue} validation${overdue > 1 ? "s" : ""} en retard`, body:"Relance client recommandée aujourd’hui." }
-      : { tone:"success" as const, icon:"check", title:"Échéances maîtrisées", body:"Aucune validation en retard." },
-    averageCorrection > 48
-      ? { tone:"danger" as const, icon:"clock", title:"Corrections trop longues", body:`Délai moyen : ${hours(averageCorrection)}.` }
-      : averageCorrection > 24
-        ? { tone:"warning" as const, icon:"clock", title:"Délai à surveiller", body:`Moyenne actuelle : ${hours(averageCorrection)}.` }
-        : { tone:"success" as const, icon:"layers", title:"Corrections fluides", body:averageCorrection ? `Moyenne : ${hours(averageCorrection)}.` : "Pas encore assez de données." },
-    sla.late > 0
-      ? { tone:"danger" as const, icon:"clock", title:`${sla.late} retour${sla.late > 1 ? "s" : ""} hors délai`, body:`Promesse de ${TICKET_SLA_HOURS} h ouvrées${sla.worstLateHours === null ? "" : ` · pire retard ${hours(sla.worstLateHours)} ouvrées`}.` }
-      : sla.measured > 0
-        ? { tone:"success" as const, icon:"clock", title:`Délai de ${TICKET_SLA_HOURS} h ouvrées tenu`, body:`${sla.onTime}/${sla.measured} retours corrigés dans les temps.` }
-        : { tone:"info" as const, icon:"message", title:"Retours stables", body:sent.length ? `${ticketsPerSheet.toFixed(1)} ticket par fiche.` : "Pas encore de fiche envoyée." },
-  ];
-
-  const data = {
-    sent: sent.length,
-    viewed: viewed.length,
-    approved: approved.length,
-    approvedWithoutCorrection: approvedWithoutCorrection.length,
-    beforeDeadline: beforeDeadline.length,
-    overdue,
-    averageResponse,
-    averageCorrection,
-    averageVersions,
-    outOfScope,
-    ticketsPerSheet,
-    viewRate,
-    noCorrectionRate,
-    deadlineRate,
-    overallScore,
-    health,
-    healthActions: healthActions(health),
-    openTicketsLate: sla.late,
-    sla,
-    periodLabel: periodLabel(since),
-    satisfaction,
-    satisfactionEntries,
-    punctuality,
-    ticketTotal,
-    typeEntries,
-    clientEntries,
-    donutGradient,
-    signals,
-  };
 
   return (
     <div className="insights-page">
@@ -446,20 +77,7 @@ export default async function MetricsPage({
   );
 }
 
-type MetricsData = {
-  sent:number; viewed:number; approved:number; approvedWithoutCorrection:number; beforeDeadline:number;
-  overdue:number; averageResponse:number; averageCorrection:number; averageVersions:number; outOfScope:number;
-  ticketsPerSheet:number; viewRate:number; noCorrectionRate:number; deadlineRate:number; overallScore:number;
-  health:ReturnType<typeof healthScore>; healthActions:HealthAction[]; openTicketsLate:number;
-  sla:ReturnType<typeof ticketSlaSummary>;
-  /** Fenêtre analysée, telle qu'elle est écrite sur le sélecteur. */
-  periodLabel:string;
-  satisfaction:ReturnType<typeof satisfactionSummary>;
-  satisfactionEntries:{ clientId:string; clientName:string; clientLogoUrl:string|null; score:number; percentage:number; comment:string|null; submittedAt:string }[];
-  punctuality:ReturnType<typeof productionPunctuality>;
-  ticketTotal:number; typeEntries:[TicketType,number][]; clientEntries:[string,number][]; donutGradient:string;
-  signals:{tone:Tone;icon:string;title:string;body:string}[];
-};
+type MetricsData = AgencyMetrics;
 
 function OverviewView({ data }: { data:MetricsData }) {
   return (
@@ -494,7 +112,12 @@ function OverviewView({ data }: { data:MetricsData }) {
               ))}
             </div>
           </div>
-          <Ring value={data.overallScore} label={`santé · ${data.periodLabel}`} light/>
+          {/*
+            Le score de santé, pas son ancien repli : sans aucune mesure, le
+            repli valait toujours 0 %, une note infamante tirée de rien. « — »
+            dit la vérité, comme sur l'accueil.
+          */}
+          <ScoreRing value={data.health.score} label={`santé · ${data.periodLabel}`} light/>
         </article>
 
         <div className="insights-overview-kpis">
@@ -569,7 +192,7 @@ function ValidationView({ data }: { data:MetricsData }) {
         <FunnelPanel data={data} roomy/>
         <article className="insights-card insights-gauge-panel">
           <div><p className="eyebrow">Qualité de validation</p><h2 className="mt-1 text-lg font-semibold">Premier envoi</h2><p className="mt-2 max-w-sm text-xs leading-relaxed text-ink-soft">Part des fiches approuvées sans demande de modification.</p></div>
-          <Ring value={data.noCorrectionRate} label="sans correction"/>
+          <ScoreRing value={data.noCorrectionRate} label="sans correction"/>
           <div className="insights-gauge-footer"><span>{data.approvedWithoutCorrection} validation{data.approvedWithoutCorrection > 1 ? "s" : ""} directe{data.approvedWithoutCorrection > 1 ? "s" : ""}</span><strong>{data.approved} validées</strong></div>
         </article>
       </section>
@@ -798,11 +421,6 @@ function HeroPill({ label, value }: { label:string;value:string }) {
   return <span className="insights-hero-pill"><small>{label}</small><strong>{value}</strong></span>;
 }
 
-function Ring({ value, label, light=false }: { value:number;label:string;light?:boolean }) {
-  const safe=Math.round(Math.min(100,Math.max(0,value||0)));
-  return <div className={`insights-ring ${light?"light":""}`} style={{background:`conic-gradient(${light?"#fff":"#1b87dd"} 0 ${safe}%,${light?"rgba(255,255,255,.16)":"#e8eef5"} ${safe}% 100%)`}} role="img" aria-label={`${label} : ${safe} %`}><span><strong>{safe}%</strong><small>{label}</small></span></div>;
-}
-
 /**
  * Détail du score de santé.
  *
@@ -938,32 +556,7 @@ function BarRow({ label, value, max, color }: { label:string;value:number;max:nu
 
 function EmptyMetric({ text }: { text:string }) { return <div className="insights-empty"><Icon name="chart"/><p>{text}</p></div>; }
 
-function buildDonut(values:number[], total:number):string {
-  if (!total) return "#edf1f6";
-  let cursor=0;
-  const stops=values.map((value,index)=>{const start=cursor;cursor+=value/total*100;return `${CHART_COLORS[index%CHART_COLORS.length]} ${start.toFixed(2)}% ${cursor.toFixed(2)}%`;});
-  return `conic-gradient(${stops.join(",")})`;
-}
-function average(values:number[]):number { return values.length ? values.reduce((total,value)=>total+value,0)/values.length : 0; }
-function ratio(part:number,total:number):number { return total ? part/total*100 : 0; }
 function percentValue(value:number):string { return Number.isFinite(value) ? `${Math.round(value)} %` : "—"; }
-function hours(value:number):string { return value ? value<24?`${value.toFixed(1)} h`:`${(value/24).toFixed(1)} j` : "—"; }
 function rateTone(value:number, good=80, warning=50):Tone { return value>=good?"success":value>=warning?"warning":"danger"; }
 function delayTone(value:number):Tone { return !value?"info":value<=24?"success":value<=48?"warning":"danger"; }
-/**
- * Nom de la fenêtre analysée.
- *
- * Le score se calcule bien sur la période choisie, mais rien ne le disait :
- * quand deux fenêtres donnent le même chiffre — ce qui arrive dès que les
- * taux bougent peu — on croit l'écran figé.
- */
-function periodLabel(since:string):string {
-  const days = Math.round((Date.now() - new Date(`${since}T00:00:00Z`).getTime()) / 86_400_000);
-  if (days <= 10) return "7 jours";
-  if (days <= 45) return "30 jours";
-  if (days <= 120) return "90 jours";
-  return "6 mois";
-}
-
-function dateDaysAgo(days:number):string { return new Date(Date.now()-days*24*3600*1000).toISOString().slice(0,10); }
 function formatDate(value:string):string { return new Intl.DateTimeFormat("fr-FR",{day:"numeric",month:"long",year:"numeric",timeZone:"UTC"}).format(new Date(`${value}T00:00:00Z`)); }
