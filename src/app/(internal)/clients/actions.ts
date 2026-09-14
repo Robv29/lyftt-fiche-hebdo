@@ -1036,7 +1036,18 @@ export async function convertToManagement(clientId: string): Promise<ClientActio
   const admin = createSupabaseAdminClient();
   const { data: converted, error } = await admin
     .from("clients")
-    .update({ client_kind: "gestion" })
+    /*
+     * Dates de gestion remises à zéro : d'anciennes dates, restées d'un passage
+     * en gestion antérieur, feraient inscrire d'un coup tous les mois écoulés
+     * depuis — des mois jamais produits. La gestion commence quand on le dit.
+     */
+    .update({
+      client_kind: "gestion",
+      contract_start_date: null,
+      contract_end_date: null,
+      pause_start_date: null,
+      pause_end_date: null,
+    })
     .eq("id", id.data)
     .eq("client_kind", "ponctuel")
     .select("id");
@@ -1065,5 +1076,5 @@ export async function convertToManagement(clientId: string): Promise<ClientActio
   revalidatePath(`/clients/${id.data}`);
   revalidatePath("/fiches");
   revalidatePath("/");
-  return { ok: true, message: "Client passé en gestion. Renseignez maintenant son rythme et ses jours de publication." };
+  return { ok: true, message: "Client passé en gestion. Renseignez maintenant sa date de début de gestion, son rythme et ses jours de publication." };
 }

@@ -173,6 +173,7 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
         clientName={client.name}
         contractStartDate={client.contract_start_date}
         contractEndDate={client.contract_end_date}
+        managed={formula.managed}
         cadence={cadence}
         shooting={shooting}
         shootingDates={shootingDates}

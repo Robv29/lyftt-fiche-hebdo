@@ -89,17 +89,22 @@ export default async function BudgetPage() {
   }
 
   /*
-   * Le budget ne suit que les clients en gestion. Un client archivé, en pause
-   * ou dont le contrat est arrivé à terme n'a plus de rythme à financer : le
-   * laisser dans le portefeuille encombre l'écran de dossiers clos.
+   * Le budget suit les clients en gestion, et ceux en prestation ponctuelle :
+   * ils n'ont pas de rythme, mais leur prestation se facture comme le reste —
+   * les écarter les rendait introuvables d'ici. Un client archivé, en pause ou
+   * dont le contrat est arrivé à terme n'a plus rien à suivre : le laisser
+   * encombrerait l'écran de dossiers clos.
    */
-  const managed = ((clients ?? []) as ClientRow[]).filter((client) => clientLifecycle({
-    isActive: client.is_active,
-    kind: parseClientKind(client.client_kind),
-    contractEndDate: client.contract_end_date,
-    pauseStartDate: client.pause_start_date,
-    pauseEndDate: client.pause_end_date,
-  }, today).canProduce);
+  const managed = ((clients ?? []) as ClientRow[]).filter((client) => {
+    const lifecycle = clientLifecycle({
+      isActive: client.is_active,
+      kind: parseClientKind(client.client_kind),
+      contractEndDate: client.contract_end_date,
+      pauseStartDate: client.pause_start_date,
+      pauseEndDate: client.pause_end_date,
+    }, today);
+    return lifecycle.canProduce || lifecycle.state === "one_shot";
+  });
 
   const rows = managed.map((client) => {
     const budget = budgetByClient.get(client.id);
@@ -125,7 +130,8 @@ export default async function BudgetPage() {
      * au comptant, aucune facture mensuelle n'est jamais créée. Un zéro muet
      * se lit comme un bug ; il faut dire pourquoi.
      */
-    const missingStart = !client.contract_start_date;
+    // Une prestation ponctuelle n'a pas de gestion : il ne lui manque aucune date.
+    const missingStart = !client.contract_start_date && parseClientKind(client.client_kind) === "gestion";
     // Le RIB ne concerne que les modes qui prélèvent le client.
     const ribMissing = mode !== "financement" && !ribOnFile;
     return { client, summary, toInvoice, missingStart, mode, ribMissing };

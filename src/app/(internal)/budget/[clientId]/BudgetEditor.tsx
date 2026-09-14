@@ -52,6 +52,7 @@ export function BudgetEditor({
   clientName,
   contractStartDate,
   contractEndDate,
+  managed,
   cadence,
   shooting,
   shootingDueOn,
@@ -70,6 +71,8 @@ export function BudgetEditor({
   clientName: string;
   contractStartDate: string | null;
   contractEndDate: string | null;
+  /** En gestion des réseaux. Faux pour une prestation ponctuelle, dont les dates sont facultatives. */
+  managed: boolean;
   cadence: MonthlyCadence;
   /** Forfait shooting vendu dans la formule, repris de la fiche client. */
   shooting: ShootingPlan | null;
@@ -101,6 +104,13 @@ export function BudgetEditor({
   const hybrid = mode === "hybride";
   // Refus de prise en charge : la prestation part en facturation directe.
   const [billedDirectly, setBilledDirectly] = useState(false);
+  /*
+   * Prestation sur mesure : ponctuelle — une fois, à sa date — ou récurrente,
+   * avec une fréquence sur l'année. Un client sans gestion n'a que du ponctuel.
+   */
+  const [customKind, setCustomKind] = useState<"ponctuelle" | "recurrente">(managed ? "recurrente" : "ponctuelle");
+  const [withoutManagement, setWithoutManagement] = useState(false);
+  const oneOff = custom && customKind === "ponctuelle";
   /*
    * Date proposée : le début de gestion tant qu'il est à venir, aujourd'hui
    * sinon.
@@ -145,6 +155,33 @@ export function BudgetEditor({
     });
   };
 
+  /*
+   * Ajout d'une prestation. Quand elle fait passer le client en prestation
+   * ponctuelle et que des mois de gestion quitteraient l'addition, le serveur
+   * refuse en annonçant leur nombre et leur montant : on le fait confirmer,
+   * puis on renvoie avec ce nombre exact. Rien n'est écrit avant.
+   */
+  const addLine = (formData: FormData) => {
+    startTransition(async () => {
+      try {
+        const result = await addBudgetLine(formData);
+        if (result.confirmRemovedMonths !== undefined) {
+          if (!window.confirm(result.message ?? "Confirmer le passage en prestation ponctuelle ?")) {
+            setFeedback({ ok: false, message: "Rien n’a été modifié : le client reste en gestion." });
+            return;
+          }
+          formData.set("confirmRemovedMonths", String(result.confirmRemovedMonths));
+          addLine(formData);
+          return;
+        }
+        setFeedback(result);
+        if (result.ok) router.refresh();
+      } catch {
+        setFeedback({ ok: false, message: "Enregistrement interrompu. Réessayez." });
+      }
+    });
+  };
+
   return (
     <div className="space-y-6">
       {feedback?.message && (
@@ -158,7 +195,8 @@ export function BudgetEditor({
         ni le reliquat ne peuvent être calculés. L'alerte doit être impossible
         à manquer, et mener directement à l'endroit où corriger.
       */}
-      {(!contractStartDate || !contractEndDate) && (
+      {/* Une prestation ponctuelle n'a pas de période de gestion : rien ne manque. */}
+      {managed && (!contractStartDate || !contractEndDate) && (
         <section className="card border-2 border-state-changes bg-state-changes/5 p-5">
           <div className="flex items-start gap-3">
             <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-state-changes text-white">
@@ -191,19 +229,20 @@ export function BudgetEditor({
         <div>
           <h2 className="font-semibold">Période de gestion</h2>
           <p className="mt-1 text-xs text-ink-faint">
-            Le début déclenche le décompte des mois ; la fin l&apos;arrête. Modifiables
-            ici comme sur la fiche client.
+            {managed
+              ? <>Le début déclenche le décompte des mois ; la fin l&apos;arrête. Modifiables ici comme sur la fiche client.</>
+              : <>Facultatif : {clientName} est en prestation ponctuelle, sans gestion des réseaux ni mois facturés.</>}
           </p>
         </div>
         <input type="hidden" name="clientId" value={clientId}/>
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
             <label className="label" htmlFor="contractStartDate">Début de gestion</label>
-            <input id="contractStartDate" name="contractStartDate" type="date" className={`field ${contractStartDate ? "" : "border-state-changes"}`} defaultValue={contractStartDate ?? ""}/>
+            <input id="contractStartDate" name="contractStartDate" type="date" className={`field ${contractStartDate || !managed ? "" : "border-state-changes"}`} defaultValue={contractStartDate ?? ""}/>
           </div>
           <div>
             <label className="label" htmlFor="contractEndDate">Fin de gestion</label>
-            <input id="contractEndDate" name="contractEndDate" type="date" className={`field ${contractEndDate ? "" : "border-state-changes"}`} defaultValue={contractEndDate ?? ""}/>
+            <input id="contractEndDate" name="contractEndDate" type="date" className={`field ${contractEndDate || !managed ? "" : "border-state-changes"}`} defaultValue={contractEndDate ?? ""}/>
           </div>
         </div>
         <button type="submit" className="btn-primary" disabled={pending}>
@@ -319,8 +358,7 @@ export function BudgetEditor({
           <form
             onSubmit={(event) => {
               event.preventDefault();
-              const formData = new FormData(event.currentTarget);
-              run(() => addBudgetLine(formData));
+              addLine(new FormData(event.currentTarget));
             }}
             className="card space-y-4 p-5"
           >
@@ -400,8 +438,8 @@ export function BudgetEditor({
 
               <div>
                 <label className="label" htmlFor="quantity">
-                  {custom ? "Fréquence sur l’année" : "Quantité"}{" "}
-                  <span className="font-normal text-ink-faint">({service.unitLabel})</span>
+                  {custom && !oneOff ? "Fréquence sur l’année" : "Quantité"}{" "}
+                  {!oneOff && <span className="font-normal text-ink-faint">({service.unitLabel})</span>}
                 </label>
                 <input
                   id="quantity"
@@ -413,7 +451,7 @@ export function BudgetEditor({
                   required
                   className="field"
                 />
-                {custom && (
+                {custom && !oneOff && (
                   <p className="mt-1 text-xs text-ink-faint">
                     Nombre de fois dans l’année. Le total de la ligne est le prix multiplié par
                     cette fréquence.
@@ -421,7 +459,23 @@ export function BudgetEditor({
                 )}
               </div>
 
-              {service.billing === "mensuel" ? (
+              {custom ? (
+                <div>
+                  <label className="label" htmlFor="customKind">Type</label>
+                  <select
+                    id="customKind"
+                    className="field"
+                    value={customKind}
+                    onChange={(event) => {
+                      setCustomKind(event.target.value as "ponctuelle" | "recurrente");
+                      setWithoutManagement(false);
+                    }}
+                  >
+                    <option value="ponctuelle">Prestation ponctuelle</option>
+                    <option value="recurrente">Récurrente sur l’année</option>
+                  </select>
+                </div>
+              ) : service.billing === "mensuel" ? (
                 <div>
                   <label className="label" htmlFor="months">Engagement (mois)</label>
                   <input id="months" name="months" type="number" min="1" max="120" defaultValue="1" required className="field"/>
@@ -435,7 +489,7 @@ export function BudgetEditor({
 
               <div>
                 <label className="label" htmlFor="performedOn">
-                  Date {service.key.startsWith("shooting") ? "du shooting" : "de mise à jour de la formule"}
+                  Date {service.key.startsWith("shooting") ? "du shooting" : oneOff ? "de la prestation" : "de mise à jour de la formule"}
                 </label>
                 <input id="performedOn" name="performedOn" type="date" required className="field" value={performedOn} onChange={(event) => setPerformedOn(event.target.value)}/>
               </div>
@@ -445,6 +499,32 @@ export function BudgetEditor({
                 <input id="lineNote" name="note" maxLength={300} className="field" placeholder="Lieu, thème, interlocuteur…"/>
               </div>
             </div>
+
+            {/*
+              Client enregistré en gestion qui n'achète en réalité qu'une
+              prestation unique : la cocher le passe en prestation ponctuelle,
+              et ses dates de gestion ne sont plus demandées.
+            */}
+            {oneOff && managed && (
+              <label className="flex items-start gap-3 rounded-2xl border border-[#d8e4f8] bg-[#f7faff] p-4 text-sm">
+                <input
+                  type="checkbox"
+                  name="withoutManagement"
+                  className="mt-1"
+                  checked={withoutManagement}
+                  onChange={(event) => setWithoutManagement(event.target.checked)}
+                />
+                <span>
+                  <strong>Client sans gestion des réseaux</strong>
+                  <span className="mt-1 block text-xs leading-relaxed text-ink-faint">
+                    {clientName} passe en prestation ponctuelle : ses dates de gestion sont
+                    effacées et ses mois de gestion retirés de l&apos;addition — leur nombre et
+                    leur montant vous seront demandés en confirmation. Refusé si le client a
+                    déjà eu des fiches hebdomadaires ou une facture de gestion.
+                  </span>
+                </span>
+              </label>
+            )}
 
             {/*
               Forfait shooting : la période décide, la saisie confirme. Sans ce

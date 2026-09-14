@@ -8,7 +8,22 @@ import { sanitizeText } from "@/lib/security/sanitize";
 import { checkAttachment, safeFileName } from "@/lib/security/attachments";
 import { logRibAccess } from "@/lib/internal/rib-audit";
 import { invoiceMonthFor } from "@/lib/domain/invoicing";
-import { todayInParis } from "@/lib/domain/client-lifecycle";
+import { parseClientKind, todayInParis } from "@/lib/domain/client-lifecycle";
+import { oneShotConversionCheck, type OneShotConversionCheck } from "@/lib/domain/one-shot-conversion";
+import { clientFormula } from "@/lib/domain/client-formula";
+import { syncManagementMonths } from "@/lib/budget/management-months";
+import {
+  findService,
+  isCustomService,
+  formatEuros,
+  isShootingLine,
+  parseShootingPlan,
+  shootingLinePriceCents,
+  MANAGEMENT_MONTH_KEY,
+  SHOOTING_FORFAIT_KEY,
+  billableLines,
+  type BudgetLine,
+} from "@/lib/domain/budget";
 
 /**
  * Un mois pas encore commencé ne se facture pas.
@@ -23,22 +38,15 @@ function futureMonthRefusal(periodMonth: string, status: string): string | null 
     ? "Ce mois n'est pas encore commencé : sa facture ne peut pas être établie."
     : null;
 }
-import {
-  findService,
-  isCustomService,
-  formatEuros,
-  isShootingLine,
-  parseShootingPlan,
-  shootingLinePriceCents,
-  MANAGEMENT_MONTH_KEY,
-  SHOOTING_FORFAIT_KEY,
-  billableLines,
-  type BudgetLine,
-} from "@/lib/domain/budget";
 
 export interface BudgetActionResult {
   ok: boolean;
   message?: string;
+  /**
+   * Passage en prestation ponctuelle en attente : nombre de mois de gestion
+   * qui quitteraient l'addition, à faire confirmer avant de renvoyer.
+   */
+  confirmRemovedMonths?: number;
 }
 
 /*
@@ -109,7 +117,91 @@ const lineSchema = z.object({
    */
   customLabel: z.string().trim().max(120, "Description trop longue (120 caractères maximum).").optional(),
   customPriceEuros: z.coerce.number().min(0, "Le prix ne peut pas être négatif.").max(1_000_000).optional(),
+  /*
+   * Prestation ponctuelle d'un client enregistré à tort en gestion : cochée,
+   * elle le fait passer en prestation ponctuelle.
+   */
+  withoutManagement: z.boolean(),
+  /** Nombre de mois de gestion retirés, tel que la personne l'a confirmé. */
+  confirmRemovedMonths: z.coerce.number().int().min(0).max(1_000).optional(),
 });
+
+type ServerSupabase = Awaited<ReturnType<typeof createSupabaseServerClient>>;
+
+/** Ce que le passage en prestation ponctuelle retirerait, et s'il est permis. */
+async function oneShotCheck(
+  supabase: ServerSupabase,
+  clientId: string,
+  confirmedMonths: number | null,
+): Promise<OneShotConversionCheck> {
+  const [client, sheets, invoices, months] = await Promise.all([
+    supabase.from("clients").select("client_kind, first_sheet_at").eq("id", clientId).maybeSingle(),
+    supabase.from("weekly_sheets").select("id", { count: "exact", head: true }).eq("client_id", clientId),
+    supabase
+      .from("client_invoices")
+      .select("period_month", { count: "exact", head: true })
+      .eq("client_id", clientId)
+      .in("status", ["faite", "prelevement_programme"]),
+    supabase
+      .from("client_budget_lines")
+      .select("unit_price_cents, quantity")
+      .eq("client_id", clientId)
+      .eq("service_key", MANAGEMENT_MONTH_KEY),
+  ]);
+
+  // Sans ces lectures, on ne sait pas ce qu'on retirerait : on ne touche à rien.
+  if (client.error || sheets.error || sheets.count === null || invoices.error || invoices.count === null || months.error) {
+    return { status: "refused", message: "Vérification impossible : le client reste en gestion. Réessayez." };
+  }
+  if (!client.data) return { status: "refused", message: "Client introuvable ou accès refusé." };
+
+  const monthRows = months.data ?? [];
+  return oneShotConversionCheck({
+    kind: parseClientKind(client.data.client_kind),
+    hadSheets: Boolean(client.data.first_sheet_at) || sheets.count > 0,
+    issuedInvoices: invoices.count,
+    managementMonths: monthRows.length,
+    managementTotalCents: monthRows.reduce(
+      (total, row) => total + Math.round((row.unit_price_cents as number) * Number(row.quantity ?? 1)),
+      0,
+    ),
+    confirmedMonths,
+  });
+}
+
+/**
+ * Passage en prestation ponctuelle.
+ *
+ * Le type change, puis les mois de gestion sont réconciliés avec une formule
+ * qui n'en doit plus aucun : ils quittent l'addition (un client déjà facturé
+ * pour sa gestion n'arrive pas jusqu'ici).
+ *
+ * Les dates de gestion sont effacées. Laissées en place, elles referaient
+ * inscrire tous les mois retirés au premier retour en gestion — facturant des
+ * mois jamais produits.
+ */
+async function convertToOneShot(
+  supabase: ServerSupabase,
+  clientId: string,
+): Promise<{ ok: true; removed: number } | { ok: false; message: string }> {
+  const { data: rows, error } = await supabase
+    .from("clients")
+    .update({
+      client_kind: "ponctuel",
+      contract_start_date: null,
+      contract_end_date: null,
+      pause_start_date: null,
+      pause_end_date: null,
+    })
+    .eq("id", clientId)
+    .select("id, client_kind, notes, contract_start_date, contract_end_date, pause_start_date, pause_end_date");
+  if (error) return { ok: false, message: error.message };
+  const row = rows?.[0];
+  if (!row) return { ok: false, message: "Client introuvable ou accès refusé." };
+
+  const removed = await syncManagementMonths(supabase, { id: row.id as string, ...clientFormula(row) });
+  return { ok: true, removed };
+}
 
 export async function addBudgetLine(formData: FormData): Promise<BudgetActionResult> {
   const profile = await requireAdmin();
@@ -127,6 +219,8 @@ export async function addBudgetLine(formData: FormData): Promise<BudgetActionRes
     forfaitIncluded: formData.get("forfaitIncluded") ?? undefined,
     customLabel: formData.get("customLabel") ?? undefined,
     customPriceEuros: formData.get("customPriceEuros") || undefined,
+    withoutManagement: formData.get("withoutManagement") === "on",
+    confirmRemovedMonths: formData.get("confirmRemovedMonths") || undefined,
   });
   if (!parsed.success) {
     return { ok: false, message: parsed.error.issues[0]?.message ?? "Formulaire invalide." };
@@ -150,6 +244,11 @@ export async function addBudgetLine(formData: FormData): Promise<BudgetActionRes
   }
   const customPriceCents = Math.round((parsed.data.customPriceEuros ?? 0) * 100);
 
+  // Seule une prestation sur mesure ponctuelle ouvre ce choix à l'écran.
+  if (parsed.data.withoutManagement && !custom) {
+    return { ok: false, message: "Seule une prestation sur mesure peut passer un client en prestation ponctuelle." };
+  }
+
   /*
    * Un shooting compris dans le forfait ne se facture pas une seconde fois :
    * il est déjà payé par le lissage mensuel de la gestion. La ligne existe
@@ -161,6 +260,17 @@ export async function addBudgetLine(formData: FormData): Promise<BudgetActionRes
     : null;
 
   const supabase = await createSupabaseServerClient();
+
+  // Vérifié avant d'écrire : un refus ne doit pas laisser une ligne ajoutée à moitié du geste.
+  if (parsed.data.withoutManagement) {
+    const check = await oneShotCheck(supabase, parsed.data.clientId, parsed.data.confirmRemovedMonths ?? null);
+    if (check.status === "refused") return { ok: false, message: check.message };
+    // Des mois de gestion partiraient : rien n'est écrit tant que leur nombre exact n'est pas confirmé.
+    if (check.status === "confirm") {
+      return { ok: false, message: check.message, confirmRemovedMonths: check.months };
+    }
+  }
+
   const { error } = await supabase.from("client_budget_lines").insert({
     client_id: parsed.data.clientId,
     service_key: service.key,
@@ -184,13 +294,35 @@ export async function addBudgetLine(formData: FormData): Promise<BudgetActionRes
 
   revalidatePath("/budget");
   revalidatePath(`/budget/${parsed.data.clientId}`);
+
+  let conversion = "";
+  if (parsed.data.withoutManagement) {
+    const converted = await convertToOneShot(supabase, parsed.data.clientId);
+    if (!converted.ok) {
+      return {
+        ok: false,
+        message: `${customLabel} a bien été ajouté, mais le client n'a pas pu passer en prestation ponctuelle : ${converted.message}`,
+      };
+    }
+    conversion = converted.removed > 0
+      ? ` Client passé en prestation ponctuelle : ${converted.removed} mois de gestion non facturé${converted.removed > 1 ? "s" : ""} retiré${converted.removed > 1 ? "s" : ""} de l’addition.`
+      : " Client passé en prestation ponctuelle.";
+    // Le type du client change la fiche, le planning, la carte et la facturation.
+    revalidatePath("/budget/facturation");
+    revalidatePath("/clients");
+    revalidatePath(`/clients/${parsed.data.clientId}`);
+    revalidatePath("/fiches");
+    revalidatePath("/implantations");
+    revalidatePath("/");
+  }
+
   return {
     ok: true,
-    message: included
+    message: (included
       ? `${service.label} inscrit à 0 € : compris dans le forfait.`
       : parsed.data.billedDirectly
         ? `${custom ? customLabel : service.label} ajouté et à facturer au client.`
-        : `${custom ? customLabel : service.label} ajouté à l’enveloppe.`,
+        : `${custom ? customLabel : service.label} ajouté à l’enveloppe.`) + conversion,
   };
 }
 
