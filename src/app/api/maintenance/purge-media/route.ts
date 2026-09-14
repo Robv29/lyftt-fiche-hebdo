@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { clientFormula } from "@/lib/domain/client-formula";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { cronAuthorizationError } from "@/lib/internal/cron-auth";
 import { logRibAccess } from "@/lib/internal/rib-audit";
 import { syncClientLocation } from "@/lib/geo/client-location";
 import { decideMediaRetention, formatBytes } from "@/lib/domain/media-retention";
@@ -36,28 +37,8 @@ export const GET = handle;
 export const POST = handle;
 
 async function handle(request: NextRequest) {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) {
-    return NextResponse.json({ error: "CRON_SECRET non configuré." }, { status: 503 });
-  }
-
-  // Un en-tête HTTP n'accepte que de l'ASCII visible. Un secret contenant un
-  // accent ou une espace insécable ne pourra jamais être transmis : la purge
-  // échouerait silencieusement à chaque exécution. Mieux vaut le dire.
-  if (!/^[\x21-\x7E]+$/.test(secret)) {
-    return NextResponse.json(
-      {
-        error:
-          "CRON_SECRET contient des caractères invalides pour un en-tête HTTP. " +
-          "N'utilisez que des lettres non accentuées, des chiffres et des symboles simples.",
-      },
-      { status: 503 },
-    );
-  }
-
-  if (request.headers.get("authorization") !== `Bearer ${secret}`) {
-    return NextResponse.json({ error: "Non autorisé." }, { status: 401 });
-  }
+  const denied = cronAuthorizationError(request);
+  if (denied) return denied;
 
   const admin = createSupabaseAdminClient();
 

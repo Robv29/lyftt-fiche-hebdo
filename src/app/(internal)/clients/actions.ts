@@ -1033,12 +1033,33 @@ export async function convertToManagement(clientId: string): Promise<ClientActio
   const { data: allowed } = await scoped.from("clients").select("id").eq("id", id.data).maybeSingle();
   if (!allowed) return { ok: false, message: "Client introuvable ou accès refusé." };
 
-  const { error } = await createSupabaseAdminClient()
+  const admin = createSupabaseAdminClient();
+  const { data: converted, error } = await admin
     .from("clients")
     .update({ client_kind: "gestion" })
     .eq("id", id.data)
-    .eq("client_kind", "ponctuel");
+    .eq("client_kind", "ponctuel")
+    .select("id");
   if (error) return { ok: false, message: `Conversion impossible : ${error.message}` };
+
+  /*
+   * En gestion, les contacts reçoivent le planning — et la proposition de bilan
+   * du 5 du mois. Créés en ponctuel, ils n'y étaient pas inscrits : le client
+   * converti n'aurait reçu ni l'un ni l'autre tant que personne ne rouvrait sa
+   * fiche. Seulement si la conversion a bien eu lieu à l'instant.
+   */
+  if ((converted ?? []).length > 0) {
+    const { error: contactsError } = await admin
+      .from("client_contacts")
+      .update({ receives_planning: true })
+      .eq("client_id", id.data);
+    if (contactsError) {
+      return {
+        ok: false,
+        message: `Client passé en gestion, mais ses contacts ne recevront pas le planning : ${contactsError.message}. Enregistrez sa fiche pour corriger.`,
+      };
+    }
+  }
 
   revalidatePath("/clients");
   revalidatePath(`/clients/${id.data}`);
