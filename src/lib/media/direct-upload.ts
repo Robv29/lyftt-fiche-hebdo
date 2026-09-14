@@ -64,7 +64,7 @@ async function runUpload(
   kind: "image" | "video",
 ): Promise<UploadOutcome> {
 
-  // Les images sont recompressées ; les vidéos partent telles quelles.
+  // L'original part intact ; seul un aperçu léger est calculé pour les images.
   if (kind === "image") params.onProgress?.("preparation");
   const prepared = await withTimeout(prepareMedia(params.file), 20000, "La préparation du fichier")
     .catch(() => ({ file: params.file, preview: null, originalBytes: params.file.size, finalBytes: params.file.size }));

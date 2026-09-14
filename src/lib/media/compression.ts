@@ -3,25 +3,28 @@
 /**
  * Préparation des médias dans le navigateur, avant envoi.
  *
- * Deux objectifs : réduire le poids stocké — une photo de smartphone passe de
- * 4 Mo à quelques centaines de kilo-octets sans perte visible — et produire un
- * aperçu de quelques kilo-octets, conservé après la purge du fichier original.
+ * Le fichier stocké est l'original, octet pour octet. Ces médias sont ensuite
+ * téléchargés pour être publiés sur les réseaux : les redimensionner à 1600 px
+ * et les recompresser en WebP, comme on le faisait, dégradait chaque
+ * publication. Le poids économisé ne vaut pas une photo floue chez le client.
  *
- * Les vidéos ne sont pas transcodées : cela demanderait ffmpeg.wasm, plusieurs
- * dizaines de méga-octets à charger et des minutes de calcul. On en extrait en
- * revanche une image de couverture, ce qui évite au portail client de charger
- * la vidéo entière pour l'afficher.
+ * Seul un aperçu de quelques kilo-octets est produit à côté, pour l'affichage
+ * et pour survivre à la purge de l'original après publication.
+ *
+ * Exception : le HEIC, que ni Chrome ni les outils de publication de Meta
+ * n'acceptent. Quand le navigateur sait le décoder, il est converti en JPEG à
+ * pleine résolution et à qualité maximale ; sinon il part tel quel.
+ *
+ * Les vidéos ne sont jamais transcodées.
  */
 
-/** Côté le plus long de l'image conservée. */
-const MAX_EDGE = 1600;
 /** Côté le plus long de l'aperçu léger. */
 const PREVIEW_EDGE = 320;
 
 export interface PreparedMedia {
-  /** Fichier à téléverser (image recompressée, ou vidéo inchangée). */
+  /** Fichier à téléverser : l'original, ou un JPEG pleine résolution pour un HEIC. */
   file: File;
-  /** Aperçu de quelques kilo-octets : couverture vidéo ou miniature image. */
+  /** Aperçu de quelques kilo-octets, pour l'affichage uniquement. */
   preview: File | null;
   originalBytes: number;
   finalBytes: number;
@@ -30,18 +33,19 @@ export interface PreparedMedia {
 function canvasToFile(
   canvas: HTMLCanvasElement,
   fileName: string,
+  type: "image/webp" | "image/jpeg",
   quality: number,
 ): Promise<File> {
   return new Promise((resolve, reject) => {
     canvas.toBlob(
       (blob) => {
         if (!blob) {
-          reject(new Error("Compression impossible"));
+          reject(new Error("Conversion impossible"));
           return;
         }
-        resolve(new File([blob], fileName, { type: "image/webp" }));
+        resolve(new File([blob], fileName, { type }));
       },
-      "image/webp",
+      type,
       quality,
     );
   });
@@ -58,6 +62,7 @@ function draw(source: CanvasImageSource, width: number, height: number) {
   canvas.height = height;
   const context = canvas.getContext("2d");
   if (!context) throw new Error("Canvas indisponible");
+  context.imageSmoothingQuality = "high";
   context.drawImage(source, 0, 0, width, height);
   return canvas;
 }
@@ -79,33 +84,32 @@ async function loadImage(file: File): Promise<HTMLImageElement> {
   }
 }
 
+export function isHeic(file: Pick<File, "type" | "name">): boolean {
+  return /^image\/hei[cf]$/i.test(file.type) || /\.hei[cf]$/i.test(file.name);
+}
+
 async function prepareImage(file: File): Promise<PreparedMedia> {
   const image = await loadImage(file);
   const base = file.name.replace(/\.[^.]+$/, "");
-
-  const full = scaleTo(image.naturalWidth, image.naturalHeight, MAX_EDGE);
-  const compressed = await canvasToFile(
-    draw(image, full.width, full.height),
-    `${base}.webp`,
-    0.82,
-  );
 
   const small = scaleTo(image.naturalWidth, image.naturalHeight, PREVIEW_EDGE);
   const preview = await canvasToFile(
     draw(image, small.width, small.height),
     `${base}-apercu.webp`,
+    "image/webp",
     0.6,
   );
 
-  // Une recompression qui alourdit le fichier n'a aucun intérêt.
-  const keepOriginal = compressed.size >= file.size;
+  const upload = isHeic(file)
+    ? await canvasToFile(
+        draw(image, image.naturalWidth, image.naturalHeight),
+        `${base}.jpg`,
+        "image/jpeg",
+        0.95,
+      )
+    : file;
 
-  return {
-    file: keepOriginal ? file : compressed,
-    preview,
-    originalBytes: file.size,
-    finalBytes: keepOriginal ? file.size : compressed.size,
-  };
+  return { file: upload, preview, originalBytes: file.size, finalBytes: upload.size };
 }
 
 /** Fichier transmis tel quel, sans aucun traitement préalable. */
@@ -126,12 +130,10 @@ export async function prepareMedia(file: File): Promise<PreparedMedia> {
   /*
    * Les vidéos partent brutes, sans traitement.
    *
-   * Il n'y a jamais eu de compression vidéo — transcoder dans un navigateur
-   * exigerait ffmpeg.wasm, des dizaines de méga-octets à charger et des minutes
-   * de calcul. Seule une image de couverture était extraite ; elle est retirée
-   * car elle allongeait le dépôt et échouait sur certains codecs. Le portail
-   * client charge de toute façon la vidéo en `preload="metadata"` : il ne
-   * télécharge que l'en-tête tant que le client ne lance pas la lecture.
+   * Transcoder dans un navigateur exigerait ffmpeg.wasm, des dizaines de
+   * méga-octets à charger et des minutes de calcul. Le portail client charge
+   * la vidéo en `preload="metadata"` : il ne télécharge que l'en-tête tant que
+   * le client ne lance pas la lecture.
    */
   return asIs(file);
 }

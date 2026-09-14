@@ -9,7 +9,9 @@
  */
 
 export const SHEET_MEDIA_MAX_BYTES = {
-  image: 15 * 1024 * 1024,
+  // Les images ne sont plus recompressées avant envoi : une photo d'appareil
+  // ou un PNG exporté dépasse vite les 15 Mo d'avant.
+  image: 40 * 1024 * 1024,
   video: 200 * 1024 * 1024,
 } as const;
 
