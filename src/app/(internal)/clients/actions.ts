@@ -27,7 +27,10 @@ import {
   parseCustomMonthly,
   type CustomMonthlyService,
   parseBaseFee,
+  plannedShootingDates,
+  shootingForfaitLineRow,
 } from "@/lib/domain/budget";
+import { todayInParis } from "@/lib/domain/client-lifecycle";
 
 export interface ClientActionResult {
   ok: boolean;
@@ -471,6 +474,23 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
 
   const admin = createSupabaseAdminClient();
 
+  /*
+   * Dates de shooting calées dès la création. Vérifiées avant toute écriture :
+   * refusées après coup, elles laisseraient un client à moitié créé.
+   */
+  const shootingPlan = shootingPlanFromInput(input);
+  const shootingDates = plannedShootingDates(formData.getAll("shootingDates"), {
+    plan: shootingPlan,
+    today: todayInParis(),
+  });
+  if (!shootingDates.ok) {
+    return {
+      ok: false,
+      message: shootingDates.message,
+      fieldErrors: { shootingDates: shootingDates.message },
+    };
+  }
+
   const notes = JSON.stringify(clientSettings(input, hashtags));
 
   // Un slug déjà pris est suffixé plutôt que de faire échouer la création.
@@ -560,6 +580,36 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
   }
 
   /*
+   * Dates de shooting calées d'avance. Un échec n'annule pas la création : le
+   * client existe, et le rappel du tableau de bord reprend la main à chaque
+   * échéance — alors qu'annuler obligerait à ressaisir tout l'onboarding.
+   *
+   * « Compris au forfait » n'est pas tranché ici : c'est une décision de la
+   * direction, prise une fois chaque shooting tourné.
+   */
+  let shootingNotice = "";
+  if (shootingPlan && shootingDates.dates.length > 0) {
+    const { error: shootingError } = await admin.from("client_budget_lines").insert(
+      shootingDates.dates.map((date) => shootingForfaitLineRow({
+        clientId: client.id,
+        plan: shootingPlan,
+        performedOn: date,
+        note: "Date calée à la création du client. Prestation déjà lissée sur la gestion mensuelle.",
+        createdBy: profile.id,
+      })),
+    );
+    const count = shootingDates.dates.length;
+    if (shootingError) {
+      console.error("[clients] dates de shooting non enregistrées", shootingError.message);
+      shootingNotice = " Les dates de shooting n'ont pas pu être enregistrées : le tableau de bord rappellera de les caler.";
+    } else {
+      shootingNotice = ` ${count} shooting${count > 1 ? "s" : ""} calé${count > 1 ? "s" : ""}.`;
+      revalidatePath("/shootings");
+      revalidatePath("/");
+    }
+  }
+
+  /*
    * Fiche transmise par le CRM à l'origine de cette création, s'il y en a une.
    * Le rattachement échoue en silence : le client, lui, existe bel et bien, et
    * une fiche restée « à traiter » se referme d'un clic — alors qu'annuler la
@@ -581,7 +631,7 @@ export async function createClient(formData: FormData): Promise<ClientActionResu
   revalidatePath("/clients");
   // La carte gagne un point : elle doit le montrer sans qu'on ait à recharger.
   revalidatePath("/implantations");
-  return { ok: true, message: `${input.name} a été créé.`, clientId: client.id };
+  return { ok: true, message: `${input.name} a été créé.${shootingNotice}`, clientId: client.id };
 }
 
 export async function updateClient(formData: FormData): Promise<ClientActionResult> {

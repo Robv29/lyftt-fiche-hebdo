@@ -5,7 +5,14 @@ import { z } from "zod";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sanitizeText } from "@/lib/security/sanitize";
-import { SHOOTING_FORFAIT_KEY, findService, parseShootingPlan } from "@/lib/domain/budget";
+import {
+  SHOOTING_FORFAIT_KEY,
+  SHOOTING_LINE_KEYS,
+  parseShootingPlan,
+  shootingCycle,
+  shootingForfaitLineRow,
+  type ShootingPlan,
+} from "@/lib/domain/budget";
 import { todayInParis } from "@/lib/domain/client-lifecycle";
 
 export interface ShootingActionResult {
@@ -30,16 +37,31 @@ async function requireClientAccess(clientId: string) {
   const scoped = await createSupabaseServerClient();
   const { data: client } = await scoped
     .from("clients")
-    .select("id, notes")
+    .select("id, notes, contract_start_date")
     .eq("id", clientId)
     .maybeSingle();
   if (!client) return null;
 
-  return { profile, client };
+  return {
+    profile,
+    client: {
+      id: client.id as string,
+      notes: (client.notes as string | null) ?? null,
+      contractStartDate: (client.contract_start_date as string | null) ?? null,
+    },
+  };
 }
+
+/*
+ * L'écran a pu vieillir — un shooting passé depuis, un collègue qui a déplacé
+ * la date. L'action ne touche qu'à la date que la personne avait sous les yeux.
+ */
+const STALE_MESSAGE = "La date a changé depuis l'affichage de la page : rechargez-la avant de recommencer.";
 
 const scheduleSchema = z.object({
   clientId: z.string().uuid(),
+  /* Date calée affichée au moment du clic ; vide quand rien n'était calé. */
+  expectedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).or(z.literal("")),
   shootingOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date invalide."),
   note: z.string().trim().max(300, "Précision trop longue (300 caractères maximum).").optional(),
 });
@@ -55,6 +77,7 @@ const scheduleSchema = z.object({
 export async function scheduleShooting(formData: FormData): Promise<ShootingActionResult> {
   const parsed = scheduleSchema.safeParse({
     clientId: formData.get("clientId"),
+    expectedOn: formData.get("expectedOn") ?? "",
     shootingOn: formData.get("shootingOn"),
     note: formData.get("note") ?? undefined,
   });
@@ -73,32 +96,45 @@ export async function scheduleShooting(formData: FormData): Promise<ShootingActi
   const admin = createSupabaseAdminClient();
 
   /*
-   * Une date déjà calée est remplacée, jamais doublée : deux lignes à venir
-   * pour le même shooting laisseraient l'écran choisir laquelle montrer, et le
-   * cycle suivant se calculerait sur la mauvaise.
+   * Une date déjà calée est déplacée, jamais doublée : deux lignes pour le
+   * même shooting laisseraient l'écran choisir laquelle montrer.
+   *
+   * Seule celle du cycle en cours se déplace. Les suivantes ont pu être calées
+   * d'avance à la création du client : effacer toutes les dates à venir, comme
+   * on le faisait, détruisait ce calendrier au premier report.
    */
-  await admin
-    .from("client_budget_lines")
-    .delete()
-    .eq("client_id", parsed.data.clientId)
-    .eq("service_key", SHOOTING_FORFAIT_KEY)
-    .gt("performed_on", todayInParis());
+  const cycle = await currentCycle(admin, access.client, plan);
+  if (cycle.error) return { ok: false, message: `Date non enregistrée : ${cycle.error}` };
+  if ((cycle.plannedOn ?? "") !== parsed.data.expectedOn) return { ok: false, message: STALE_MESSAGE };
 
-  const { error } = await admin.from("client_budget_lines").insert({
-    client_id: parsed.data.clientId,
-    service_key: SHOOTING_FORFAIT_KEY,
-    label: `${findService(plan.serviceKey)?.label ?? "Shooting"} du forfait`,
-    billing: "ponctuel",
-    // Déjà réglé par le lissage mensuel : la ligne ne consomme rien.
-    unit_price_cents: 0,
-    quantity: 1,
-    months: null,
-    performed_on: parsed.data.shootingOn,
-    note: parsed.data.note
-      ? sanitizeText(parsed.data.note, 300)
-      : "Date calée avec le client. Prestation déjà lissée sur la gestion mensuelle.",
-    created_by: access.profile.id,
-  });
+  const target = parsed.data.shootingOn;
+  if (cycle.planned && cycle.planned.serviceKey !== SHOOTING_FORFAIT_KEY) {
+    return { ok: false, message: "Ce shooting a été inscrit depuis le budget du client : c'est là qu'il se modifie." };
+  }
+  if (target !== cycle.plannedOn && cycle.dates.includes(target)) {
+    return { ok: false, message: "Un shooting est déjà inscrit ce jour-là." };
+  }
+  // Dépasser la date suivante intervertirait deux shootings sans que personne ne le voie.
+  if (cycle.followingOn && target >= cycle.followingOn) {
+    return {
+      ok: false,
+      message: `Le shooting suivant est déjà calé le ${formatDay(cycle.followingOn)} : choisissez une date antérieure.`,
+    };
+  }
+
+  const note = parsed.data.note ? sanitizeText(parsed.data.note, 300) : null;
+  const { error } = cycle.planned
+    ? await admin
+        .from("client_budget_lines")
+        .update({ performed_on: target, ...(note ? { note } : {}) })
+        .eq("id", cycle.planned.id)
+    : await admin.from("client_budget_lines").insert(shootingForfaitLineRow({
+        clientId: parsed.data.clientId,
+        plan,
+        performedOn: target,
+        note: note ?? "Date calée avec le client. Prestation déjà lissée sur la gestion mensuelle.",
+        createdBy: access.profile.id,
+      }));
   if (error) return { ok: false, message: `Date non enregistrée : ${error.message}` };
 
   // Le rappel n'a plus lieu d'être : la date est prise.
@@ -134,6 +170,72 @@ export async function markShootingReminder(clientId: string): Promise<ShootingAc
 
   revalidatePath("/");
   return { ok: true, message: "Message noté comme envoyé." };
+}
+
+function formatDay(date: string): string {
+  return new Intl.DateTimeFormat("fr-FR", {
+    day: "numeric", month: "long", year: "numeric", timeZone: "UTC",
+  }).format(new Date(`${date}T00:00:00Z`));
+}
+
+/**
+ * Date calée du cycle en cours, telle que le tableau de bord la montre.
+ *
+ * Même lecture que `readShootings` : toutes les lignes de shooting, les
+ * annulées écartées, puis `shootingCycle`. « Modifier » et « Annuler » doivent
+ * agir sur la date affichée, pas sur la plus proche venue.
+ *
+ * Une erreur de lecture est remontée plutôt que lue comme « aucune date » :
+ * on inscrirait sinon un doublon de la date existante.
+ */
+async function currentCycle(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  client: { id: string; contractStartDate: string | null },
+  plan: ShootingPlan | null,
+): Promise<{
+  error: string | null;
+  planned: { id: string; serviceKey: string } | null;
+  plannedOn: string | null;
+  followingOn: string | null;
+  dates: string[];
+}> {
+  const [lines, cancelled] = await Promise.all([
+    admin
+      .from("client_budget_lines")
+      .select("id, service_key, performed_on")
+      .eq("client_id", client.id)
+      .in("service_key", SHOOTING_LINE_KEYS),
+    admin
+      .from("shootings")
+      .select("budget_line_id")
+      .eq("client_id", client.id)
+      .eq("cancelled", true),
+  ]);
+  const error = lines.error?.message ?? cancelled.error?.message ?? null;
+  if (error) return { error, planned: null, plannedOn: null, followingOn: null, dates: [] };
+
+  const skipped = new Set((cancelled.data ?? []).map((row) => row.budget_line_id as string));
+  const active = (lines.data ?? []).filter((row) => !skipped.has(row.id as string));
+  const dates = active.map((row) => row.performed_on as string);
+  const cycle = shootingCycle({
+    plan,
+    dates,
+    contractStartDate: client.contractStartDate,
+    today: todayInParis(),
+  });
+
+  // Deux lignes le même jour : c'est la date du forfait qui se déplace.
+  const sameDay = cycle.plannedOn
+    ? active.filter((row) => row.performed_on === cycle.plannedOn)
+    : [];
+  const chosen = sameDay.find((row) => row.service_key === SHOOTING_FORFAIT_KEY) ?? sameDay[0] ?? null;
+  return {
+    error: null,
+    planned: chosen ? { id: chosen.id as string, serviceKey: chosen.service_key as string } : null,
+    plannedOn: cycle.plannedOn,
+    followingOn: cycle.followingOn,
+    dates,
+  };
 }
 
 function readSettings(notes: string | null): Record<string, unknown> {
@@ -176,26 +278,39 @@ async function writeSettings(
  * décision définitive. La retirer rouvre le rappel, et l'échéance se recalcule
  * depuis le dernier shooting réellement réalisé.
  */
-export async function cancelShooting(clientId: string): Promise<ShootingActionResult> {
+export async function cancelShooting(
+  clientId: string,
+  /** Date calée affichée au moment du clic. */
+  expectedOn: string | null,
+): Promise<ShootingActionResult> {
   const parsed = z.string().uuid().safeParse(clientId);
   if (!parsed.success) return { ok: false, message: "Client invalide." };
+  if (expectedOn !== null && !/^\d{4}-\d{2}-\d{2}$/.test(expectedOn)) {
+    return { ok: false, message: "Date invalide." };
+  }
 
   const access = await requireClientAccess(parsed.data);
   if (!access) return { ok: false, message: "Client introuvable ou accès refusé." };
 
   const admin = createSupabaseAdminClient();
-  const { error, count } = await admin
-    .from("client_budget_lines")
-    .delete({ count: "exact" })
-    .eq("client_id", parsed.data)
-    .eq("service_key", SHOOTING_FORFAIT_KEY)
-    // Seule une date à venir s'annule : un shooting déjà réalisé est un fait.
-    .gt("performed_on", todayInParis());
-
-  if (error) return { ok: false, message: `Annulation impossible : ${error.message}` };
-  if ((count ?? 0) === 0) {
+  const plan = parseShootingPlan(readSettings(access.client.notes).shootingPlan);
+  // Seule une date à venir s'annule : un shooting déjà réalisé est un fait.
+  // Et seulement celle du cycle en cours : les suivantes, calées d'avance, restent.
+  const cycle = await currentCycle(admin, access.client, plan);
+  if (cycle.error) return { ok: false, message: `Annulation impossible : ${cycle.error}` };
+  if (cycle.plannedOn !== expectedOn) return { ok: false, message: STALE_MESSAGE };
+  if (!cycle.planned) {
     return { ok: false, message: "Aucune date à venir à annuler pour ce client." };
   }
+  if (cycle.planned.serviceKey !== SHOOTING_FORFAIT_KEY) {
+    return { ok: false, message: "Ce shooting a été inscrit depuis le budget du client : c'est là qu'il s'annule." };
+  }
+
+  const { error } = await admin
+    .from("client_budget_lines")
+    .delete()
+    .eq("id", cycle.planned.id);
+  if (error) return { ok: false, message: `Annulation impossible : ${error.message}` };
 
   revalidatePath("/");
   revalidatePath("/budget");

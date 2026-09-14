@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { parseClientKind } from "@/lib/domain/client-lifecycle";
+import { parseClientKind, todayInParis } from "@/lib/domain/client-lifecycle";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { ClientAdmin } from "./ClientAdmin";
 import { resolveClientLogoUrl } from "@/lib/media/client-logo";
@@ -54,6 +54,6 @@ export default async function ClientsPage({
           )
         : null;
       return { id:c.id, name:c.name, kind:parseClientKind(c.client_kind), isActive:c.is_active, deadlineWeekday:c.validation_deadline_weekday, deadlineTime:c.validation_deadline_time, approvalPolicy:c.approval_policy, contactName:contact ? `${contact.first_name} ${contact.last_name ?? ""}`.trim() : null, contactEmail:contact?.email ?? null, contactPhone:contact?.phone ?? null, managerName:assignments.find((assignment)=>assignment.role==="community_manager")?.profiles?.full_name ?? "Non assigné", contractStartDate:c.contract_start_date, contractEndDate:c.contract_end_date, pauseStartDate:c.pause_start_date, pauseEndDate:c.pause_end_date, logoUrl:await resolveClientLogoUrl(c.logo_url), cadenceLabel:`${Number(cadence.photo??0)} photo · ${Number(cadence.video??0)} vidéo · ${Number(cadence.story??0)} story · ${Number(cadence.visual??0)} visuel`, monthlyCostCents };
-    }))} managers={(managers ?? []).map((m) => ({ id:m.id, name:m.full_name }))} readOnly={readOnly} prefillName={(nom ?? "").slice(0, 120)} transmissionId={transmission ?? ""}/>
+    }))} managers={(managers ?? []).map((m) => ({ id:m.id, name:m.full_name }))} readOnly={readOnly} prefillName={(nom ?? "").slice(0, 120)} transmissionId={transmission ?? ""} today={todayInParis()}/>
   </div>;
 }

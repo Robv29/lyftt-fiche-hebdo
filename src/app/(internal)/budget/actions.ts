@@ -8,6 +8,21 @@ import { sanitizeText } from "@/lib/security/sanitize";
 import { checkAttachment, safeFileName } from "@/lib/security/attachments";
 import { logRibAccess } from "@/lib/internal/rib-audit";
 import { invoiceMonthFor } from "@/lib/domain/invoicing";
+import { todayInParis } from "@/lib/domain/client-lifecycle";
+
+/**
+ * Un mois pas encore commencé ne se facture pas.
+ *
+ * Marquer « faite » un mois à venir le verrouille : sa gestion mensuelle, qui
+ * s'inscrit au début du mois, n'y serait alors jamais ajoutée.
+ */
+function futureMonthRefusal(periodMonth: string, status: string): string | null {
+  if (status === "a_faire") return null;
+  const currentMonth = `${todayInParis().slice(0, 7)}-01`;
+  return periodMonth > currentMonth
+    ? "Ce mois n'est pas encore commencé : sa facture ne peut pas être établie."
+    : null;
+}
 import {
   findService,
   isCustomService,
@@ -17,6 +32,8 @@ import {
   shootingLinePriceCents,
   MANAGEMENT_MONTH_KEY,
   SHOOTING_FORFAIT_KEY,
+  billableLines,
+  type BudgetLine,
 } from "@/lib/domain/budget";
 
 export interface BudgetActionResult {
@@ -225,6 +242,8 @@ export async function setInvoiceStatus(
   if (!parsed.success) {
     return { ok: false, message: parsed.error.issues[0]?.message ?? "Demande invalide." };
   }
+  const refusal = futureMonthRefusal(parsed.data.periodMonth, parsed.data.status);
+  if (refusal) return { ok: false, message: refusal };
 
   const now = new Date().toISOString();
   const supabase = await createSupabaseServerClient();
@@ -270,6 +289,8 @@ export async function setMonthInvoiceStatus(
   if (!parsed.success) {
     return { ok: false, message: parsed.error.issues[0]?.message ?? "Demande invalide." };
   }
+  const refusal = futureMonthRefusal(parsed.data.periodMonth, parsed.data.status);
+  if (refusal) return { ok: false, message: refusal };
 
   const now = new Date().toISOString();
   const supabase = await createSupabaseServerClient();
@@ -351,10 +372,10 @@ export async function deleteMonthInvoice(
    * Une seule règle décide donc de la composition d'une facture, à l'écran
    * comme à la suppression.
    */
-  const [{ data: candidates }, { data: client }, { data: invoices }] = await Promise.all([
+  const [{ data: candidates }, { data: client }, { data: invoices }, { data: budget }] = await Promise.all([
     supabase
       .from("client_budget_lines")
-      .select("id, performed_on")
+      .select("id, service_key, label, billing, unit_price_cents, quantity, months, performed_on, billed_directly")
       .eq("client_id", parsed.data.clientId)
       .not("service_key", "in", `(${MANAGEMENT_MONTH_KEY},${SHOOTING_FORFAIT_KEY})`),
     supabase
@@ -366,21 +387,49 @@ export async function deleteMonthInvoice(
       .from("client_invoices")
       .select("period_month, status")
       .eq("client_id", parsed.data.clientId),
+    supabase
+      .from("client_budgets")
+      .select("billing_mode")
+      .eq("client_id", parsed.data.clientId)
+      .maybeSingle(),
   ]);
 
+  /*
+   * Mois au format complet (« 2026-08-01 »), celui de `invoiceMonthFor` et de
+   * l'écran de facturation. La comparaison se faisait avec « 2026-08 » et ne
+   * correspondait jamais : rien n'était retiré, et la facture « supprimée » se
+   * reformait au rechargement.
+   */
   const statuses = Object.fromEntries(
     (invoices ?? []).map((row) => [
-      String(row.period_month).slice(0, 7),
+      String(row.period_month).slice(0, 10),
       row.status as "a_faire" | "faite" | "prelevement_programme",
     ]),
   );
+  const mode = ((budget?.billing_mode as string | null) ?? "comptant") as Parameters<typeof billableLines>[1];
 
   const targets = (candidates ?? [])
+    /*
+     * Ce que l'écran montre sur la facture, et rien d'autre : en financement,
+     * une prestation prise sur l'enveloppe n'y figure pas et ne doit pas
+     * disparaître avec elle.
+     */
+    .filter((row) => billableLines([{
+      id: row.id as string,
+      serviceKey: row.service_key as string,
+      label: row.label as string,
+      billing: row.billing as BudgetLine["billing"],
+      unitPriceCents: row.unit_price_cents as number,
+      quantity: Number(row.quantity),
+      months: row.months as number | null,
+      performedOn: row.performed_on as string,
+      billedDirectly: Boolean(row.billed_directly),
+    }], mode).length > 0)
     .filter((row) => invoiceMonthFor(
       { performedOn: row.performed_on as string },
       (client?.contract_start_date as string | null) ?? null,
       statuses,
-    ) === parsed.data.periodMonth.slice(0, 7))
+    ) === parsed.data.periodMonth)
     .map((row) => row.id as string);
 
   let count = 0;

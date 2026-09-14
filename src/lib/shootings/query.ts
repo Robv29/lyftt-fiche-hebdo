@@ -4,9 +4,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   SHOOTING_LINE_KEYS,
+  addMonths,
   parseShootingPlan,
   shootingPlanSummary,
-  shootingSchedule,
+  shootingCycle,
   type ShootingPlan,
 } from "@/lib/domain/budget";
 import { todayInParis } from "@/lib/domain/client-lifecycle";
@@ -173,18 +174,21 @@ export async function readShootings(
   }
 
   const due: ShootingDue[] = withPlan.flatMap(({ client, plan }) => {
-    const dates = (datesByClient.get(client.id) ?? []).sort();
-    // Un shooting à venir est une date calée ; le dernier passé sert d'ancre.
-    const lastDoneOn = [...dates].reverse().find((date) => date <= today) ?? null;
-    const plannedOn = dates.find((date) => date > today) ?? null;
-    const schedule = shootingSchedule({
+    // Le dernier shooting passé sert d'ancre ; seule une date du cycle en cours est « calée ».
+    const { schedule, plannedOn } = shootingCycle({
       plan,
-      lastDoneOn,
+      dates: datesByClient.get(client.id) ?? [],
       contractStartDate: client.contract_start_date,
       today,
     });
     if (!schedule) return [];
-    if (!schedule.remindNow && !plannedOn) return [];
+    /*
+     * L'encart sert à planifier. Une date calée loin d'avance — à la création
+     * du client, pour l'année — n'appelle aucune action : la montrer ferait de
+     * chaque client un rappel permanent. Elle réapparaît à l'approche.
+     */
+    const plannedSoon = plannedOn !== null && plannedOn <= addMonths(today, 1);
+    if (!schedule.remindNow && !plannedSoon) return [];
 
     const contacts = client.client_contacts ?? [];
     const contact = contacts.find((row) => row.is_primary) ?? contacts[0];

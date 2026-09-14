@@ -2,7 +2,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { denyCommercial } from "@/lib/internal/authorization";
-import { formatEuros } from "@/lib/domain/budget";
+import { awaitsShootingDecision, formatEuros } from "@/lib/domain/budget";
+import { todayInParis } from "@/lib/domain/client-lifecycle";
 import { accessibleShootingClients, readShootings } from "@/lib/shootings/query";
 import { ShootingReminders } from "../ShootingReminders";
 import { ShootingsView } from "./ShootingsView";
@@ -51,8 +52,13 @@ export default async function ShootingsPage() {
         .filter((row) => row.status === "faite" || row.status === "prelevement_programme")
         .map((row) => `${row.client_id as string}|${String(row.period_month).slice(0, 7)}`),
     );
+    const today = todayInParis();
     toClassify = entries.filter((entry) =>
-      entry.forfaitIncluded === null
+      awaitsShootingDecision({
+        serviceKey: entry.serviceKey,
+        performedOn: entry.date,
+        forfaitIncluded: entry.forfaitIncluded,
+      }, today)
       && entry.status !== "annule"
       && !settled.has(`${entry.clientId}|${entry.month}`));
   }

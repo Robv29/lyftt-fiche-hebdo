@@ -297,12 +297,25 @@ export function envelopeLines(lines: BudgetLine[], mode: BillingMode): BudgetLin
  * reste est pris sur l'enveloppe.
  */
 export function billableLines(lines: BudgetLine[], mode: BillingMode): BudgetLine[] {
-  if (mode === "comptant") return lines;
+  /*
+   * Une date du forfait à zéro euro est déjà payée dans la gestion mensuelle :
+   * il n'y a rien à facturer. La laisser passer ouvrait un dossier « à faire »
+   * pour chaque date calée d'avance, jusqu'à un an plus tard — et marquer l'un
+   * d'eux « faite » verrouillait le mois, dont la gestion n'était alors jamais
+   * inscrite. Vendue en plus, elle porte le tarif du catalogue et se facture.
+   *
+   * Seule la clé du forfait est écartée : c'est aussi la seule que la
+   * suppression d'une facture ignore, et un shooting du catalogue tranché
+   * « compris » reste lisible sur l'addition, comme avant.
+   */
+  const invoiceable = lines.filter((line) =>
+    !(line.serviceKey === SHOOTING_FORFAIT_KEY && line.unitPriceCents === 0));
+  if (mode === "comptant") return invoiceable;
   // En hybride, le récurrent se facture et le ponctuel part sur l'enveloppe.
   if (mode === "hybride") {
-    return lines.filter((line) => isManagementMonth(line) || line.billedDirectly);
+    return invoiceable.filter((line) => isManagementMonth(line) || line.billedDirectly);
   }
-  return lines.filter((line) => line.billedDirectly);
+  return invoiceable.filter((line) => line.billedDirectly);
 }
 
 function addDays(date: string, days: number): string {
@@ -662,6 +675,162 @@ export function shootingSchedule(input: {
     remindFrom,
     remindNow: input.today >= remindFrom,
     overdue: input.today > dueOn,
+  };
+}
+
+/**
+ * Où en est le cycle du forfait : l'échéance, et la date calée qui y répond.
+ *
+ * Seule une date du cycle en cours compte comme calée. Une date posée d'avance
+ * pour le cycle suivant — à la création du client, sur un an — ne couvre pas
+ * celui-ci : si l'on annule la prochaine, la prendre pour elle ferait sauter un
+ * shooting vendu sans que personne ne le voie.
+ *
+ * L'écran et les actions passent tous deux par ici : le tableau de bord montre
+ * une date, et « Modifier » ou « Annuler » doivent agir sur celle-là.
+ */
+export function shootingCycle(input: {
+  plan: ShootingPlan | null;
+  /** Dates des shootings non annulés, dans n'importe quel ordre. */
+  dates: readonly string[];
+  contractStartDate: string | null;
+  today: string;
+}): { schedule: ShootingSchedule | null; plannedOn: string | null; followingOn: string | null } {
+  const sorted = [...input.dates].sort();
+  const lastDoneOn = [...sorted].reverse().find((date) => date <= input.today) ?? null;
+  const upcoming = sorted.filter((date) => date > input.today);
+  const schedule = shootingSchedule({
+    plan: input.plan,
+    lastDoneOn,
+    contractStartDate: input.contractStartDate,
+    today: input.today,
+  });
+
+  /*
+   * Une date répond à l'échéance la plus proche. Au-delà d'une demi-période,
+   * elle est plus près de l'échéance suivante : elle lui appartient, et celle
+   * en cours reste à caler. Borner à une période entière laissait une date
+   * posée d'avance couvrir deux cycles dès qu'on annulait la précédente.
+   *
+   * Une échéance dépassée se compte depuis aujourd'hui : une date calée en
+   * retard répond encore au shooting en souffrance.
+   */
+  const next = upcoming[0] ?? null;
+  const halfPeriodDays = input.plan ? Math.floor((input.plan.everyMonths * 30.44) / 2) : 0;
+  const inCycle = next !== null && (schedule
+    ? next < addDays(schedule.dueOn > input.today ? schedule.dueOn : input.today, halfPeriodDays)
+    : true);
+  const plannedOn = inCycle ? next : null;
+  return {
+    schedule,
+    plannedOn,
+    followingOn: plannedOn ? (upcoming[1] ?? null) : next,
+  };
+}
+
+/** Horizon du calendrier proposé à la création : une année de gestion. */
+export const SHOOTING_PLANNING_HORIZON_MONTHS = 12;
+/** Plafond de dates inscrites d'un coup : un shooting mensuel sur deux ans. */
+export const MAX_PLANNED_SHOOTINGS = 24;
+
+function isCalendarDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+/**
+ * Calendrier des shootings proposé dès la création du client.
+ *
+ * Le premier shooting se choisit ; les suivants tombent au rythme vendu, sur
+ * un an. Chaque date se compte depuis la première et non depuis la précédente :
+ * enchaîner les décalages ferait glisser un 31 vers le 28 pour de bon.
+ */
+export function proposeShootingDates(input: {
+  plan: ShootingPlan | null;
+  firstOn: string | null;
+  horizonMonths?: number;
+}): string[] {
+  if (!input.plan || !input.firstOn || !isCalendarDate(input.firstOn)) return [];
+  const every = input.plan.everyMonths;
+  if (!Number.isInteger(every) || every < 1) return [];
+
+  const end = addMonths(input.firstOn, input.horizonMonths ?? SHOOTING_PLANNING_HORIZON_MONTHS);
+  const dates: string[] = [];
+  for (let index = 0; dates.length < MAX_PLANNED_SHOOTINGS; index += 1) {
+    const date = addMonths(input.firstOn, index * every);
+    if (date >= end) break;
+    dates.push(date);
+  }
+  return dates;
+}
+
+/**
+ * Dates de shooting saisies à la création, telles qu'elles seront inscrites.
+ *
+ * Une date passée est refusée : au budget, un shooting daté d'hier se lit
+ * comme réalisé, et ce n'est pas ce qu'on déclare en signant un client.
+ */
+export function plannedShootingDates(
+  raw: readonly unknown[],
+  input: { plan: ShootingPlan | null; today: string },
+): { ok: true; dates: string[] } | { ok: false; message: string } {
+  const values = raw
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (values.length === 0) return { ok: true, dates: [] };
+
+  if (!input.plan) {
+    return { ok: false, message: "Des dates de shooting sont saisies sans shooting vendu dans la formule." };
+  }
+  if (values.some((value) => !isCalendarDate(value))) {
+    return { ok: false, message: "Une date de shooting est invalide." };
+  }
+
+  const dates = [...new Set(values)].sort();
+  if (dates.length < values.length) {
+    return { ok: false, message: "Deux shootings sont calés le même jour." };
+  }
+  if (dates.length > MAX_PLANNED_SHOOTINGS) {
+    return { ok: false, message: `${MAX_PLANNED_SHOOTINGS} dates de shooting au maximum.` };
+  }
+  if (dates[0] < input.today) {
+    return { ok: false, message: "Une date de shooting est déjà passée." };
+  }
+  return { ok: true, dates };
+}
+
+/**
+ * Ligne de budget d'une date de shooting du forfait.
+ *
+ * À zéro euro : le forfait est déjà payé mois par mois dans la gestion, le
+ * compter une seconde fois à sa réalisation doublerait la facture. Une seule
+ * fabrique pour la date calée depuis le rappel et pour celles calées à la
+ * création : deux écritures de la même ligne finiraient par diverger.
+ *
+ * « Compris au forfait » reste à trancher : c'est une décision de facturation,
+ * réservée à la direction, prise une fois le shooting tourné — le forfait a pu
+ * changer d'ici là.
+ */
+export function shootingForfaitLineRow(input: {
+  clientId: string;
+  plan: ShootingPlan;
+  performedOn: string;
+  note: string;
+  createdBy: string;
+}) {
+  return {
+    client_id: input.clientId,
+    service_key: SHOOTING_FORFAIT_KEY,
+    label: `${findService(input.plan.serviceKey)?.label ?? "Shooting"} du forfait`,
+    billing: "ponctuel" as const,
+    unit_price_cents: 0,
+    quantity: 1,
+    months: null,
+    performed_on: input.performedOn,
+    note: input.note,
+    created_by: input.createdBy,
   };
 }
 
@@ -1208,12 +1377,18 @@ export function countableShootings<T extends BudgetLine>(
      * l'application.
      */
     since?: string | null;
+    /*
+     * Dernier jour noté, en général aujourd'hui. Une date calée à l'avance
+     * n'a pas encore été tournée : elle n'a rien à trier.
+     */
+    until?: string | null;
   },
 ): T[] {
   return lines.filter((line) => {
     if (!isShootingLine(line.serviceKey)) return true;
     if (options.isSettledMonth(line.performedOn)) return false;
     if (options.since && line.performedOn < options.since) return false;
+    if (options.until && line.performedOn > options.until) return false;
     return true;
   });
 }
@@ -1228,8 +1403,26 @@ export function countableShootings<T extends BudgetLine>(
  */
 export const SHOOTING_SCORING_FROM = "2026-09-08";
 
+/**
+ * Shooting dont il reste à dire s'il était compris au forfait ou vendu en plus.
+ *
+ * Seulement une fois tourné : une date calée d'avance n'a rien à trancher, et
+ * la compter ferait de chaque client signé avec son calendrier un dossier à
+ * régulariser des mois avant son premier shooting.
+ */
+export function awaitsShootingDecision(
+  line: { serviceKey: string; performedOn: string; forfaitIncluded?: boolean | null },
+  today: string,
+): boolean {
+  return isShootingLine(line.serviceKey)
+    && (line.forfaitIncluded === null || line.forfaitIncluded === undefined)
+    && line.performedOn <= today;
+}
+
 export function shootingTally(
   lines: readonly (BudgetLine & { forfaitIncluded?: boolean | null })[],
+  /* Sans date, toutes les lignes non tranchées comptent, même à venir. */
+  today?: string | null,
 ): ShootingTally {
   const shootings = lines.filter((line) => isShootingLine(line.serviceKey));
   const extras = shootings.filter((line) => line.forfaitIncluded === false);
@@ -1237,7 +1430,8 @@ export function shootingTally(
     included: shootings.filter((line) => line.forfaitIncluded === true).length,
     extra: extras.length,
     extraCents: extras.reduce((total, line) => total + lineTotalCents(line), 0),
-    pending: shootings.filter((line) => line.forfaitIncluded === null
-      || line.forfaitIncluded === undefined).length,
+    pending: shootings.filter((line) => today
+      ? awaitsShootingDecision(line, today)
+      : line.forfaitIncluded === null || line.forfaitIncluded === undefined).length,
   };
 }

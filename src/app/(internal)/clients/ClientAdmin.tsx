@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState, useTransition } from "react";
 import { createClient, createOneShotClient, setClientActive, updateClientLifecycle, type ClientActionResult } from "./actions";
 import { OneShotClientForm } from "./OneShotClientForm";
+import { ShootingPlanFields } from "./ShootingPlanFields";
 import { clientLifecycle, type ClientKind } from "@/lib/domain/client-lifecycle";
 
 function lifecycleOf(client:{isActive:boolean;kind:ClientKind;contractEndDate:string|null;pauseStartDate:string|null;pauseEndDate:string|null}) {
@@ -26,7 +27,7 @@ import {
   type LyfttClientType,
 } from "@/lib/domain/hashtags";
 import { WEEKDAY_LABELS } from "@/lib/domain/planning";
-import { SHOOTING_PLAN_SERVICES, findService, formatEuros } from "@/lib/domain/budget";
+import { formatEuros } from "@/lib/domain/budget";
 
 type FieldErrors = Record<string, string> | undefined;
 
@@ -90,6 +91,7 @@ export function ClientAdmin({
   readOnly = false,
   prefillName = "",
   transmissionId = "",
+  today,
 }: {
   clients: ClientRow[];
   managers: { id: string; name: string }[];
@@ -115,6 +117,8 @@ export function ClientAdmin({
    * devrait marquer la fiche traitée à la main juste après l'avoir créée.
    */
   transmissionId?: string;
+  /** Jour de Paris, borne basse des dates de shooting calées à la création. */
+  today: string;
 }) {
   const [pending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<ClientActionResult | null>(null);
@@ -384,28 +388,11 @@ export function ClientAdmin({
               dans la facture mensuelle. Renseigné dès la création, il évite
               d'avoir à rouvrir la fiche juste après l'avoir remplie.
             */}
-            <div className="mt-4 rounded-2xl border border-[#d8e4f8] bg-[#f7faff] p-4">
-              <p className="label">Shooting vendu dans la formule</p>
-              <p className="mt-1 text-xs text-ink-faint">Facultatif. Un shooting qui revient à intervalle régulier, dont le prix est lissé sur la période.</p>
-              <div className="mt-3 grid gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="label" htmlFor="shootingService">Prestation</label>
-                  <select id="shootingService" name="shootingService" className="field bg-white" defaultValue="">
-                    <option value="">Aucun shooting vendu</option>
-                    {SHOOTING_PLAN_SERVICES.map((key) => (
-                      <option key={key} value={key}>
-                        {findService(key)?.label} — {formatEuros(findService(key)?.unitPriceCents ?? 0)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="label" htmlFor="shootingEveryMonths">Tous les combien de mois</label>
-                  <input id="shootingEveryMonths" name="shootingEveryMonths" type="number" min="1" max="24" placeholder="4" {...fieldProps(fieldErrors,"shootingEveryMonths")}/>
-                  <FieldError errors={fieldErrors} name="shootingEveryMonths"/>
-                </div>
-              </div>
-            </div>
+            <ShootingPlanFields
+              today={today}
+              everyMonthsError={fieldErrors?.shootingEveryMonths}
+              datesError={fieldErrors?.shootingDates}
+            />
 
             {/*
               Prestation hors carte vendue dans la formule mensuelle. Elle entre

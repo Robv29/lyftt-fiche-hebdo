@@ -7,6 +7,7 @@ import {
   BILLING_MODE_LABELS,
   CATEGORY_LABELS,
   SERVICE_CATALOGUE,
+  awaitsShootingDecision,
   isCustomService,
   classifyShootings,
   formatEuros,
@@ -26,6 +27,7 @@ import {
   totalCents,
 } from "@/lib/domain/budget";
 import type { MonthlyCadence } from "@/lib/domain/planning";
+import { todayInParis } from "@/lib/domain/client-lifecycle";
 import {
   INVOICE_STATUS_LABELS,
   isInvoiceSettled,
@@ -755,7 +757,9 @@ function ShootingPanel({
     day: "numeric", month: "long", year: "numeric", timeZone: "UTC",
   }).format(new Date(`${date}T00:00:00Z`));
 
-  const tally = shootingTally(lines);
+  // Une date calée d'avance n'a encore rien à trancher.
+  const today = todayInParis();
+  const tally = shootingTally(lines, today);
   const classification = classifyShootings({
     plan: shooting,
     contractStartDate,
@@ -763,7 +767,7 @@ function ShootingPanel({
   });
   const shootingLines = lines.filter((line) => isShootingLine(line.serviceKey));
   const pendingLines = shootingLines
-    .filter((line) => line.forfaitIncluded === null || line.forfaitIncluded === undefined)
+    .filter((line) => awaitsShootingDecision(line, today))
     .map((line) => {
       const entry = classification.get(line.performedOn);
       return { line, classification: entry ?? null, alreadyUsed: (entry?.rankInPeriod ?? 1) > 1 };

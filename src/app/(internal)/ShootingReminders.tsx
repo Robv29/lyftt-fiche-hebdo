@@ -139,7 +139,7 @@ function ShootingRow({ row }: { row: ShootingReminderRow }) {
                 if (!window.confirm("Annuler la date calée ? Le rappel se rouvrira.")) return;
                 setError(null);
                 startTransition(async () => {
-                  const result = await cancelShooting(row.clientId);
+                  const result = await cancelShooting(row.clientId, row.plannedOn);
                   if (result.ok) router.refresh();
                   else setError(result.message ?? "Annulation impossible.");
                 });
@@ -215,6 +215,8 @@ function ShootingRow({ row }: { row: ShootingReminderRow }) {
           }}
         >
           <input type="hidden" name="clientId" value={row.clientId}/>
+          {/* La date affichée : l'action refuse d'en déplacer une autre. */}
+          <input type="hidden" name="expectedOn" value={row.plannedOn ?? ""}/>
           <div>
             <label className="label" htmlFor={`shooting-date-${row.clientId}`}>
               Date convenue

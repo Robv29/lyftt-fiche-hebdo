@@ -33,6 +33,12 @@ import {
   shootingLinePriceCents,
   parseBaseFee,
   countableShootings,
+  MAX_PLANNED_SHOOTINGS,
+  awaitsShootingDecision,
+  shootingCycle,
+  plannedShootingDates,
+  proposeShootingDates,
+  shootingForfaitLineRow,
 } from "@/lib/domain/budget";
 
 const today = "2026-08-10";
@@ -1306,5 +1312,174 @@ describe("client ponctuel dans la synthèse budget", () => {
 
   it("garde le comportement historique quand le drapeau est absent", () => {
     expect(budgetSummary(base).monthlyCadenceCostCents).toBe(BASE_MONTHLY_FEE_CENTS);
+  });
+});
+
+describe("calendrier des shootings proposé à la création", () => {
+  const plan = { serviceKey: "shooting_demi", everyMonths: 4 } as const;
+
+  it("propose les dates au rythme vendu, sur un an", () => {
+    expect(proposeShootingDates({ plan, firstOn: "2026-10-05" }))
+      .toEqual(["2026-10-05", "2027-02-05", "2027-06-05"]);
+  });
+
+  it("compte chaque date depuis la première : un 31 ne glisse pas au 28 pour de bon", () => {
+    const monthly = { serviceKey: "shooting_express", everyMonths: 1 } as const;
+    const dates = proposeShootingDates({ plan: monthly, firstOn: "2026-01-31" });
+    expect(dates).toHaveLength(12);
+    expect(dates.slice(0, 4)).toEqual(["2026-01-31", "2026-02-28", "2026-03-31", "2026-04-30"]);
+  });
+
+  it("une périodicité plus longue que l'année ne donne que le premier shooting", () => {
+    expect(proposeShootingDates({ plan: { ...plan, everyMonths: 18 }, firstOn: "2026-10-05" }))
+      .toEqual(["2026-10-05"]);
+  });
+
+  it("ne propose rien sans forfait ni premier shooting valide", () => {
+    expect(proposeShootingDates({ plan: null, firstOn: "2026-10-05" })).toEqual([]);
+    expect(proposeShootingDates({ plan, firstOn: null })).toEqual([]);
+    expect(proposeShootingDates({ plan, firstOn: "2026-02-30" })).toEqual([]);
+  });
+});
+
+describe("dates de shooting saisies à la création", () => {
+  const plan = { serviceKey: "shooting_demi", everyMonths: 4 } as const;
+  const day = "2026-09-14";
+
+  it("trie les dates, ignore les champs vides et accepte le jour même", () => {
+    expect(plannedShootingDates(["2027-01-10", " ", "2026-09-14"], { plan, today: day }))
+      .toEqual({ ok: true, dates: ["2026-09-14", "2027-01-10"] });
+  });
+
+  it("sans date saisie, rien à inscrire — même sans forfait", () => {
+    expect(plannedShootingDates([], { plan: null, today: day })).toEqual({ ok: true, dates: [] });
+  });
+
+  it("refuse une date passée : elle se lirait comme un shooting réalisé", () => {
+    expect(plannedShootingDates(["2026-09-13"], { plan, today: day }).ok).toBe(false);
+  });
+
+  it("refuse un doublon, une date impossible, et des dates sans forfait", () => {
+    expect(plannedShootingDates(["2026-10-01", "2026-10-01"], { plan, today: day }).ok).toBe(false);
+    expect(plannedShootingDates(["2026-02-30"], { plan, today: day }).ok).toBe(false);
+    expect(plannedShootingDates(["2026-10-01"], { plan: null, today: day }).ok).toBe(false);
+  });
+
+  it("borne le nombre de dates inscrites d'un coup", () => {
+    const many = Array.from({ length: MAX_PLANNED_SHOOTINGS + 1 }, (_, index) =>
+      `2027-${String((index % 12) + 1).padStart(2, "0")}-${String((index % 28) + 1).padStart(2, "0")}`);
+    expect(plannedShootingDates(many, { plan, today: day }).ok).toBe(false);
+  });
+});
+
+describe("ligne d'une date de shooting du forfait", () => {
+  const plan = { serviceKey: "shooting_demi", everyMonths: 4 } as const;
+  const input = { clientId: "c1", plan, performedOn: "2026-10-05", note: "n", createdBy: "p1" };
+
+  it("inscrit la date à zéro euro, sous la clé du forfait", () => {
+    const row = shootingForfaitLineRow(input);
+    expect(row).toMatchObject({
+      client_id: "c1", service_key: "shooting_forfait", billing: "ponctuel",
+      unit_price_cents: 0, quantity: 1, months: null, performed_on: "2026-10-05",
+    });
+    expect(row.label).toContain("du forfait");
+  });
+
+  it("laisse « compris au forfait » à trancher par la direction", () => {
+    expect("forfait_included" in shootingForfaitLineRow(input)).toBe(false);
+  });
+});
+
+describe("la note ignore les shootings pas encore tournés", () => {
+  const shooting = (performedOn: string) => ({
+    id: "", serviceKey: "shooting_forfait", label: "Shooting du forfait",
+    billing: "ponctuel" as const, unitPriceCents: 0, quantity: 1, months: null,
+    performedOn, billedDirectly: false, forfaitIncluded: true,
+  });
+
+  it("écarte une date calée d'avance, garde le jour même", () => {
+    const restants = countableShootings(
+      [shooting("2026-09-14"), shooting("2026-09-15"), shooting("2027-01-15")],
+      { isSettledMonth: () => false, since: "2026-09-08", until: "2026-09-14" },
+    );
+    expect(restants.map((l) => l.performedOn)).toEqual(["2026-09-14"]);
+  });
+});
+
+describe("un shooting du forfait à zéro euro ne se facture pas", () => {
+  it("n'ouvre aucun dossier de facture, quel que soit le mode", () => {
+    const forfait = line({ id: "f", serviceKey: "shooting_forfait", unitPriceCents: 0, performedOn: "2027-06-05" });
+    const vendu = line({ id: "v", serviceKey: "shooting_forfait", unitPriceCents: 45_000 });
+    const gestion = line({ id: "m", serviceKey: MANAGEMENT_MONTH_KEY, unitPriceCents: 19_000 });
+    expect(billableLines([forfait, vendu, gestion], "comptant").map((l) => l.id)).toEqual(["v", "m"]);
+    expect(billableLines([forfait, gestion], "hybride").map((l) => l.id)).toEqual(["m"]);
+    // Un shooting du catalogue tranché « compris » reste lisible sur l'addition.
+    const compris = line({ id: "c", serviceKey: "shooting_express", unitPriceCents: 0 });
+    expect(billableLines([compris], "comptant").map((l) => l.id)).toEqual(["c"]);
+  });
+});
+
+describe("tri « compris ou en plus » d'un shooting", () => {
+  const shooting = (performedOn: string, forfaitIncluded: boolean | null) => ({
+    ...line({ serviceKey: "shooting_forfait", unitPriceCents: 0, performedOn }), forfaitIncluded,
+  });
+
+  it("n'attend une décision qu'une fois le shooting tourné", () => {
+    expect(awaitsShootingDecision(shooting("2026-09-14", null), "2026-09-14")).toBe(true);
+    expect(awaitsShootingDecision(shooting("2026-09-15", null), "2026-09-14")).toBe(false);
+    expect(awaitsShootingDecision(shooting("2026-09-01", true), "2026-09-14")).toBe(false);
+  });
+
+  it("le décompte ignore les dates calées d'avance quand on lui donne le jour", () => {
+    const lines = [shooting("2026-09-01", null), shooting("2027-01-05", null)];
+    expect(shootingTally(lines).pending).toBe(2);
+    expect(shootingTally(lines, "2026-09-14").pending).toBe(1);
+  });
+});
+
+describe("cycle du forfait avec des dates calées d'avance", () => {
+  const plan = { serviceKey: "shooting_demi", everyMonths: 4 } as const;
+  const serie = ["2026-10-05", "2027-02-05", "2027-06-05"];
+
+  it("la date du cycle en cours répond à l'échéance, la suivante reste pour plus tard", () => {
+    const cycle = shootingCycle({ plan, dates: serie, contractStartDate: null, today: "2027-01-10" });
+    expect(cycle.schedule?.dueOn).toBe("2027-02-05");
+    expect(cycle.plannedOn).toBe("2027-02-05");
+    expect(cycle.followingOn).toBe("2027-06-05");
+  });
+
+  it("annuler la prochaine rouvre l'échéance : celle de juin ne la couvre pas", () => {
+    const cycle = shootingCycle({
+      plan, dates: ["2026-10-05", "2027-06-05"], contractStartDate: null, today: "2027-01-10",
+    });
+    expect(cycle.plannedOn).toBeNull();
+    expect(cycle.schedule?.remindNow).toBe(true);
+    // Une nouvelle date ne doit pas dépasser celle déjà calée en juin.
+    expect(cycle.followingOn).toBe("2027-06-05");
+  });
+
+  it("une date calée en retard compte encore pour l'échéance dépassée", () => {
+    const monthly2 = { serviceKey: "shooting_demi", everyMonths: 2 } as const;
+    const cycle = shootingCycle({
+      plan: monthly2, dates: ["2026-01-01", "2026-06-15"], contractStartDate: null, today: "2026-06-01",
+    });
+    expect(cycle.schedule?.overdue).toBe(true);
+    expect(cycle.plannedOn).toBe("2026-06-15");
+  });
+
+  it("sans forfait, la prochaine date est simplement la date calée", () => {
+    const cycle = shootingCycle({ plan: null, dates: serie, contractStartDate: null, today: "2027-01-10" });
+    expect(cycle.schedule).toBeNull();
+    expect(cycle.plannedOn).toBe("2027-02-05");
+  });
+
+  it("une date plus proche de l'échéance suivante ne couvre pas celle en cours", () => {
+    // Premier shooting décalé au 20 octobre ; la date de juin, posée d'avance, est restée.
+    const cycle = shootingCycle({
+      plan, dates: ["2026-10-20", "2027-06-01"], contractStartDate: null, today: "2027-01-15",
+    });
+    expect(cycle.schedule?.dueOn).toBe("2027-02-20");
+    expect(cycle.plannedOn).toBeNull();
+    expect(cycle.followingOn).toBe("2027-06-01");
   });
 });

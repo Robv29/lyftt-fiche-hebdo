@@ -122,6 +122,8 @@ async function budgetHealth(
           settledMonths.has(`${clientId}|${performedOn.slice(0, 7)}`),
         // La note ne juge que ce qui a été tourné depuis la bascule.
         since: SHOOTING_SCORING_FROM,
+        // Une date calée d'avance n'a pas encore été tournée.
+        until: today,
       })),
   );
   const shootingsTotal = tally.included + tally.extra + tally.pending;

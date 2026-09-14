@@ -10,7 +10,7 @@ import { requiresProduction } from "@/lib/domain/routing";
 import { Icon } from "@/components/Icon";
 import { isActionableOverdue, planningBucketForPeriod, planningWeekRange, sheetCompletion } from "@/lib/domain/planning";
 import {
-  isShootingLine,
+  awaitsShootingDecision,
   budgetSummary,
   type BillingMode,
   type BudgetLine,
@@ -133,7 +133,11 @@ export default async function DashboardPage() {
      */
     const pendingShootings = new Set(
       (budgetLines ?? [])
-        .filter((row) => isShootingLine(row.service_key as string) && row.forfait_included === null)
+        .filter((row) => awaitsShootingDecision({
+          serviceKey: row.service_key as string,
+          performedOn: row.performed_on as string,
+          forfaitIncluded: row.forfait_included as boolean | null,
+        }, civilToday()))
         .map((row) => row.client_id as string),
     );
     const linesByClient = new Map<string, BudgetLine[]>();
