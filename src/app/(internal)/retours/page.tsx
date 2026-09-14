@@ -97,12 +97,19 @@ export default async function TicketsPage({
    * personne ne l'a clos. La base ne sait pas faire ce tri — elle ignore le
    * lien entre un ticket et la version envoyée — alors il se fait ici.
    */
-  const visibleTickets = statusFilter === "overdue"
+  const visibleTickets = (statusFilter === "overdue"
     ? (tickets ?? []).filter((ticket) => ticketSlaState({
         submittedAt: ticket.submitted_at,
         respondedAt: answeredAt.get(ticket.id) ?? ticket.resolved_at ?? null,
       }) === "depasse")
-    : tickets ?? [];
+    : tickets ?? [])
+    /*
+     * Du plus ancien au plus récent : celui qui attend depuis le plus longtemps
+     * se traite en premier. La requête reste triée du plus récent, pour que la
+     * limite de 200 écarte les vieux tickets et jamais une demande du jour.
+     */
+    .slice()
+    .reverse();
 
   const { data: linkClients } = await supabase
     .from("clients")
