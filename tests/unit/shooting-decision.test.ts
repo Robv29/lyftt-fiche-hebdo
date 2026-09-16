@@ -17,9 +17,9 @@ describe("classement d'un shooting tourné", () => {
     });
   });
 
-  it("refuse « compris » pour un client sans forfait : ce serait offrir le shooting", () => {
-    expect(planShootingDecision({ ...forfaitLine, decision: "compris", plan: null, soldServiceKey: null, billedDirectly: false }).ok)
-      .toBe(false);
+  it("accepte « compris » sans forfait enregistré : la formule du client peut l'inclure", () => {
+    expect(planShootingDecision({ lineServiceKey: "shooting_demi", lineLabel: "Shooting ½ journée", decision: "compris", plan: null, soldServiceKey: null, billedDirectly: false }))
+      .toMatchObject({ ok: true, update: { unit_price_cents: 0, forfait_included: true } });
   });
 
   it("vendu en plus : la prestation choisie, au prix du catalogue", () => {
@@ -58,9 +58,9 @@ describe("proposition de classement", () => {
     expect(second.reason).toContain("2e shooting de la période du 23 juillet au 22 novembre");
   });
 
-  it("sans forfait, propose de facturer ; sans début de gestion, ne propose rien", () => {
+  it("sans forfait ni début de gestion, ne pré-coche rien : c'est à la direction de dire", () => {
     expect(shootingDecisionSuggestion({ plan: null, contractStartDate: "2026-07-23", date: "2026-08-10", dates: ["2026-08-10"] }).decision)
-      .toBe("supplementaire");
+      .toBeNull();
     expect(shootingDecisionSuggestion({ plan, contractStartDate: null, date: "2026-08-10", dates: ["2026-08-10"] }).decision)
       .toBeNull();
   });

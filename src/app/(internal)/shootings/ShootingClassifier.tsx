@@ -71,12 +71,8 @@ function ClassifyRow({ row, today }: { row: ShootingToClassify; today: string })
     );
   }
 
-  const choices: { value: ShootingDecision; label: string; disabled?: string }[] = [
-    {
-      value: "compris",
-      label: "Compris au forfait — 0 €",
-      disabled: row.planServiceKey ? undefined : "Pas de forfait shooting pour ce client",
-    },
+  const choices: { value: ShootingDecision; label: string }[] = [
+    { value: "compris", label: "Compris au forfait — 0 €" },
     { value: "supplementaire", label: "Vendu en plus" },
     { value: "annule", label: "N’a pas eu lieu" },
   ];
@@ -123,17 +119,12 @@ function ClassifyRow({ row, today }: { row: ShootingToClassify; today: string })
           <legend className="sr-only">Ce qui s’est passé</legend>
           <div className="grid gap-2 sm:grid-cols-3">
             {choices.map((choice) => (
-              <label
-                key={choice.value}
-                className={`choice-chip bg-white ${choice.disabled ? "cursor-not-allowed opacity-50" : ""}`}
-                title={choice.disabled}
-              >
+              <label key={choice.value} className="choice-chip bg-white">
                 <input
                   type="radio"
                   name="decision"
                   value={choice.value}
                   checked={decision === choice.value}
-                  disabled={Boolean(choice.disabled)}
                   onChange={() => setDecision(choice.value)}
                   required
                 />
@@ -141,6 +132,12 @@ function ClassifyRow({ row, today }: { row: ShootingToClassify; today: string })
               </label>
             ))}
           </div>
+          {decision === "compris" && !row.planServiceKey && (
+            <p className="mt-2 text-xs text-ink-faint">
+              Aucun forfait shooting n’est enregistré sur la fiche de ce client : le shooting est
+              inscrit à 0 €, rien ne lui sera facturé.
+            </p>
+          )}
         </fieldset>
 
         <div className="grid gap-3 sm:grid-cols-2">

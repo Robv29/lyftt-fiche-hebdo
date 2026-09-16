@@ -48,10 +48,12 @@ export function planShootingDecision(input: {
   | { ok: true; update: ShootingLineUpdate; cancelled: boolean; message: string }
   | { ok: false; message: string } {
   if (input.decision === "compris") {
-    // Sans forfait, rien n'est « compris » : l'écrire offrirait la prestation.
-    if (!input.plan) {
-      return { ok: false, message: "Ce client n'a pas de forfait shooting : un shooting ne peut pas y être compris." };
-    }
+    /*
+     * Accepté même sans forfait shooting enregistré : la plupart des clients
+     * ont leurs shootings inclus dans leur formule sans que le forfait soit
+     * saisi sur leur fiche. Le refuser bloquait le classement de presque tous.
+     * C'est un choix explicite de la direction, fait à l'écran.
+     */
     return {
       ok: true,
       cancelled: false,
@@ -126,8 +128,16 @@ export function shootingDecisionSuggestion(input: {
   /** Dates des shootings du client qui ont eu lieu, celui-ci compris. */
   dates: readonly string[];
 }): { decision: ShootingDecision | null; reason: string } {
+  /*
+   * Sans forfait enregistré, rien ne permet de trancher : on ne pré-coche
+   * rien. Proposer « vendu en plus » faisait facturer 225 à 850 € d'un simple
+   * clic sur « Enregistrer », pour des shootings souvent compris dans la formule.
+   */
   if (!input.plan) {
-    return { decision: "supplementaire", reason: "Pas de forfait shooting pour ce client : il se facture." };
+    return {
+      decision: null,
+      reason: "Aucun forfait shooting enregistré pour ce client : dites s'il était compris dans sa formule ou vendu en plus.",
+    };
   }
   if (!input.contractStartDate) {
     return { decision: null, reason: "Début de gestion inconnu : impossible de situer ce shooting dans le forfait." };
