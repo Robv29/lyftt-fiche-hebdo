@@ -8,7 +8,7 @@ import { ticketPriorityLabel, ticketStatusLabel, type MediaFormat } from "@/lib/
 import { PageHeader } from "@/components/ui";
 import { resolveMediaUrl } from "@/lib/media/signed-url";
 import { clientLifecycleForWeek, todayInParis, parseClientKind } from "@/lib/domain/client-lifecycle";
-import { contentBucketStatuses, isoWeekIdentity, planningWeekRange, sheetCompletion, weeklyFormatsForCadence, type BucketStatus, type MonthlyCadence } from "@/lib/domain/planning";
+import { contentBucketProgress, depositSummary, isoWeekIdentity, planningWeekRange, sheetCompletion, weeklyFormatsForCadence, type BucketProgress, type MonthlyCadence } from "@/lib/domain/planning";
 import { bucketForFormat, CONTENT_BUCKETS, type ContentBucket } from "@/lib/domain/content-buckets";
 import { ProductionRequests, type ProductionRequestRow } from "./ProductionRequests";
 import { TicketCorrections, type TicketCorrectionRow } from "./TicketCorrections";
@@ -190,13 +190,17 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
       const sheet = sheetByClientId.get(client.id);
       if (!sheet) {
         const expected = expectedBucketsForClient(client.notes);
-        const buckets = Object.fromEntries(
-          CONTENT_BUCKETS.map((bucket) => [bucket.key, expected.has(bucket.key) ? "expected" : "none"]),
-        ) as Record<ContentBucket, BucketStatus>;
+        const progress = Object.fromEntries(
+          CONTENT_BUCKETS.map((bucket) => {
+            const status = expected.has(bucket.key) ? "expected" : "none";
+            return [bucket.key, { files: status, texts: status }];
+          }),
+        ) as Record<ContentBucket, BucketProgress>;
         return {
           clientId: client.id, clientName: client.name, hasSheet: false, topic: null, done: false,
           href: `/fiches/nouvelle?client=${client.id}&isoYear=${currentIso.year}&isoWeek=${currentIso.week}`,
-          buckets,
+          progress,
+          deposit: null,
         };
       }
       const items = sheet.weekly_sheet_items.map((item) => ({
@@ -214,11 +218,22 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
         topic: sheet.topic,
         done: sheetCompletion(items).percentage === 100,
         href: `/fiches/${sheet.id}`,
-        buckets: contentBucketStatuses(items),
+        // Fichiers et textes comptés à part : l'un peut être livré sans l'autre.
+        progress: contentBucketProgress(items),
+        deposit: depositSummary(items),
       };
     })
     .sort((a, b) => {
-      const rank = (row: OverviewRow) => row.hasSheet ? (row.done ? 2 : 1) : 0;
+      /*
+       * D'abord les fiches à créer, puis les fichiers à déposer — ce qui bloque
+       * la production —, puis les textes seuls à rédiger, enfin ce qui est fait.
+       */
+      const rank = (row: OverviewRow) => {
+        if (!row.hasSheet || !row.deposit) return 0;
+        if (row.deposit.filesMissing > 0) return 1;
+        if (row.deposit.textsMissing > 0) return 2;
+        return 3;
+      };
       return rank(a) - rank(b) || a.clientName.localeCompare(b.clientName, "fr");
     });
   const weekLabel = `Semaine ${currentIso.week} · ${formatPeriod(new Date(`${weekRange.currentStart}T00:00:00Z`), new Date(`${weekRange.currentEnd}T00:00:00Z`))}`;

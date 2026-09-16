@@ -146,11 +146,19 @@ export function sheetCompletion(items: CompletionItem[]): {
  */
 export type BucketStatus = "ready" | "pending" | "expected" | "none";
 
-function isCompletionItemReady(item: CompletionItem): boolean {
+/** Fichier déposé, pour un contenu qui en attend un. */
+function isFileReady(item: CompletionItem): boolean {
+  return !requiresMedia(item.format) || Boolean(item.mediaAssetId || item.mediaExternalUrl);
+}
+
+/** Texte rédigé : légende quand le format en attend une, et hashtags. */
+function isTextReady(item: CompletionItem): boolean {
   const captionOk = !requiresCaption(item.format) || Boolean(item.caption?.trim());
-  const hashtagsOk = hasHashtags(item.hashtags);
-  const mediaOk = !requiresMedia(item.format) || Boolean(item.mediaAssetId || item.mediaExternalUrl);
-  return captionOk && hashtagsOk && mediaOk;
+  return captionOk && hasHashtags(item.hashtags);
+}
+
+function isCompletionItemReady(item: CompletionItem): boolean {
+  return isFileReady(item) && isTextReady(item);
 }
 
 /**
@@ -168,6 +176,62 @@ export function contentBucketStatuses(items: CompletionItem[]): Record<ContentBu
     statuses[bucket.key] = bucketItems.length === 0 ? "none" : bucketItems.every(isCompletionItemReady) ? "ready" : "pending";
   }
   return statuses;
+}
+
+/** Avancement d'une famille de contenu, fichiers et textes séparés. */
+export interface BucketProgress {
+  files: BucketStatus;
+  texts: BucketStatus;
+}
+
+/**
+ * Fichiers et textes, chacun de son côté.
+ *
+ * Une famille ne passait « prête » qu'avec son fichier, sa légende et ses
+ * hashtags réunis : tant qu'un texte manquait, les fichiers déjà déposés
+ * restaient invisibles dans le suivi de production. Le dépôt des fichiers et
+ * la rédaction avancent souvent à des rythmes différents, par des personnes
+ * différentes — chacun se lit donc séparément. La règle de « prêt » reste la
+ * même : les deux réunis.
+ */
+export function contentBucketProgress(items: CompletionItem[]): Record<ContentBucket, BucketProgress> {
+  const active = items.filter((item) => !item.isCancelled);
+  const progress = {} as Record<ContentBucket, BucketProgress>;
+  for (const bucket of CONTENT_BUCKETS) {
+    const bucketItems = active.filter((item) => bucketForFormat(item.format) === bucket.key);
+    if (bucketItems.length === 0) {
+      progress[bucket.key] = { files: "none", texts: "none" };
+      continue;
+    }
+    // Un contenu texte seul n'attend aucun fichier : la famille n'a rien à déposer.
+    const withFiles = bucketItems.filter((item) => requiresMedia(item.format));
+    progress[bucket.key] = {
+      files: withFiles.length === 0 ? "none" : withFiles.every(isFileReady) ? "ready" : "pending",
+      texts: bucketItems.every(isTextReady) ? "ready" : "pending",
+    };
+  }
+  return progress;
+}
+
+export interface DepositSummary {
+  /** Contenus qui attendent un fichier. */
+  filesTotal: number;
+  filesMissing: number;
+  /** Contenus qui attendent un texte (légende et hashtags). */
+  textsTotal: number;
+  textsMissing: number;
+}
+
+/** Ce qui reste à déposer et à rédiger sur une fiche, compté à part. */
+export function depositSummary(items: CompletionItem[]): DepositSummary {
+  const active = items.filter((item) => !item.isCancelled);
+  const withFiles = active.filter((item) => requiresMedia(item.format));
+  return {
+    filesTotal: withFiles.length,
+    filesMissing: withFiles.filter((item) => !isFileReady(item)).length,
+    textsTotal: active.length,
+    textsMissing: active.filter((item) => !isTextReady(item)).length,
+  };
 }
 
 export interface MonthlyCadence {
