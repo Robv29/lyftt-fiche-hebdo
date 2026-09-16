@@ -58,6 +58,8 @@ export interface ShootingEntry {
    * `null` est le trou par lequel une prestation part sans facture.
    */
   forfaitIncluded: boolean | null;
+  /** Facturée au client hors enveloppe de financement. */
+  billedDirectly: boolean;
   /** Montant porté par la ligne. Réservé à la direction à l'affichage. */
   amountCents: number;
   /** Mois de rattachement, pour savoir si la facture est déjà partie. */
@@ -118,7 +120,7 @@ export async function readShootings(
   const [{ data: lines }, { data: sheets }] = await Promise.all([
     admin
       .from("client_budget_lines")
-      .select("id, client_id, performed_on, service_key, label, forfait_included, unit_price_cents, quantity")
+      .select("id, client_id, performed_on, service_key, label, forfait_included, unit_price_cents, quantity, billed_directly")
       .in("service_key", SHOOTING_LINE_KEYS)
       .in("client_id", ids),
     admin
@@ -160,6 +162,7 @@ export async function readShootings(
        */
       status: (details?.cancelled ? "annule" : date <= today ? "realise" : "cale") as ShootingEntry["status"],
       forfaitIncluded: (row.forfait_included as boolean | null) ?? null,
+      billedDirectly: Boolean(row.billed_directly),
       amountCents: Math.round((row.unit_price_cents as number) * Number(row.quantity ?? 1)),
       month: date.slice(0, 7),
     };

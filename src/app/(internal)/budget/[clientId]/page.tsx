@@ -149,8 +149,18 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
    * Cycle du shooting vendu : les dates réalisées ou calées sont des lignes de
    * l'addition, à zéro euro — le forfait est déjà réglé par le lissage mensuel.
    */
+  /*
+   * Un shooting qui n'a pas eu lieu n'a pas consommé le forfait de sa période :
+   * le compter ferait passer le suivant pour « vendu en plus ».
+   */
+  const { data: cancelledShootings } = await supabase
+    .from("shootings")
+    .select("budget_line_id")
+    .eq("client_id", clientId)
+    .eq("cancelled", true);
+  const cancelledLineIds = new Set((cancelledShootings ?? []).map((row) => row.budget_line_id as string));
   const shootingDates = lines
-    .filter((line) => isShootingLine(line.serviceKey))
+    .filter((line) => isShootingLine(line.serviceKey) && !cancelledLineIds.has(line.id))
     .map((line) => line.performedOn)
     .sort();
   const schedule = shootingSchedule({

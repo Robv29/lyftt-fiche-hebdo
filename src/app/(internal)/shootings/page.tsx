@@ -1,11 +1,13 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { denyCommercial } from "@/lib/internal/authorization";
-import { awaitsShootingDecision, formatEuros } from "@/lib/domain/budget";
+import { awaitsShootingDecision } from "@/lib/domain/budget";
 import { todayInParis } from "@/lib/domain/client-lifecycle";
+import { isOnSettledInvoice, type InvoiceStatus } from "@/lib/domain/invoicing";
+import { shootingDecisionSuggestion, shootingPlanFromNotes } from "@/lib/domain/shooting-decision";
 import { accessibleShootingClients, readShootings } from "@/lib/shootings/query";
 import { ShootingReminders } from "../ShootingReminders";
+import { ShootingClassifier, type ShootingToClassify } from "./ShootingClassifier";
 import { ShootingsView } from "./ShootingsView";
 
 export const dynamic = "force-dynamic";
@@ -46,12 +48,13 @@ export default async function ShootingsPage() {
     const { data: invoices } = await supabase
       .from("client_invoices")
       .select("client_id, period_month, status");
-    // Une facture partie fige le tri : requalifier changerait un montant transmis.
-    const settled = new Set(
-      (invoices ?? [])
-        .filter((row) => row.status === "faite" || row.status === "prelevement_programme")
-        .map((row) => `${row.client_id as string}|${String(row.period_month).slice(0, 7)}`),
-    );
+    const statusesByClient = new Map<string, Record<string, InvoiceStatus>>();
+    for (const row of invoices ?? []) {
+      const forClient = statusesByClient.get(row.client_id as string) ?? {};
+      forClient[String(row.period_month).slice(0, 10)] = row.status as InvoiceStatus;
+      statusesByClient.set(row.client_id as string, forClient);
+    }
+    const startByClient = new Map(clients.map((client) => [client.id, client.contract_start_date]));
     const today = todayInParis();
     toClassify = entries.filter((entry) =>
       awaitsShootingDecision({
@@ -60,7 +63,55 @@ export default async function ShootingsPage() {
         forfaitIncluded: entry.forfaitIncluded,
       }, today)
       && entry.status !== "annule"
-      && !settled.has(`${entry.clientId}|${entry.month}`));
+      /*
+       * Une facture partie fige le tri : requalifier changerait un montant
+       * transmis. Celle où la ligne figure vraiment — la même règle que
+       * l'action, sans quoi la liste proposerait ce que l'action refuse.
+       */
+      && !isOnSettledInvoice(
+        { performedOn: entry.date },
+        startByClient.get(entry.clientId) ?? null,
+        statusesByClient.get(entry.clientId) ?? {},
+      ));
+  }
+
+  /*
+   * De quoi trancher sur place : le forfait du client, sa période, son mode de
+   * facturation. La proposition se calcule sur les shootings qui ont bien eu
+   * lieu — un shooting annulé n'a pas consommé le forfait de sa période.
+   */
+  let classifyRows: ShootingToClassify[] = [];
+  if (toClassify.length > 0) {
+    const { data: budgets } = await supabase.from("client_budgets").select("client_id, billing_mode");
+    const financed = new Set(
+      (budgets ?? [])
+        .filter((row) => row.billing_mode && row.billing_mode !== "comptant")
+        .map((row) => row.client_id as string),
+    );
+    const clientById = new Map(clients.map((client) => [client.id, client]));
+    classifyRows = toClassify.map((entry) => {
+      const client = clientById.get(entry.clientId);
+      const plan = shootingPlanFromNotes(client?.notes);
+      return {
+        lineId: entry.lineId,
+        clientId: entry.clientId,
+        clientName: entry.clientName,
+        label: entry.label,
+        date: entry.date,
+        serviceKey: entry.serviceKey,
+        planServiceKey: plan?.serviceKey ?? null,
+        financed: financed.has(entry.clientId),
+        billedDirectly: entry.billedDirectly,
+        suggestion: shootingDecisionSuggestion({
+          plan,
+          contractStartDate: client?.contract_start_date ?? null,
+          date: entry.date,
+          dates: entries
+            .filter((other) => other.clientId === entry.clientId && other.status !== "annule")
+            .map((other) => other.date),
+        }),
+      };
+    });
   }
 
   return (
@@ -85,31 +136,12 @@ export default async function ShootingsPage() {
               {toClassify.length} shooting{toClassify.length > 1 ? "s" : ""} sans décision de facturation
             </h2>
             <p className="mt-1 text-sm text-ink-soft">
-              Compris au forfait, ou vendu en plus&nbsp;? Tant que ce n&apos;est pas tranché, le
-              shooting n&apos;est ni facturé ni écarté. Le tri se fait dans le budget du client.
+              Compris au forfait, vendu en plus, ou pas eu lieu&nbsp;? Tant que ce n&apos;est pas
+              tranché, le shooting n&apos;est ni facturé ni écarté. La proposition vient de la
+              période du forfait : confirmez, ou corrigez.
             </p>
           </header>
-          <ul className="divide-y divide-line">
-            {toClassify.map((entry) => (
-              <li key={entry.lineId} className="flex flex-wrap items-center gap-3 px-5 py-3">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold">{entry.clientName}</p>
-                  <p className="mt-0.5 truncate text-xs text-ink-faint">
-                    {entry.label} · {new Intl.DateTimeFormat("fr-FR", {
-                      day: "numeric", month: "long", year: "numeric", timeZone: "UTC",
-                    }).format(new Date(`${entry.date}T00:00:00Z`))}
-                  </p>
-                </div>
-                <span className="shrink-0 text-sm font-semibold">{formatEuros(entry.amountCents)}</span>
-                <Link
-                  href={`/budget/${entry.clientId}`}
-                  className="shrink-0 rounded-lg bg-state-progress/10 px-2.5 py-1.5 text-xs font-semibold text-state-progress hover:bg-state-progress/20"
-                >
-                  Classer
-                </Link>
-              </li>
-            ))}
-          </ul>
+          <ShootingClassifier rows={classifyRows} today={todayInParis()}/>
         </section>
       )}
 

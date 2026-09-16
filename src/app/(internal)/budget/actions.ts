@@ -7,18 +7,20 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sanitizeText } from "@/lib/security/sanitize";
 import { checkAttachment, safeFileName } from "@/lib/security/attachments";
 import { logRibAccess } from "@/lib/internal/rib-audit";
-import { invoiceMonthFor } from "@/lib/domain/invoicing";
+import { invoiceMonthFor, isOnSettledInvoice, type InvoiceStatus } from "@/lib/domain/invoicing";
 import { parseClientKind, todayInParis } from "@/lib/domain/client-lifecycle";
 import { oneShotConversionCheck, type OneShotConversionCheck } from "@/lib/domain/one-shot-conversion";
+import {
+  planShootingDecision,
+  shootingPlanFromNotes,
+  type ShootingDecision,
+} from "@/lib/domain/shooting-decision";
 import { clientFormula } from "@/lib/domain/client-formula";
 import { syncManagementMonths } from "@/lib/budget/management-months";
 import {
   findService,
   isCustomService,
-  formatEuros,
   isShootingLine,
-  parseShootingPlan,
-  shootingLinePriceCents,
   MANAGEMENT_MONTH_KEY,
   SHOOTING_FORFAIT_KEY,
   billableLines,
@@ -768,6 +770,115 @@ const shootingBillingSchema = z.object({
   included: z.boolean(),
 });
 
+/**
+ * Application d'un classement de shooting, pour le budget comme pour l'onglet
+ * Shootings.
+ *
+ * Une seule écriture pour les deux écrans : le prix, le forfait et
+ * l'annulation se décident dans `planShootingDecision`. Deux copies de cette
+ * règle avaient déjà divergé une fois — un « vendu en plus » inscrit à 0 €.
+ */
+async function applyShootingDecision(input: {
+  lineId: string;
+  clientId: string;
+  decision: ShootingDecision;
+  /** Date réelle du shooting ; null garde celle de la ligne. */
+  performedOn: string | null;
+  soldServiceKey: string | null;
+  /** Facturation directe choisie à l'écran ; null garde celle de la ligne. */
+  billedDirectly: boolean | null;
+}): Promise<BudgetActionResult> {
+  const supabase = await createSupabaseServerClient();
+  const { data: line } = await supabase
+    .from("client_budget_lines")
+    .select("id, service_key, label, performed_on, billed_directly")
+    .eq("id", input.lineId)
+    .eq("client_id", input.clientId)
+    .maybeSingle();
+  if (!line) return { ok: false, message: "Prestation introuvable ou accès refusé." };
+  if (!isShootingLine(line.service_key as string)) {
+    return { ok: false, message: "Cette prestation n'est pas un shooting." };
+  }
+
+  const performedOn = input.performedOn ?? (line.performed_on as string);
+  // On ne tranche que ce qui a été tourné : une date à venir peut encore changer.
+  if (input.decision !== "annule" && performedOn > todayInParis()) {
+    return { ok: false, message: "Ce shooting n'a pas encore eu lieu : il se classe une fois tourné." };
+  }
+
+  const [{ data: owner, error: ownerError }, { data: invoiceRows, error: invoicesError }] = await Promise.all([
+    supabase.from("clients").select("notes, contract_start_date").eq("id", input.clientId).maybeSingle(),
+    supabase.from("client_invoices").select("period_month, status").eq("client_id", input.clientId),
+  ]);
+  if (ownerError || invoicesError) {
+    return { ok: false, message: `Vérification impossible : ${(ownerError ?? invoicesError)!.message}` };
+  }
+
+  /*
+   * Une facture partie fige le classement — celle où la ligne figure
+   * réellement, avant comme après une date corrigée. Regarder le seul mois du
+   * shooting ne suffisait pas : une prestation antérieure au début de gestion
+   * est facturée avec le mois de démarrage, et la requalifier réécrivait une
+   * facture déjà envoyée.
+   */
+  const statuses: Record<string, InvoiceStatus> = Object.fromEntries(
+    (invoiceRows ?? []).map((row) => [String(row.period_month).slice(0, 10), row.status as InvoiceStatus]),
+  );
+  const contractStartDate = (owner?.contract_start_date as string | null) ?? null;
+  if (
+    isOnSettledInvoice({ performedOn: line.performed_on as string }, contractStartDate, statuses)
+    || isOnSettledInvoice({ performedOn }, contractStartDate, statuses)
+  ) {
+    return { ok: false, message: "La facture de ce mois est déjà établie : ce shooting ne se reclasse plus." };
+  }
+
+  const outcome = planShootingDecision({
+    decision: input.decision,
+    lineServiceKey: line.service_key as string,
+    lineLabel: line.label as string,
+    plan: shootingPlanFromNotes(owner?.notes as string | null),
+    soldServiceKey: input.soldServiceKey,
+    // Sans choix explicite, la facturation directe déjà décidée sur la ligne reste acquise.
+    billedDirectly: input.billedDirectly ?? Boolean(line.billed_directly),
+  });
+  if (!outcome.ok) return { ok: false, message: outcome.message };
+
+  /*
+   * Annulé : c'est la fiche du shooting qui le dit, et c'est elle que lisent
+   * le cycle du forfait et l'onglet Shootings. Seul ce champ est écrit — la
+   * fiche garde ce qu'on y avait saisi.
+   *
+   * Écrite avant la ligne : si la suite échoue, on la retire, et le shooting
+   * reste à classer — donc à réessayer. Dans l'autre ordre, un échec laissait
+   * un shooting sorti de la liste mais jamais noté comme annulé.
+   */
+  const markCancelled = (cancelled: boolean) => supabase
+    .from("shootings")
+    .upsert({ budget_line_id: line.id, client_id: input.clientId, cancelled }, { onConflict: "budget_line_id" });
+  if (outcome.cancelled) {
+    const { error: sheetError } = await markCancelled(true);
+    if (sheetError) return { ok: false, message: `Annulation non enregistrée : ${sheetError.message}` };
+  }
+
+  const { error } = await supabase
+    .from("client_budget_lines")
+    .update({ ...outcome.update, performed_on: performedOn })
+    .eq("id", line.id);
+  if (error) {
+    if (outcome.cancelled) await markCancelled(false);
+    return { ok: false, message: `Enregistrement impossible : ${error.message}` };
+  }
+
+  revalidatePath("/");
+  revalidatePath("/shootings");
+  revalidatePath("/indicateurs");
+  revalidatePath("/budget");
+  revalidatePath("/budget/facturation");
+  revalidatePath(`/budget/${input.clientId}`);
+  return { ok: true, message: outcome.message };
+}
+
+/** Boutons « Compris » / « Supplémentaire » du budget client. */
 export async function setShootingBilling(
   lineId: string,
   clientId: string,
@@ -779,78 +890,54 @@ export async function setShootingBilling(
   const parsed = shootingBillingSchema.safeParse({ lineId, clientId, included });
   if (!parsed.success) return { ok: false, message: "Demande invalide." };
 
-  const supabase = await createSupabaseServerClient();
-  const { data: line } = await supabase
-    .from("client_budget_lines")
-    .select("id, service_key, label")
-    .eq("id", parsed.data.lineId)
-    .eq("client_id", parsed.data.clientId)
-    .maybeSingle();
-  if (!line) return { ok: false, message: "Prestation introuvable ou accès refusé." };
-  if (!isShootingLine(line.service_key as string)) {
-    return { ok: false, message: "Cette prestation n'est pas un shooting." };
-  }
-
-  /*
-   * Le prix suit la décision : compris dans le forfait, la ligne ne consomme
-   * rien ; vendue en plus, elle reprend le tarif du catalogue. Sans cela, la
-   * case cochée et le montant facturé pourraient se contredire.
-   *
-   * Le tarif ne se lit pas sur la clé de la ligne. Une date calée porte
-   * `shooting_forfait`, qui n'est pas une prestation du catalogue : la chercher
-   * renvoyait zéro, et requalifier le shooting en « vendu en plus » l'inscrivait
-   * à 0 € — en affichant « 0 € à facturer », donc en offrant 225, 450 ou 850 €
-   * selon le forfait. C'est celui du client qui donne le prix.
-   */
-  const { data: owner } = await supabase
-    .from("clients")
-    .select("notes")
-    .eq("id", parsed.data.clientId)
-    .maybeSingle();
-
-  const catalogPrice = shootingLinePriceCents(
-    line.service_key as string,
-    parseShootingPlan(readShootingPlan(owner?.notes as string | null)),
-  );
-
-  /*
-   * Sans tarif établi, on refuse : écrire zéro se lirait comme une décision
-   * de ne rien facturer, alors que c'est une information manquante.
-   */
-  if (!parsed.data.included && (catalogPrice === null || catalogPrice <= 0)) {
-    return {
-      ok: false,
-      message: "Tarif du shooting introuvable : renseignez le forfait shooting dans la fiche client.",
-    };
-  }
-  const { error } = await supabase
-    .from("client_budget_lines")
-    .update({
-      forfait_included: parsed.data.included,
-      unit_price_cents: parsed.data.included ? 0 : catalogPrice!,
-    })
-    .eq("id", parsed.data.lineId);
-
-  if (error) return { ok: false, message: `Enregistrement impossible : ${error.message}` };
-
-  revalidatePath("/");
-  revalidatePath("/budget");
-  revalidatePath(`/budget/${parsed.data.clientId}`);
-  return {
-    ok: true,
-    message: parsed.data.included
-      ? "Shooting compris dans le forfait : inscrit à 0 €."
-      : `Shooting supplémentaire : ${formatEuros(catalogPrice!)} à facturer.`,
-  };
+  return applyShootingDecision({
+    lineId: parsed.data.lineId,
+    clientId: parsed.data.clientId,
+    decision: parsed.data.included ? "compris" : "supplementaire",
+    performedOn: null,
+    soldServiceKey: null,
+    billedDirectly: null,
+  });
 }
 
+const classifySchema = z.object({
+  lineId: z.string().uuid(),
+  clientId: z.string().uuid(),
+  decision: z.enum(["compris", "supplementaire", "annule"], { message: "Dites ce qui s'est passé." }),
+  performedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date du shooting invalide."),
+  soldServiceKey: z.string().optional(),
+  /** null : la case n'était pas proposée, la ligne garde son réglage. */
+  billedDirectly: z.boolean().nullable(),
+});
 
-/** Forfait shooting brut, tel qu'il est rangé dans les réglages du client. */
-function readShootingPlan(notes: string | null): unknown {
-  try {
-    const settings = typeof notes === "string" ? JSON.parse(notes) : {};
-    return settings?.shootingPlan;
-  } catch {
-    return null;
+/**
+ * Classement d'un shooting depuis l'onglet Shootings, sans passer par le
+ * budget du client : ce qui s'est passé, la prestation tournée si elle a été
+ * vendue en plus, la date réelle.
+ */
+export async function classifyShooting(formData: FormData): Promise<BudgetActionResult> {
+  const profile = await requireAdmin();
+  if (!profile) return { ok: false, message: ACCESS_DENIED };
+
+  const parsed = classifySchema.safeParse({
+    lineId: formData.get("lineId"),
+    clientId: formData.get("clientId"),
+    decision: formData.get("decision") ?? undefined,
+    performedOn: formData.get("performedOn"),
+    soldServiceKey: formData.get("soldServiceKey") || undefined,
+    // Une case décochée n'est pas envoyée : le témoin dit si elle était à l'écran.
+    billedDirectly: formData.get("billedDirectlyShown") === "1" ? formData.get("billedDirectly") === "on" : null,
+  });
+  if (!parsed.success) {
+    return { ok: false, message: parsed.error.issues[0]?.message ?? "Classement invalide." };
   }
+
+  return applyShootingDecision({
+    lineId: parsed.data.lineId,
+    clientId: parsed.data.clientId,
+    decision: parsed.data.decision,
+    performedOn: parsed.data.performedOn,
+    soldServiceKey: parsed.data.soldServiceKey ?? null,
+    billedDirectly: parsed.data.billedDirectly,
+  });
 }

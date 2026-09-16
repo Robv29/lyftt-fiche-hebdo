@@ -133,6 +133,22 @@ export function invoiceMonths(
     }));
 }
 
+/**
+ * La ligne figure-t-elle sur une facture déjà établie ou prélevée ?
+ *
+ * Même règle que la composition des factures : une prestation antérieure au
+ * début de gestion est rattachée au mois de démarrage. Juger sur le seul mois
+ * de la prestation laissait modifier une facture déjà envoyée.
+ */
+export function isOnSettledInvoice(
+  line: { performedOn: string },
+  contractStartDate: string | null,
+  statuses: Record<string, InvoiceStatus>,
+): boolean {
+  const status = statuses[invoiceMonthFor(line, contractStartDate, statuses)];
+  return status === "faite" || status === "prelevement_programme";
+}
+
 /** Nombre de mois dont la facturation n'est pas menée à son terme. */
 export function pendingInvoiceCount(months: InvoiceMonth[]): number {
   return months.filter((month) => !isInvoiceSettled(month.status)).length;
