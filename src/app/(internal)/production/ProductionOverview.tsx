@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { Icon } from "@/components/Icon";
 import { CONTENT_BUCKETS, type ContentBucket } from "@/lib/domain/content-buckets";
-import type { BucketProgress, BucketStatus, DepositSummary } from "@/lib/domain/planning";
+import type { BucketProgress, BucketStatus, DepositSummary, VisualsState } from "@/lib/domain/planning";
+import { VisualsValidation } from "./VisualsValidation";
 
 export interface OverviewRow {
   clientId: string;
@@ -14,6 +15,9 @@ export interface OverviewRow {
   progress: Record<ContentBucket, BucketProgress>;
   /** Ce qui reste à déposer et à rédiger ; null tant que la fiche n'existe pas. */
   deposit: DepositSummary | null;
+  sheetId: string | null;
+  /** Validation des visuels, indépendante des textes ; null sans fiche. */
+  visuals: { state: VisualsState; validatedAt: string | null; validatedByName: string | null } | null;
 }
 
 /**
@@ -60,16 +64,17 @@ function BucketCell({ progress, color, label }: { progress: BucketProgress; colo
  * tableau répond colonne par colonne, et sépare ce qui est déposé de ce qui est
  * rédigé : un texte en retard ne cache plus des fichiers déjà livrés.
  */
-export function ProductionOverview({ rows, weekLabel, weekOffset, maxWeekOffset }: { rows: OverviewRow[]; weekLabel: string; weekOffset: number; maxWeekOffset: number }) {
+export function ProductionOverview({ rows, weekLabel, weekOffset, maxWeekOffset, canValidateVisuals }: { rows: OverviewRow[]; weekLabel: string; weekOffset: number; maxWeekOffset: number; canValidateVisuals: boolean }) {
   const filesDone = rows.filter((row) => row.deposit && row.deposit.filesMissing === 0).length;
+  const visualsDone = rows.filter((row) => row.visuals?.state === "validated").length;
   const textsDone = rows.filter((row) => row.deposit && row.deposit.textsMissing === 0).length;
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-xs text-ink-faint">
-          {weekLabel} · fichiers déposés chez {filesDone} client{filesDone > 1 ? "s" : ""} sur {rows.length} ·
-          textes rédigés chez {textsDone} sur {rows.length}.
+          {weekLabel} · sur {rows.length} client{rows.length > 1 ? "s" : ""} : fichiers déposés {filesDone} ·
+          visuels validés {visualsDone} · textes rédigés {textsDone}.
         </p>
         <div className="flex items-center gap-1.5">
           {weekOffset > 0 ? (
@@ -89,7 +94,7 @@ export function ProductionOverview({ rows, weekLabel, weekOffset, maxWeekOffset 
       <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-soft">
         <span className="flex items-center gap-1.5"><Dot status="ready" color="#64748b" icon="upload" label="Fichiers"/>Fichiers</span>
         <span className="flex items-center gap-1.5"><Dot status="ready" color="#64748b" icon="message" label="Textes"/>Textes</span>
-        <span className="text-ink-faint">Plein : fait · cerclé : à faire</span>
+        <span className="text-ink-faint">Plein : fait · cerclé : à faire · les visuels se valident dans la colonne Statut</span>
       </p>
 
       {rows.length === 0 ? (
@@ -117,22 +122,25 @@ export function ProductionOverview({ rows, weekLabel, weekOffset, maxWeekOffset 
                       </td>
                     ))}
                     <td className="px-4 py-3 text-right">
-                      {!row.hasSheet || !row.deposit
+                      {!row.hasSheet || !row.deposit || !row.sheetId || !row.visuals
                         ? <span className="badge bg-state-changes/10 text-state-changes">Fiche à créer</span>
-                        : row.done
-                          ? <span className="badge bg-state-approved/10 text-state-approved">Fait</span>
-                          : (
-                            <span className="flex flex-col items-end gap-1">
-                              {row.deposit.filesTotal > 0 && (
-                                row.deposit.filesMissing === 0
-                                  ? <span className="badge bg-state-approved/10 text-state-approved">Fichiers déposés</span>
-                                  : <span className="badge bg-[#fff7e6] text-[#8a5700]">Fichiers : {row.deposit.filesMissing} à déposer</span>
-                              )}
-                              {row.deposit.textsMissing === 0
-                                ? <span className="badge bg-state-approved/10 text-state-approved">Textes rédigés</span>
-                                : <span className="badge bg-[#fff7e6] text-[#8a5700]">Textes : {row.deposit.textsMissing} à rédiger</span>}
-                            </span>
-                          )}
+                        : (
+                          <span className="flex flex-col items-end gap-1">
+                            {row.done && <span className="badge bg-state-approved/10 text-state-approved">Fait</span>}
+                            {/* Fichiers manquants, bouton de validation, ou validation posée — selon l'état. */}
+                            <VisualsValidation
+                              sheetId={row.sheetId}
+                              state={row.visuals.state}
+                              filesMissing={row.deposit.filesMissing}
+                              validatedAt={row.visuals.validatedAt}
+                              validatedByName={row.visuals.validatedByName}
+                              canValidate={canValidateVisuals}
+                            />
+                            {!row.done && (row.deposit.textsMissing === 0
+                              ? <span className="badge bg-state-approved/10 text-state-approved">Textes rédigés</span>
+                              : <span className="badge bg-[#fff7e6] text-[#8a5700]">Textes : {row.deposit.textsMissing} à rédiger</span>)}
+                          </span>
+                        )}
                     </td>
                   </tr>
                 ))}

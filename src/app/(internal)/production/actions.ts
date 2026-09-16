@@ -6,6 +6,8 @@ import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/se
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sanitizeText } from "@/lib/security/sanitize";
 import { prepareCorrectionForClient, transitionTicket } from "@/lib/internal/actions";
+import { depositSummary, visualsValidationState } from "@/lib/domain/planning";
+import type { MediaFormat } from "@/lib/domain/types";
 
 export interface ProductionActionResult {
   ok: boolean;
@@ -451,4 +453,67 @@ export async function validateTicketCorrection(
     messageBody: prepared.messageBody,
     whatsappUrl: prepared.whatsappUrl,
   };
+}
+
+/*
+ * Validation des visuels d'une fiche.
+ *
+ * Réservée à ceux qui tiennent la fiche — direction, chef de projet, community
+ * managers : le graphiste qui dépose ne valide pas son propre travail. La RLS
+ * de `weekly_sheets` dit la même chose ; l'écriture passe donc par le client
+ * utilisateur, et la base garde le dernier mot.
+ */
+const VISUALS_ROLES = ["super_admin", "production_manager", "community_manager"];
+
+export async function setVisualsValidation(sheetId: string, validate: boolean): Promise<ProductionActionResult> {
+  const profile = await requireProfile();
+  if (!profile || !VISUALS_ROLES.includes(profile.role)) {
+    return { ok: false, message: "La validation des visuels est réservée à la direction, au chef de projet et aux community managers." };
+  }
+  const id = z.string().uuid().safeParse(sheetId);
+  if (!id.success) return { ok: false, message: "Fiche invalide." };
+
+  const supabase = await createSupabaseServerClient();
+  const { data: sheet } = await supabase
+    .from("weekly_sheets")
+    .select("id, weekly_sheet_items ( format, caption, hashtags, media_asset_id, media_external_url, is_cancelled )")
+    .eq("id", id.data)
+    .maybeSingle();
+  if (!sheet) return { ok: false, message: "Fiche introuvable ou accès refusé." };
+
+  if (validate) {
+    // Recompté ici, pas repris de l'écran : un fichier a pu être retiré depuis.
+    const items = ((sheet.weekly_sheet_items ?? []) as { format: MediaFormat; caption: string | null; hashtags: string[] | null; media_asset_id: string | null; media_external_url: string | null; is_cancelled: boolean }[])
+      .map((item) => ({
+        format: item.format,
+        caption: item.caption,
+        hashtags: item.hashtags,
+        mediaAssetId: item.media_asset_id,
+        mediaExternalUrl: item.media_external_url,
+        isCancelled: item.is_cancelled,
+      }));
+    const deposit = depositSummary(items);
+    const state = visualsValidationState(deposit, null);
+    if (state === "no_files") return { ok: false, message: "Cette fiche n'attend aucun fichier." };
+    if (state === "missing") {
+      return {
+        ok: false,
+        message: `Il manque encore ${deposit.filesMissing} fichier${deposit.filesMissing > 1 ? "s" : ""} : les visuels se valident une fois tous déposés.`,
+      };
+    }
+  }
+
+  const { data: updated, error } = await supabase
+    .from("weekly_sheets")
+    .update(validate
+      ? { visuals_validated_at: new Date().toISOString(), visuals_validated_by: profile.id, visuals_validated_by_name: profile.full_name }
+      : { visuals_validated_at: null, visuals_validated_by: null, visuals_validated_by_name: null })
+    .eq("id", id.data)
+    .select("id");
+  if (error) return { ok: false, message: `Enregistrement impossible : ${error.message}` };
+  if (!updated || updated.length === 0) return { ok: false, message: "Fiche introuvable ou accès refusé." };
+
+  revalidatePath("/production");
+  revalidatePath(`/fiches/${id.data}`);
+  return { ok: true, message: validate ? "Visuels validés." : "Validation des visuels retirée." };
 }

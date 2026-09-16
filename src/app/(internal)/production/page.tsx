@@ -8,7 +8,7 @@ import { ticketPriorityLabel, ticketStatusLabel, type MediaFormat } from "@/lib/
 import { PageHeader } from "@/components/ui";
 import { resolveMediaUrl } from "@/lib/media/signed-url";
 import { clientLifecycleForWeek, todayInParis, parseClientKind } from "@/lib/domain/client-lifecycle";
-import { contentBucketProgress, depositSummary, isoWeekIdentity, planningWeekRange, sheetCompletion, weeklyFormatsForCadence, type BucketProgress, type MonthlyCadence } from "@/lib/domain/planning";
+import { contentBucketProgress, depositSummary, isoWeekIdentity, planningWeekRange, sheetCompletion, visualsValidationState, weeklyFormatsForCadence, type BucketProgress, type MonthlyCadence } from "@/lib/domain/planning";
 import { bucketForFormat, CONTENT_BUCKETS, type ContentBucket } from "@/lib/domain/content-buckets";
 import { ProductionRequests, type ProductionRequestRow } from "./ProductionRequests";
 import { TicketCorrections, type TicketCorrectionRow } from "./TicketCorrections";
@@ -69,7 +69,7 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
       .order("name"),
     supabase
       .from("weekly_sheets")
-      .select(`id, topic, status,
+      .select(`id, topic, status, visuals_validated_at, visuals_validated_by_name,
         clients ( id, name ),
         weekly_sheet_items ( caption, hashtags, format, media_asset_id, media_external_url, is_cancelled )`)
       .eq("period_start", weekRange.currentStart),
@@ -158,6 +158,8 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
   interface OverviewSheetRow {
     id: string;
     topic: string | null;
+    visuals_validated_at: string | null;
+    visuals_validated_by_name: string | null;
     clients: { id: string; name: string } | null;
     weekly_sheet_items: Array<{ caption: string | null; hashtags: string[] | null; format: MediaFormat; media_asset_id: string | null; media_external_url: string | null; is_cancelled: boolean }>;
   }
@@ -201,6 +203,8 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
           href: `/fiches/nouvelle?client=${client.id}&isoYear=${currentIso.year}&isoWeek=${currentIso.week}`,
           progress,
           deposit: null,
+          sheetId: null,
+          visuals: null,
         };
       }
       const items = sheet.weekly_sheet_items.map((item) => ({
@@ -211,16 +215,25 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
         mediaExternalUrl: item.media_external_url,
         isCancelled: item.is_cancelled,
       }));
+      const deposit = depositSummary(items);
+      const visualsState = visualsValidationState(deposit, sheet.visuals_validated_at);
       return {
         clientId: client.id,
         clientName: client.name,
         hasSheet: true,
         topic: sheet.topic,
-        done: sheetCompletion(items).percentage === 100,
+        // Fait : tout est là, et les visuels ont été regardés — quand il y en a.
+        done: sheetCompletion(items).percentage === 100 && visualsState !== "to_validate",
         href: `/fiches/${sheet.id}`,
         // Fichiers et textes comptés à part : l'un peut être livré sans l'autre.
         progress: contentBucketProgress(items),
-        deposit: depositSummary(items),
+        deposit,
+        sheetId: sheet.id,
+        visuals: {
+          state: visualsState,
+          validatedAt: sheet.visuals_validated_at,
+          validatedByName: sheet.visuals_validated_by_name,
+        },
       };
     })
     .sort((a, b) => {
@@ -231,8 +244,9 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
       const rank = (row: OverviewRow) => {
         if (!row.hasSheet || !row.deposit) return 0;
         if (row.deposit.filesMissing > 0) return 1;
-        if (row.deposit.textsMissing > 0) return 2;
-        return 3;
+        if (row.visuals?.state === "to_validate") return 2;
+        if (row.deposit.textsMissing > 0) return 3;
+        return 4;
       };
       return rank(a) - rank(b) || a.clientName.localeCompare(b.clientName, "fr");
     });
@@ -243,7 +257,14 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
       <PageHeader eyebrow="Studio de production" title={isProductionRole ? "Production" : "Production"} description={isProductionRole ? "Les corrections qui vous sont affectées et les commandes internes, triées selon leur échéance." : "Les retours clients à corriger et les commandes internes de l'équipe."} />
 
       <ProductionTabs
-        overview={<ProductionOverview rows={overviewRows} weekLabel={weekLabel} weekOffset={weekOffset} maxWeekOffset={MAX_WEEK_OFFSET}/>}
+        overview={<ProductionOverview
+          rows={overviewRows}
+          weekLabel={weekLabel}
+          weekOffset={weekOffset}
+          maxWeekOffset={MAX_WEEK_OFFSET}
+          // Mêmes rôles que la RLS des fiches : ceux qui tiennent la fiche valident ses visuels.
+          canValidateVisuals={["super_admin", "production_manager", "community_manager"].includes(profile?.role ?? "")}
+        />}
         detailAlertCount={overdueCount}
         detail={<div className="space-y-7">
       <ProductionRequests

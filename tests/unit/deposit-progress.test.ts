@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { contentBucketProgress, contentBucketStatuses, depositSummary } from "@/lib/domain/planning";
+import { contentBucketProgress, contentBucketStatuses, depositSummary, visualsValidationState } from "@/lib/domain/planning";
 
 const photo = (overrides: Partial<{ caption: string | null; hashtags: string[] | null; mediaAssetId: string | null; isCancelled: boolean }> = {}) => ({
   format: "photo" as const, caption: null, hashtags: null, mediaAssetId: null, mediaExternalUrl: null, isCancelled: false, ...overrides,
@@ -39,5 +39,23 @@ describe("fichiers et textes suivis séparément", () => {
       { format: "texte_seul" as const, caption: null, hashtags: null, mediaAssetId: null, mediaExternalUrl: null },
     ];
     expect(depositSummary(items)).toEqual({ filesTotal: 2, filesMissing: 1, textsTotal: 3, textsMissing: 2 });
+  });
+});
+
+describe("validation des visuels", () => {
+  const deposit = (filesTotal: number, filesMissing: number) => ({ filesTotal, filesMissing, textsTotal: 3, textsMissing: 3 });
+
+  it("ne se propose qu'une fois tous les fichiers déposés, textes ou pas", () => {
+    expect(visualsValidationState(deposit(3, 1), null)).toBe("missing");
+    expect(visualsValidationState(deposit(3, 0), null)).toBe("to_validate");
+    expect(visualsValidationState(deposit(3, 0), "2026-09-16T10:00:00Z")).toBe("validated");
+  });
+
+  it("une validation ne couvre pas un fichier manquant", () => {
+    expect(visualsValidationState(deposit(3, 1), "2026-09-16T10:00:00Z")).toBe("missing");
+  });
+
+  it("une fiche sans fichier attendu n'a rien à valider", () => {
+    expect(visualsValidationState(deposit(0, 0), null)).toBe("no_files");
   });
 });

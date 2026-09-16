@@ -222,6 +222,21 @@ export interface DepositSummary {
   textsMissing: number;
 }
 
+/**
+ * Où en sont les visuels d'une fiche.
+ *
+ * `to_validate` : tous les fichiers sont là, personne ne les a encore validés.
+ * Une validation posée alors qu'un fichier manque ne compte pas — la base la
+ * retire d'ailleurs dès qu'un fichier change.
+ */
+export type VisualsState = "no_files" | "missing" | "to_validate" | "validated";
+
+export function visualsValidationState(deposit: DepositSummary, validatedAt: string | null): VisualsState {
+  if (deposit.filesTotal === 0) return "no_files";
+  if (deposit.filesMissing > 0) return "missing";
+  return validatedAt ? "validated" : "to_validate";
+}
+
 /** Ce qui reste à déposer et à rédiger sur une fiche, compté à part. */
 export function depositSummary(items: CompletionItem[]): DepositSummary {
   const active = items.filter((item) => !item.isCancelled);
