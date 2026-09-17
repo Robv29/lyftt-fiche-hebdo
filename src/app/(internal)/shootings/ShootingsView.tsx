@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { requestShooting, type ShootingActionResult } from "./actions";
+import { ShootingDateEditor } from "./ShootingDateEditor";
 import {
   SHOOTING_KIND_LABELS,
   SHOOTING_STATUS_LABELS,
@@ -51,9 +52,12 @@ const formatDay = (date: string) => dayFormat.format(new Date(`${date}T00:00:00Z
 export function ShootingsView({
   shootings,
   clients,
+  canEditDates,
 }: {
   shootings: ShootingRow[];
   clients: { id: string; name: string }[];
+  /** Direction, chef de projet et community managers peuvent déplacer un shooting. */
+  canEditDates: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -235,6 +239,7 @@ export function ShootingsView({
                 <span className="shrink-0 text-xs text-ink-faint">
                   {formatDuration(shooting.durationMinutes)}
                 </span>
+                <ShootingDateEditor lineId={shooting.lineId} date={shooting.date} canEdit={canEditDates}/>
                 {/*
                   La fiche du shooting, pas le budget : cet onglet est fait pour
                   la production, et le budget lui est fermé par la RLS.

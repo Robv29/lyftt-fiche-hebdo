@@ -162,6 +162,7 @@ export default async function ShootingsPage() {
           assetsCount: entry.details?.assetsCount ?? null,
         }))}
         clients={clients.map((client) => ({ id: client.id, name: client.name }))}
+        canEditDates={["super_admin", "production_manager", "community_manager"].includes(profile.role)}
       />
     </div>
   );

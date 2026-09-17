@@ -6,6 +6,7 @@ import { denyCommercial } from "@/lib/internal/authorization";
 import { todayInParis } from "@/lib/domain/client-lifecycle";
 import { deliveryDueOn } from "@/lib/domain/shootings";
 import { ShootingForm } from "./ShootingForm";
+import { ShootingDateEditor } from "../ShootingDateEditor";
 
 export const dynamic = "force-dynamic";
 
@@ -78,13 +79,16 @@ export default async function ShootingPage({
           }).format(new Date(`${date}T00:00:00Z`))}
         </p>
         {/*
-          La date ne se modifie pas ici : elle appartient au cycle du forfait,
-          et se cale depuis l'accueil ou l'onglet Shootings. Deux endroits pour
-          la changer, c'est une divergence garantie.
+          Même composant et même action que la liste des shootings : une seule
+          règle pour déplacer un shooting, qui refuse d'en déplacer un déjà facturé.
         */}
-        <p className="mt-1 text-xs text-ink-faint">
-          La date se cale depuis la liste des shootings ou le tableau de bord.
-        </p>
+        <div className="mt-2">
+          <ShootingDateEditor
+            lineId={id}
+            date={date}
+            canEdit={["super_admin", "production_manager", "community_manager"].includes(profile.role)}
+          />
+        </div>
       </header>
 
       <ShootingForm

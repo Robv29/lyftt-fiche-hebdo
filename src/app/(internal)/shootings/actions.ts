@@ -5,6 +5,8 @@ import { z } from "zod";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sanitizeText } from "@/lib/security/sanitize";
+import { isShootingLine } from "@/lib/domain/budget";
+import { isOnSettledInvoice, type InvoiceStatus } from "@/lib/domain/invoicing";
 
 export interface ShootingActionResult {
   ok: boolean;
@@ -202,4 +204,89 @@ export async function requestShooting(formData: FormData): Promise<ShootingActio
     ok: true,
     message: "Demande envoyée au chef de projet. Elle apparaît dans les tickets clients.",
   };
+}
+
+/*
+ * Modifier la date d'un shooting.
+ *
+ * Réservé à ceux qui tiennent le planning du client — direction, chef de
+ * projet, community managers. La date vit sur la ligne de budget, fermée à la
+ * production par RLS : l'écriture passe par la clé service, après vérification
+ * du périmètre par une lecture soumise à RLS.
+ */
+const DATE_EDITOR_ROLES = ["super_admin", "production_manager", "community_manager"];
+
+const dateSchema = z.object({
+  budgetLineId: z.string().uuid(),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date invalide."),
+});
+
+export async function changeShootingDate(formData: FormData): Promise<ShootingActionResult> {
+  const profile = await getCurrentProfile();
+  if (!profile || !DATE_EDITOR_ROLES.includes(profile.role)) {
+    return { ok: false, message: "Modifier la date d'un shooting est réservé à la direction, au chef de projet et aux community managers." };
+  }
+
+  const parsed = dateSchema.safeParse({
+    budgetLineId: formData.get("budgetLineId"),
+    date: formData.get("date"),
+  });
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? "Date invalide." };
+
+  const admin = createSupabaseAdminClient();
+  const { data: line } = await admin
+    .from("client_budget_lines")
+    .select("id, client_id, service_key, performed_on")
+    .eq("id", parsed.data.budgetLineId)
+    .maybeSingle();
+  if (!line || !isShootingLine(line.service_key as string)) return { ok: false, message: "Shooting introuvable." };
+
+  const supabase = await createSupabaseServerClient();
+  const { data: allowed } = await supabase
+    .from("clients")
+    .select("id")
+    .eq("id", line.client_id as string)
+    .maybeSingle();
+  if (!allowed) return { ok: false, message: "Shooting introuvable ou accès refusé." };
+
+  if (parsed.data.date === line.performed_on) return { ok: true, message: "Date inchangée." };
+
+  /*
+   * La date décide du mois de facture. Un shooting qui figure sur une facture
+   * déjà établie — ou qui y entrerait — ne bouge plus : ce serait déplacer un
+   * montant déjà transmis au client. Même règle que la composition des factures.
+   */
+  const [{ data: owner, error: ownerError }, { data: invoices, error: invoicesError }] = await Promise.all([
+    admin.from("clients").select("contract_start_date").eq("id", line.client_id as string).maybeSingle(),
+    admin.from("client_invoices").select("period_month, status").eq("client_id", line.client_id as string),
+  ]);
+  if (ownerError || invoicesError) {
+    return { ok: false, message: `Vérification impossible : ${(ownerError ?? invoicesError)!.message}` };
+  }
+  const statuses: Record<string, InvoiceStatus> = Object.fromEntries(
+    (invoices ?? []).map((row) => [String(row.period_month).slice(0, 10), row.status as InvoiceStatus]),
+  );
+  const start = (owner?.contract_start_date as string | null) ?? null;
+  if (
+    isOnSettledInvoice({ performedOn: line.performed_on as string }, start, statuses)
+    || isOnSettledInvoice({ performedOn: parsed.data.date }, start, statuses)
+  ) {
+    return { ok: false, message: "La facture du mois concerné est déjà établie : la date de ce shooting ne peut plus changer." };
+  }
+
+  const { error } = await admin
+    .from("client_budget_lines")
+    .update({ performed_on: parsed.data.date })
+    .eq("id", line.id);
+  if (error) return { ok: false, message: `Date non enregistrée : ${error.message}` };
+
+  revalidatePath("/shootings");
+  revalidatePath(`/shootings/${line.id}`);
+  revalidatePath("/");
+  revalidatePath("/indicateurs");
+  revalidatePath("/budget/facturation");
+  revalidatePath(`/budget/${line.client_id as string}`);
+  const label = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" })
+    .format(new Date(`${parsed.data.date}T00:00:00Z`));
+  return { ok: true, message: `Shooting déplacé au ${label}.` };
 }
