@@ -10,6 +10,7 @@ import { fr } from "date-fns/locale";
 import { mediaFrameBackground, mediaFrameClass } from "@/lib/domain/media-frame";
 import { SOCIAL_NETWORK_LABELS, type MediaFormat, type SocialNetwork } from "@/lib/domain/types";
 import { missingNetworks } from "@/lib/domain/publication-checklist";
+import { matchesPublicationSearch } from "@/lib/domain/publication-search";
 
 function todayInParis():string { return new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Paris",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date()); }
 function isToday(day:string):boolean { return day===todayInParis(); }
@@ -38,6 +39,7 @@ export interface DailyPublication {
 
 export function PublicationChecklist({ initialItems, nextWithContent }: { initialItems:DailyPublication[]; nextWithContent?:string|null }) {
   const [items,setItems] = useState(initialItems);
+  const [query,setQuery] = useState("");
   const [pending,startTransition] = useTransition();
   const [feedback,setFeedback] = useState<string|null>(null);
 
@@ -93,8 +95,13 @@ export function PublicationChecklist({ initialItems, nextWithContent }: { initia
 
   const complete=items.filter((item)=>item.publishedAt).length;
   const percentage=Math.round(complete/items.length*100);
+  /*
+   * La recherche filtre l'affichage, pas la journée : la progression reste
+   * comptée sur tous les contenus du jour, sans quoi elle mentirait.
+   */
+  const visibleItems=items.filter((item)=>matchesPublicationSearch(item,query));
   // Regroupement par jour : on execute la journee, pas le client.
-  const groups=Object.entries(items.reduce<Record<string,DailyPublication[]>>((result,item)=>{ (result[item.scheduledDate]??=[]).push(item); return result; },{})).sort(([a],[b])=>a.localeCompare(b));
+  const groups=Object.entries(visibleItems.reduce<Record<string,DailyPublication[]>>((result,item)=>{ (result[item.scheduledDate]??=[]).push(item); return result; },{})).sort(([a],[b])=>a.localeCompare(b));
 
   return <div className="space-y-6">
     <section className="card flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
@@ -103,6 +110,24 @@ export function PublicationChecklist({ initialItems, nextWithContent }: { initia
     </section>
 
     {feedback && <p role="status" className="rounded-xl border border-[#c9dcf0] bg-[#f7fafe] px-4 py-3 text-center text-xs text-ink-soft">{feedback}</p>}
+
+    <div className="flex flex-wrap items-center gap-3">
+      <div className="relative min-w-0 flex-1 sm:max-w-lg">
+        <Icon name="search" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint"/>
+        <label className="sr-only" htmlFor="publication-search">Rechercher une publication</label>
+        <input
+          id="publication-search"
+          type="search"
+          className="field bg-white pl-10"
+          placeholder="Rechercher un client, un texte, un hashtag, un réseau…"
+          value={query}
+          onChange={(event)=>setQuery(event.target.value)}
+        />
+      </div>
+      {query.trim() && <span className="text-xs text-ink-faint" role="status">{visibleItems.length} résultat{visibleItems.length>1?"s":""} sur {items.length}</span>}
+    </div>
+
+    {groups.length===0 && <div className="card px-4 py-8 text-center text-sm text-ink-faint">Aucune publication ne correspond à « {query.trim()} ». <button type="button" className="ml-1 font-semibold text-accent hover:underline" onClick={()=>setQuery("")}>Effacer la recherche</button></div>}
 
     {groups.map(([day,dayItems])=><section key={day} className="space-y-3" aria-labelledby={`jour-${day}`}>
       <div className="flex items-center justify-between gap-3 px-1">
