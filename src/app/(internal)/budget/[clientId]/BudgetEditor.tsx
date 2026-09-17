@@ -35,7 +35,7 @@ import {
   pendingInvoiceCount,
   type InvoiceMonth,
 } from "@/lib/domain/invoicing";
-import { addBudgetLine, deleteMonthInvoice, removeBudgetLine, removeClientRib, saveBudgetSettings, saveContractDates, setInvoiceStatus, setShootingBilling, uploadClientRib, type BudgetActionResult } from "../actions";
+import { addBudgetLine, deleteMonthInvoice, removeBudgetLine, removeClientRib, saveBudgetSettings, saveContractDates, setClientWithoutSocialManagement, setInvoiceStatus, setShootingBilling, uploadClientRib, type BudgetActionResult } from "../actions";
 
 type EditorLine = BudgetLine & { note: string | null; forfaitIncluded: boolean | null };
 
@@ -182,6 +182,34 @@ export function BudgetEditor({
     });
   };
 
+  /*
+   * « Client sans gestion RS ». Le serveur annonce ce qui partirait — mois de
+   * gestion et montant, fiches passées — et n'agit qu'une fois ce nombre exact
+   * confirmé. Rien n'est écrit avant.
+   */
+  const markWithoutManagement = (confirmedMonths?: number) => {
+    startTransition(async () => {
+      try {
+        const formData = new FormData();
+        formData.set("clientId", clientId);
+        if (confirmedMonths !== undefined) formData.set("confirmRemovedMonths", String(confirmedMonths));
+        const result = await setClientWithoutSocialManagement(formData);
+        if (result.confirmRemovedMonths !== undefined) {
+          if (!window.confirm(result.message ?? "Confirmer ?")) {
+            setFeedback({ ok: false, message: "Rien n’a été modifié : le client reste en gestion." });
+            return;
+          }
+          markWithoutManagement(result.confirmRemovedMonths);
+          return;
+        }
+        setFeedback(result);
+        if (result.ok) router.refresh();
+      } catch {
+        setFeedback({ ok: false, message: "Enregistrement interrompu. Réessayez." });
+      }
+    });
+  };
+
   return (
     <div className="space-y-6">
       {feedback?.message && (
@@ -231,7 +259,7 @@ export function BudgetEditor({
           <p className="mt-1 text-xs text-ink-faint">
             {managed
               ? <>Le début déclenche le décompte des mois ; la fin l&apos;arrête. Modifiables ici comme sur la fiche client.</>
-              : <>Facultatif : {clientName} est en prestation ponctuelle, sans gestion des réseaux ni mois facturés.</>}
+              : <>Client sans gestion RS : ces dates sont facultatives. {clientName} est en prestation ponctuelle, sans fiches hebdomadaires ni mois de gestion facturés.</>}
           </p>
         </div>
         <input type="hidden" name="clientId" value={clientId}/>
@@ -248,6 +276,29 @@ export function BudgetEditor({
         <button type="submit" className="btn-primary" disabled={pending}>
           {pending ? "Enregistrement…" : "Enregistrer les dates"}
         </button>
+
+        {/*
+          Pas de gestion des réseaux sociaux : plutôt que d'inventer des dates
+          pour faire taire l'alerte, le client passe en prestation ponctuelle.
+        */}
+        {managed && (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
+            <p className="min-w-0 flex-1 text-xs leading-relaxed text-ink-faint">
+              {clientName} n&apos;a pas de gestion des réseaux sociaux ? Plus de dates à renseigner :
+              il passe en prestation ponctuelle, sans fiches hebdomadaires ni mois de gestion facturés.
+            </p>
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={pending}
+              onClick={() => {
+                if (window.confirm(`Passer ${clientName} en client sans gestion RS ?`)) markWithoutManagement();
+              }}
+            >
+              Client sans gestion RS
+            </button>
+          </div>
+        )}
       </form>
 
       <form

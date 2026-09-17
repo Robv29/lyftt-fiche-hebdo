@@ -50,4 +50,25 @@ describe("passage d'un client en prestation ponctuelle", () => {
     expect(oneShotConversionCheck({ ...base, kind: "ponctuel", hadSheets: true, issuedInvoices: 3 }))
       .toEqual({ status: "allowed" });
   });
+
+  it("bouton « Client sans gestion RS » : des fiches passées se confirment au lieu de bloquer", () => {
+    const explicit = { ...base, hadSheets: true, explicit: true, managementMonths: 6, managementTotalCents: 244_375 };
+    const check = oneShotConversionCheck(explicit);
+    expect(check.status).toBe("confirm");
+    expect(check.status === "confirm" && check.message).toContain("déjà eu des fiches hebdomadaires");
+    // Le séparateur de milliers est une espace fine insécable : \s la reconnaît.
+    expect(check.status === "confirm" && check.message).toMatch(/2\s443,75/);
+    expect(oneShotConversionCheck({ ...explicit, confirmedMonths: 6 })).toEqual({ status: "allowed" });
+  });
+
+  it("bouton « Client sans gestion RS » : des fiches sans mois inscrit se confirment aussi", () => {
+    const explicit = { ...base, hadSheets: true, explicit: true };
+    expect(oneShotConversionCheck(explicit)).toMatchObject({ status: "confirm", months: 0 });
+    expect(oneShotConversionCheck({ ...explicit, confirmedMonths: 0 })).toEqual({ status: "allowed" });
+  });
+
+  it("une facture de gestion déjà établie bloque aussi le bouton explicite", () => {
+    expect(oneShotConversionCheck({ ...base, explicit: true, issuedInvoices: 1 }).status).toBe("refused");
+  });
 });
+

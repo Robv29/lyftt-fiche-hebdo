@@ -135,6 +135,8 @@ async function oneShotCheck(
   supabase: ServerSupabase,
   clientId: string,
   confirmedMonths: number | null,
+  /** Bouton « Client sans gestion RS » : des fiches passées se confirment au lieu de bloquer. */
+  explicit = false,
 ): Promise<OneShotConversionCheck> {
   const [client, sheets, invoices, months] = await Promise.all([
     supabase.from("clients").select("client_kind, first_sheet_at").eq("id", clientId).maybeSingle(),
@@ -168,6 +170,7 @@ async function oneShotCheck(
       0,
     ),
     confirmedMonths,
+    explicit,
   });
 }
 
@@ -203,6 +206,60 @@ async function convertToOneShot(
 
   const removed = await syncManagementMonths(supabase, { id: row.id as string, ...clientFormula(row) });
   return { ok: true, removed };
+}
+
+/** Le type du client change la fiche, le planning, la carte et la facturation. */
+function revalidateClientKindChange(clientId: string) {
+  revalidatePath("/budget");
+  revalidatePath(`/budget/${clientId}`);
+  revalidatePath("/budget/facturation");
+  revalidatePath("/clients");
+  revalidatePath(`/clients/${clientId}`);
+  revalidatePath("/fiches");
+  revalidatePath("/production");
+  revalidatePath("/implantations");
+  revalidatePath("/");
+}
+
+/**
+ * « Client sans gestion RS », depuis la période de gestion du budget.
+ *
+ * Le client passe en prestation ponctuelle : plus de dates de gestion à
+ * renseigner, plus de fiches hebdomadaires ni de mois de gestion facturés.
+ * Les mêmes contrôles que la case de la prestation ponctuelle, à ceci près
+ * qu'un geste délibéré ne bute pas sur des fiches passées : elles s'annoncent
+ * dans la confirmation, avec les mois retirés et leur montant.
+ */
+export async function setClientWithoutSocialManagement(formData: FormData): Promise<BudgetActionResult> {
+  const profile = await requireAdmin();
+  if (!profile) return { ok: false, message: ACCESS_DENIED };
+
+  const parsed = z.object({
+    clientId: z.string().uuid(),
+    confirmRemovedMonths: z.coerce.number().int().min(0).max(1_000).optional(),
+  }).safeParse({
+    clientId: formData.get("clientId"),
+    confirmRemovedMonths: formData.get("confirmRemovedMonths") ?? undefined,
+  });
+  if (!parsed.success) return { ok: false, message: "Demande invalide." };
+
+  const supabase = await createSupabaseServerClient();
+  const check = await oneShotCheck(supabase, parsed.data.clientId, parsed.data.confirmRemovedMonths ?? null, true);
+  if (check.status === "refused") return { ok: false, message: check.message };
+  if (check.status === "confirm") {
+    return { ok: false, message: check.message, confirmRemovedMonths: check.months };
+  }
+
+  const converted = await convertToOneShot(supabase, parsed.data.clientId);
+  if (!converted.ok) return { ok: false, message: `Passage impossible : ${converted.message}` };
+
+  revalidateClientKindChange(parsed.data.clientId);
+  return {
+    ok: true,
+    message: converted.removed > 0
+      ? `Client sans gestion RS : ${converted.removed} mois de gestion retiré${converted.removed > 1 ? "s" : ""} de l’addition, dates de gestion facultatives.`
+      : "Client sans gestion RS : dates de gestion facultatives.",
+  };
 }
 
 export async function addBudgetLine(formData: FormData): Promise<BudgetActionResult> {
@@ -309,13 +366,7 @@ export async function addBudgetLine(formData: FormData): Promise<BudgetActionRes
     conversion = converted.removed > 0
       ? ` Client passé en prestation ponctuelle : ${converted.removed} mois de gestion non facturé${converted.removed > 1 ? "s" : ""} retiré${converted.removed > 1 ? "s" : ""} de l’addition.`
       : " Client passé en prestation ponctuelle.";
-    // Le type du client change la fiche, le planning, la carte et la facturation.
-    revalidatePath("/budget/facturation");
-    revalidatePath("/clients");
-    revalidatePath(`/clients/${parsed.data.clientId}`);
-    revalidatePath("/fiches");
-    revalidatePath("/implantations");
-    revalidatePath("/");
+    revalidateClientKindChange(parsed.data.clientId);
   }
 
   return {
