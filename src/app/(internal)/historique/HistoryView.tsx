@@ -24,6 +24,8 @@ const EVENT_TONES: Record<HistoryEventKind, { dot: string; chip: string }> = {
   production_requested: { dot: "#8b5cf6", chip: "bg-[#f1eaff] text-[#6d28d9]" },
   production_delivered: { dot: "#0e7490", chip: "bg-[#e0f7fa] text-[#0e7490]" },
   approved: { dot: "#128359", chip: "bg-[#e8f8f1] text-[#128359]" },
+  // Couleur à part : une validation faite à la place du client doit sauter aux yeux.
+  staff_validated: { dot: "#b45309", chip: "bg-[#fff4e0] text-[#8a5700]" },
   published: { dot: "#64748b", chip: "bg-[#eef1f6] text-[#475569]" },
 };
 

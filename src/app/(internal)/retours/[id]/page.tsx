@@ -38,7 +38,8 @@ export default async function TicketDetailPage({
          media_assets:media_asset_id ( kind, file_name, storage_path, preview_path, purged_at, preview_purged_at ) ),
        client_ticket_assignments ( assignment_role, accepted_at, completed_at, profile_id, profiles ( full_name, role ) ),
        client_ticket_comments ( id, body, visibility, author_name, author_type, created_at ),
-       client_ticket_attachments ( id, media_assets ( file_name, storage_path, kind ) )`,
+       client_ticket_attachments ( id, media_assets ( file_name, storage_path, kind ) ),
+       weekly_sheet_staff_validations ( validated_by_name, created_at )`,
     )
     .eq("id", id)
     .maybeSingle();
@@ -297,6 +298,12 @@ export default async function TicketDetailPage({
             status={ticket.status}
             category={ticket.category}
             clientName={client?.name ?? "Client"}
+            staffValidation={(() => {
+              // Validée par l'agence : le ticket le dit, au lieu de « le client a validé ».
+              const rows = (ticket.weekly_sheet_staff_validations ?? []) as unknown as { validated_by_name: string; created_at: string }[];
+              const last = rows.sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+              return last ? { byName: last.validated_by_name, at: last.created_at } : null;
+            })()}
             item={item ? {
               id:item.id,
               caption:item.caption,

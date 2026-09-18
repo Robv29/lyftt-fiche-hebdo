@@ -463,6 +463,43 @@ export async function prepareCorrectionForClient(formData: FormData): Promise<In
   const input = parsed.data;
   const admin = createSupabaseAdminClient();
 
+  const applied = await applyCorrection(admin, profile, input);
+  if (!applied.ok) return applied;
+  const versionId = applied.versionId;
+
+  await admin.from("client_tickets").update({ resolution_version_id:versionId, status:"new_version_generated" }).eq("id", input.ticketId);
+  await admin.from("weekly_sheets").update({ status:"new_version_to_send" }).eq("id", input.sheetId);
+
+  const link = await generateReviewLink(input.sheetId);
+  if (!link.ok || !link.reviewUrl) return link;
+
+  const { data:sheet } = await admin.from("weekly_sheets").select(`iso_week, validation_deadline_at, clients ( name, whatsapp_group_name, client_contacts ( first_name, phone, is_primary ) )`).eq("id", input.sheetId).single();
+  const client = sheet?.clients as unknown as { name:string; whatsapp_group_name:string|null; client_contacts:{first_name:string;phone:string|null;is_primary:boolean}[] } | null;
+  const contact = client?.client_contacts?.find((value) => value.is_primary) ?? client?.client_contacts?.[0];
+  const deadline = sheet?.validation_deadline_at ? new Intl.DateTimeFormat("fr-FR", { dateStyle:"long", timeStyle:"short", timeZone:"Europe/Paris" }).format(new Date(sheet.validation_deadline_at)) : "l’échéance convenue";
+  const messageBody = `Bonjour ${contact?.first_name ?? ""},\n\nNous avons corrigé votre demande concernant le planning de ${client?.name ?? "votre entreprise"}, semaine ${sheet?.iso_week ?? ""}.\n\nVous pouvez consulter la nouvelle version et la valider ici :\n${link.reviewUrl}\n\nMerci de nous confirmer que tout vous convient avant ${deadline}.\n\n${profile.full_name} — LYFTT`;
+
+  revalidatePath(`/retours/${input.ticketId}`);
+  return { ok:true, message:"Correction enregistrée. Le message client est prêt.", reviewUrl:link.reviewUrl, messageBody, whatsappUrl:whatsappLink(messageBody, contact?.phone ?? undefined) };
+}
+
+type CorrectionInput = z.infer<typeof correctionSchema>;
+type ActionProfile = Awaited<ReturnType<typeof requireProfile>>;
+
+/**
+ * Application d'une correction : le contenu corrigé, puis une nouvelle
+ * version de la fiche.
+ *
+ * Partagée par les deux issues d'une correction — renvoyer au client, ou
+ * valider sans renvoi — pour que le texte enregistré et la version tracée
+ * soient les mêmes quel que soit le choix fait ensuite.
+ */
+async function applyCorrection(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  profile: ActionProfile,
+  input: CorrectionInput,
+  summarySuffix?: string,
+): Promise<{ ok:true; versionId:string } | { ok:false; message:string }> {
   if (input.itemId) {
     const itemUpdate: Record<string, unknown> = {
       caption:sanitizeText(input.caption, 5000),
@@ -485,14 +522,12 @@ export async function prepareCorrectionForClient(formData: FormData): Promise<In
     .select("ticket_number, title")
     .eq("id", input.ticketId)
     .maybeSingle();
-  const summary = input.summary?.trim()
-    ? sanitizeText(input.summary, 500)
-    : sanitizeText(
-        ticketRow?.title
-          ? `Correction ${ticketRow.ticket_number} — ${ticketRow.title}`
-          : "Version corrigée",
-        500,
-      );
+  const base = input.summary?.trim()
+    ? input.summary
+    : ticketRow?.title
+      ? `Correction ${ticketRow.ticket_number} — ${ticketRow.title}`
+      : "Version corrigée";
+  const summary = sanitizeText(summarySuffix ? `${base} · ${summarySuffix}` : base, 500);
 
   const { data:versionId, error:versionError } = await admin.rpc("create_sheet_version", {
     target_sheet_id:input.sheetId,
@@ -500,22 +535,244 @@ export async function prepareCorrectionForClient(formData: FormData): Promise<In
     author:profile.id,
     ticket:input.ticketId,
   });
-  if (versionError) return { ok:false, message:"La nouvelle version n’a pas pu être générée." };
+  if (versionError || !versionId) return { ok:false, message:"La nouvelle version n’a pas pu être générée." };
+  return { ok:true, versionId:versionId as string };
+}
 
-  await admin.from("client_tickets").update({ resolution_version_id:versionId, status:"new_version_generated" }).eq("id", input.ticketId);
-  await admin.from("weekly_sheets").update({ status:"new_version_to_send" }).eq("id", input.sheetId);
+// ---------------------------------------------------------------------------
+// Validation par l'agence, sans renvoi au client
+// ---------------------------------------------------------------------------
 
-  const link = await generateReviewLink(input.sheetId);
-  if (!link.ok || !link.reviewUrl) return link;
+const STAFF_VALIDATION_ROLES = ["super_admin", "production_manager", "community_manager"];
 
-  const { data:sheet } = await admin.from("weekly_sheets").select(`iso_week, validation_deadline_at, clients ( name, whatsapp_group_name, client_contacts ( first_name, phone, is_primary ) )`).eq("id", input.sheetId).single();
-  const client = sheet?.clients as unknown as { name:string; whatsapp_group_name:string|null; client_contacts:{first_name:string;phone:string|null;is_primary:boolean}[] } | null;
-  const contact = client?.client_contacts?.find((value) => value.is_primary) ?? client?.client_contacts?.[0];
-  const deadline = sheet?.validation_deadline_at ? new Intl.DateTimeFormat("fr-FR", { dateStyle:"long", timeStyle:"short", timeZone:"Europe/Paris" }).format(new Date(sheet.validation_deadline_at)) : "l’échéance convenue";
-  const messageBody = `Bonjour ${contact?.first_name ?? ""},\n\nNous avons corrigé votre demande concernant le planning de ${client?.name ?? "votre entreprise"}, semaine ${sheet?.iso_week ?? ""}.\n\nVous pouvez consulter la nouvelle version et la valider ici :\n${link.reviewUrl}\n\nMerci de nous confirmer que tout vous convient avant ${deadline}.\n\n${profile.full_name} — LYFTT`;
+/*
+ * Garde-fou côté serveur : la double confirmation se fait à l'écran, mais une
+ * action appelée sans elle — un bouton mal branché, un appel rejoué — ne doit
+ * rien valider à la place du client.
+ */
+const DOUBLE_CONFIRMATION = "double";
+
+/**
+ * Ce qui fait d'une correction une correction validée, sans le client.
+ *
+ * La trace est posée d'abord : si la suite échoue, on sait au moins qui a
+ * voulu valider. Puis le contenu passe « validé après correction » et le
+ * ticket se clôt — pas « validé par le client », qui serait faux. Le statut de
+ * la fiche se recalcule de lui-même à partir de ses contenus.
+ */
+async function completeStaffValidation(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  profile: ActionProfile,
+  input: { ticketId:string; sheetId:string; itemId:string|null; versionId:string|null; createdVersion:boolean },
+): Promise<InternalActionResult> {
+  const { data:sheet } = await admin.from("weekly_sheets").select("client_id").eq("id", input.sheetId).maybeSingle();
+  if (!sheet) return { ok:false, message:"Fiche introuvable." };
+
+  const now = new Date().toISOString();
+  const { error:traceError } = await admin.from("weekly_sheet_staff_validations").insert({
+    client_id:sheet.client_id as string,
+    weekly_sheet_id:input.sheetId,
+    weekly_sheet_item_id:input.itemId,
+    ticket_id:input.ticketId,
+    validated_by:profile.id,
+    validated_by_name:profile.full_name,
+    created_at:now,
+  });
+  if (traceError) return { ok:false, message:`Validation non enregistrée : ${traceError.message}` };
+
+  if (input.itemId) {
+    const { error:itemError } = await admin
+      .from("weekly_sheet_items")
+      .update({ approval_status:"approved_after_fix" })
+      .eq("id", input.itemId)
+      .eq("weekly_sheet_id", input.sheetId);
+    if (itemError) return { ok:false, message:`Contenu non validé : ${itemError.message}` };
+  }
+
+  const { error:ticketError } = await admin
+    .from("client_tickets")
+    .update({
+      status:"closed",
+      resolved_at:now,
+      closed_at:now,
+      ...(input.versionId ? { resolution_version_id:input.versionId } : {}),
+    })
+    .eq("id", input.ticketId);
+  if (ticketError) return { ok:false, message:`Ticket non clos : ${ticketError.message}` };
+
+  /*
+   * Une autre correction de la fiche attend encore d'être envoyée au client :
+   * la fiche reste « nouvelle version à envoyer », et ce qui partira est la
+   * version qu'on vient de créer — elle contient aussi cette autre correction.
+   * Posé après la clôture du ticket, dernier déclencheur du recalcul, pour ne
+   * pas être écrasé par lui.
+   */
+  const { data:pendingSend } = await admin
+    .from("client_tickets")
+    .select("id")
+    .eq("weekly_sheet_id", input.sheetId)
+    .eq("status", "new_version_generated");
+  if (pendingSend && pendingSend.length > 0) {
+    if (input.createdVersion && input.versionId) {
+      await admin.from("client_tickets")
+        .update({ resolution_version_id:input.versionId })
+        .in("id", pendingSend.map((row) => row.id as string));
+      await admin.from("client_review_links")
+        .update({ sheet_version_id:input.versionId, updated_at:now })
+        .eq("weekly_sheet_id", input.sheetId)
+        .is("revoked_at", null);
+    }
+    await admin.from("weekly_sheets").update({ status:"new_version_to_send" }).eq("id", input.sheetId);
+  }
+
+  // Le ticket garde lui aussi la trace, lisible sans ouvrir l'historique.
+  await admin.from("client_ticket_comments").insert({
+    ticket_id:input.ticketId,
+    author_profile_id:profile.id,
+    author_type:"staff",
+    author_name:profile.full_name,
+    visibility:"internal",
+    body:`Correction validée directement par ${profile.full_name}, sans renvoi au client.`,
+  });
 
   revalidatePath(`/retours/${input.ticketId}`);
-  return { ok:true, message:"Correction enregistrée. Le message client est prêt.", reviewUrl:link.reviewUrl, messageBody, whatsappUrl:whatsappLink(messageBody, contact?.phone ?? undefined) };
+  revalidatePath("/retours");
+  revalidatePath(`/fiches/${input.sheetId}`);
+  revalidatePath("/fiches");
+  revalidatePath("/historique");
+  revalidatePath("/");
+
+  // Le contenu est validé ; la fiche ne l'est que si tous ses autres contenus le sont déjà.
+  const { data:after } = await admin.from("weekly_sheets").select("status").eq("id", input.sheetId).maybeSingle();
+  return {
+    ok:true,
+    message: after?.status === "approved_by_client"
+      ? "Correction validée sans renvoi au client. La fiche est validée ; l’historique en garde la trace."
+      : "Correction validée sans renvoi au client. La fiche n’est pas encore validée : d’autres contenus attendent le client ou une correction.",
+  };
+}
+
+/*
+ * Valider un contenu à la place du client alors qu'une autre demande reste
+ * ouverte dessus l'enterrerait : le contenu passerait « validé », le client ne
+ * pourrait plus répondre, et la demande resterait sans suite. Même garde-fou
+ * que la validation côté client, qui refuse tant qu'une demande est ouverte.
+ */
+async function otherOpenTicketsOnItem(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  ticketId: string,
+  itemId: string | null,
+): Promise<string[] | null> {
+  if (!itemId) return [];
+  const { data, error } = await admin
+    .from("client_tickets")
+    .select("ticket_number")
+    .eq("weekly_sheet_item_id", itemId)
+    .neq("id", ticketId)
+    .not("status", "in", "(closed,cancelled,rejected,approved_by_client)");
+  if (error) return null;
+  return (data ?? []).map((row) => row.ticket_number as string);
+}
+
+function otherTicketsMessage(numbers: string[] | null): string | null {
+  if (!numbers) return "Vérification impossible. Réessayez.";
+  if (numbers.length === 0) return null;
+  return `D’autres demandes sont ouvertes sur ce contenu (${numbers.join(", ")}). Traitez-les avant de le valider sans renvoi.`;
+}
+
+/** Le ticket existe, est visible de la personne, et porte bien sur cette fiche. */
+async function staffValidationTarget(ticketId:string, sheetId:string) {
+  const supabase = await createSupabaseServerClient();
+  const { data:ticket } = await supabase
+    .from("client_tickets")
+    .select("id, status, weekly_sheet_id, weekly_sheet_item_id, resolution_version_id")
+    .eq("id", ticketId)
+    .maybeSingle();
+  if (!ticket || ticket.weekly_sheet_id !== sheetId) return null;
+  return ticket;
+}
+
+const staffValidationSchema = correctionSchema.extend({ confirmation:z.literal(DOUBLE_CONFIRMATION) });
+
+/** Enregistrer la correction et la valider aussitôt, sans renvoi au client. */
+export async function correctAndValidateWithoutClient(formData: FormData): Promise<InternalActionResult> {
+  const profile = await requireProfile();
+  if (!STAFF_VALIDATION_ROLES.includes(profile.role)) {
+    return { ok:false, message:"Seuls la direction, le chef de projet et les community managers peuvent valider à la place du client." };
+  }
+  const parsed = staffValidationSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { ok:false, message:"Validation non confirmée." };
+  const input = parsed.data;
+
+  const ticket = await staffValidationTarget(input.ticketId, input.sheetId);
+  if (!ticket) return { ok:false, message:"Ticket introuvable ou accès refusé." };
+  if (["closed", "approved_by_client", "cancelled", "rejected"].includes(ticket.status as string)) {
+    return { ok:false, message:"Ce ticket est déjà clos." };
+  }
+
+  // Le contenu validé est celui du ticket, pas celui que le formulaire désigne.
+  const itemId = (ticket.weekly_sheet_item_id as string | null) ?? null;
+  const admin = createSupabaseAdminClient();
+  const blocked = otherTicketsMessage(await otherOpenTicketsOnItem(admin, input.ticketId, itemId));
+  if (blocked) return { ok:false, message:blocked };
+
+  /*
+   * Si une autre correction de la fiche attend d'être envoyée, la version créée
+   * ici partira chez le client : elle ne doit pas se dire « sans renvoi ». La
+   * validation par l'agence reste tracée à part.
+   */
+  const { count:pendingCount } = await admin
+    .from("client_tickets")
+    .select("id", { count:"exact", head:true })
+    .eq("weekly_sheet_id", input.sheetId)
+    .eq("status", "new_version_generated")
+    .neq("id", input.ticketId);
+  const applied = await applyCorrection(
+    admin, profile, { ...input, itemId:itemId ?? "" },
+    pendingCount ? undefined : "validée par l’agence, sans renvoi au client",
+  );
+  if (!applied.ok) return applied;
+
+  return completeStaffValidation(admin, profile, {
+    ticketId:input.ticketId,
+    sheetId:input.sheetId,
+    itemId,
+    versionId:applied.versionId,
+    createdVersion:true,
+  });
+}
+
+/** Valider une correction déjà préparée, au lieu de l'envoyer au client. */
+export async function validateWithoutClient(formData: FormData): Promise<InternalActionResult> {
+  const profile = await requireProfile();
+  if (!STAFF_VALIDATION_ROLES.includes(profile.role)) {
+    return { ok:false, message:"Seuls la direction, le chef de projet et les community managers peuvent valider à la place du client." };
+  }
+  const parsed = z.object({
+    ticketId:z.string().uuid(),
+    sheetId:z.string().uuid(),
+    confirmation:z.literal(DOUBLE_CONFIRMATION),
+  }).safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { ok:false, message:"Validation non confirmée." };
+
+  const ticket = await staffValidationTarget(parsed.data.ticketId, parsed.data.sheetId);
+  if (!ticket) return { ok:false, message:"Ticket introuvable ou accès refusé." };
+  if (["closed", "approved_by_client", "cancelled", "rejected"].includes(ticket.status as string)) {
+    return { ok:false, message:"Ce ticket est déjà clos." };
+  }
+
+  const itemId = (ticket.weekly_sheet_item_id as string | null) ?? null;
+  const admin = createSupabaseAdminClient();
+  const blocked = otherTicketsMessage(await otherOpenTicketsOnItem(admin, parsed.data.ticketId, itemId));
+  if (blocked) return { ok:false, message:blocked };
+
+  return completeStaffValidation(admin, profile, {
+    ticketId:parsed.data.ticketId,
+    sheetId:parsed.data.sheetId,
+    itemId,
+    versionId:(ticket.resolution_version_id as string | null) ?? null,
+    createdVersion:false,
+  });
 }
 
 const correctionDispatchSchema = z.object({

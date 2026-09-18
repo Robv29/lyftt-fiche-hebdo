@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
-import { addTicketComment, prepareCorrectionForClient, resolveServiceRequest, sendCorrectionToClient, transitionTicket, type InternalActionResult } from "@/lib/internal/actions";
+import { addTicketComment, correctAndValidateWithoutClient, prepareCorrectionForClient, resolveServiceRequest, sendCorrectionToClient, transitionTicket, validateWithoutClient, type InternalActionResult } from "@/lib/internal/actions";
 import { isServiceRequestOverdue, serviceRequestAgeInDays, SERVICE_REQUEST_ALERT_DAYS } from "@/lib/domain/ticket-types";
 import { Icon } from "@/components/Icon";
 import { deliverTicketMedia } from "../../production/actions";
@@ -9,8 +9,10 @@ import { uploadMediaDirect } from "@/lib/media/direct-upload";
 
 interface Transition { to:string; label:string; requiresReason:boolean }
 
-export function TicketActions({ ticketId, ticketNumber, sheetId, clientId, item, category, status, clientName, transitions, serviceRequest, submittedAt, resolvedAt }: {
+export function TicketActions({ ticketId, ticketNumber, sheetId, clientId, item, category, status, clientName, transitions, serviceRequest, submittedAt, resolvedAt, staffValidation }: {
   ticketId:string; ticketNumber:string; sheetId:string; clientId:string; category:string; status:string; clientName:string;
+  /** Correction validée par l'agence, sans renvoi au client : qui et quand. */
+  staffValidation:{ byName:string; at:string } | null;
   item:{
     id:string; caption:string; hashtags:string[]; scheduledDate:string;
     /** Média actuellement rattaché : c'est celui que verra le client. */
@@ -29,6 +31,7 @@ export function TicketActions({ ticketId, ticketNumber, sheetId, clientId, item,
   const [linkCopied, setLinkCopied] = useState(false);
   const [reviewUrl, setReviewUrl] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
+  const correctionFormRef = useRef<HTMLFormElement>(null);
   const [dragging, setDragging] = useState(false);
   const [deposited, setDeposited] = useState(false);
   const prepared = Boolean(message) || ["new_version_generated", "sent_back_to_client", "approved_by_client", "closed"].includes(status);
@@ -38,6 +41,15 @@ export function TicketActions({ ticketId, ticketNumber, sheetId, clientId, item,
   const run = (action:()=>Promise<InternalActionResult>, onSuccess?:(result:InternalActionResult)=>void) => startTransition(async()=>{
     const result = await action(); setFeedback(result); if (result.ok) onSuccess?.(result);
   });
+
+  /*
+   * Valider à la place du client : deux confirmations, dont la seconde dit
+   * noir sur blanc ce que le geste engage. L'action serveur refuse d'agir sans
+   * elles, et l'historique gardera qui a validé.
+   */
+  const confirmStaffValidation = () =>
+    window.confirm(`Valider cette correction sans la renvoyer à ${clientName} ?`)
+    && window.confirm(`Seconde confirmation : ${clientName} ne reverra pas ce texte avant publication. Ce contenu sera marqué validé — la fiche ne l’est que si tous ses autres contenus le sont déjà — et l’historique indiquera qu’il l’a été par vous, sans renvoi au client.`);
 
   /*
    * Dépôt du fichier corrigé. Ouvert à tout le monde : le graphiste depuis la
@@ -121,7 +133,7 @@ export function TicketActions({ ticketId, ticketNumber, sheetId, clientId, item,
 
     {!sent && <section className="card p-4 sm:p-5">
       <div className="flex items-start gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#edf4ff] text-sm font-bold text-[#0759e6]">2</span><div><h2 className="font-semibold">Appliquer la correction</h2><p className="mt-1 text-xs text-ink-faint">Modifiez directement les éléments concernés. La nouvelle version et le lien client seront créés ensemble.</p></div></div>
-      <form action={(formData)=>{ formData.set("ticketId",ticketId); formData.set("sheetId",sheetId); if(item) formData.set("itemId",item.id); run(()=>prepareCorrectionForClient(formData),(result)=>{setMessage(result.messageBody ?? "");setReviewUrl(result.reviewUrl ?? "");}); }} className="mt-5 space-y-4">
+      <form action={(formData)=>{ formData.set("ticketId",ticketId); formData.set("sheetId",sheetId); if(item) formData.set("itemId",item.id); run(()=>prepareCorrectionForClient(formData),(result)=>{setMessage(result.messageBody ?? "");setReviewUrl(result.reviewUrl ?? "");}); }} ref={correctionFormRef} className="mt-5 space-y-4">
         {!item && <><input type="hidden" name="caption" value=""/><input type="hidden" name="hashtags" value=""/></>}
         {item && <>
           <div><label className="label" htmlFor="correctedCaption">Texte corrigé</label><textarea id="correctedCaption" name="caption" rows={7} className="field" defaultValue={item.caption}/></div>
@@ -168,7 +180,37 @@ export function TicketActions({ ticketId, ticketNumber, sheetId, clientId, item,
             <input id="mediaExternalUrl" name="mediaExternalUrl" type="url" className="field mt-2" placeholder="https://drive.google.com/…"/>
           </details>
         </div>}
-        <button type="submit" className="btn-primary w-full" disabled={pending}><Icon name="spark" className="h-4 w-4"/>{pending ? "Préparation…" : "Enregistrer et préparer l’envoi"}</button>
+        {/*
+          Deux issues à une correction : la renvoyer au client pour qu'il la
+          valide, ou la valider soi-même quand c'est une broutille — la même
+          correction est enregistrée dans les deux cas.
+        */}
+        <div className="grid gap-2 sm:grid-cols-2">
+          <button type="submit" className="btn-primary w-full" disabled={pending}><Icon name="send" className="h-4 w-4"/>{pending ? "Préparation…" : "Enregistrer et renvoyer au client"}</button>
+          {/*
+            Pas de soumission du formulaire : React le vide à chaque envoi, et
+            une confirmation annulée effaçait le texte corrigé. On lit les champs
+            sans soumettre ; le texte reste en place tant que rien n'est validé.
+          */}
+          <button
+            type="button"
+            className="btn-secondary w-full"
+            disabled={pending}
+            onClick={()=>{
+              const form = correctionFormRef.current;
+              if (!form || !form.reportValidity() || !confirmStaffValidation()) return;
+              const formData = new FormData(form);
+              formData.set("ticketId",ticketId); formData.set("sheetId",sheetId); if(item) formData.set("itemId",item.id);
+              formData.set("confirmation","double");
+              run(()=>correctAndValidateWithoutClient(formData));
+            }}
+          >
+            <Icon name="check" className="h-4 w-4"/>Enregistrer et valider sans renvoi
+          </button>
+        </div>
+        <p className="text-[11px] text-ink-faint">
+          « Valider sans renvoi » marque ce contenu validé à la place du client, après une double confirmation. L’historique le distingue d’une validation du client.
+        </p>
       </form>
     </section>}
 
@@ -186,10 +228,25 @@ export function TicketActions({ ticketId, ticketNumber, sheetId, clientId, item,
         <button type="button" className="btn-secondary" onClick={async()=>{await navigator.clipboard.writeText(message);setCopied(true);setLinkCopied(false)}}>{copied ? "Message copié" : "Copier le message"}</button>
         <button type="button" className="btn-primary" disabled={pending} onClick={()=>{ const formData=new FormData();formData.set("ticketId",ticketId);formData.set("sheetId",sheetId);formData.set("body",message);formData.set("recipientLabel",clientName);run(()=>sendCorrectionToClient(formData)) }}><Icon name="check" className="h-4 w-4"/>C&apos;est envoyé</button>
       </div>
+      {/* Correction déjà préparée : on peut encore choisir de la valider soi-même plutôt que de l'envoyer. */}
+      <button
+        type="button"
+        className="mt-3 text-xs font-semibold text-[#0759e6] hover:underline disabled:opacity-50"
+        disabled={pending}
+        onClick={()=>{
+          if (!confirmStaffValidation()) return;
+          const formData=new FormData(); formData.set("ticketId",ticketId); formData.set("sheetId",sheetId); formData.set("confirmation","double");
+          run(()=>validateWithoutClient(formData));
+        }}
+      >
+        Ne pas l’envoyer : valider sans renvoi au client
+      </button>
     </section>}
 
     {sent && !approved && <section className="rounded-2xl border border-[#cfe0ff] bg-[#f4f8ff] p-5"><p className="eyebrow text-[#0759e6]">Étape 4</p><h2 className="mt-1 font-semibold">En attente du client</h2><p className="mt-2 text-sm text-ink-soft">Le client a reçu la nouvelle version. Dès qu’il clique sur « Valider », le ticket et la fiche se mettent à jour automatiquement.</p></section>}
-    {approved && <section className="rounded-2xl border border-state-approved/30 bg-state-approved/5 p-5 text-state-approved"><Icon name="check" className="h-6 w-6"/><h2 className="mt-3 font-semibold">Correction validée</h2><p className="mt-1 text-sm">Le client a validé la nouvelle fiche. Ce ticket peut être archivé.</p></section>}
+    {approved && (staffValidation
+      ? <section className="rounded-2xl border border-[#f5d9a8] bg-[#fff8ec] p-5 text-[#8a5700]"><Icon name="check" className="h-6 w-6"/><h2 className="mt-3 font-semibold">Correction validée par l’agence</h2><p className="mt-1 text-sm">Validée par {staffValidation.byName} le {new Intl.DateTimeFormat("fr-FR", { dateStyle:"long", timeStyle:"short", timeZone:"Europe/Paris" }).format(new Date(staffValidation.at))}, sans renvoi au client. L’historique en garde la trace.</p></section>
+      : <section className="rounded-2xl border border-state-approved/30 bg-state-approved/5 p-5 text-state-approved"><Icon name="check" className="h-6 w-6"/><h2 className="mt-3 font-semibold">Correction validée</h2><p className="mt-1 text-sm">Le client a validé la nouvelle fiche. Ce ticket peut être archivé.</p></section>)}
 
     <details className="card p-4"><summary className="cursor-pointer text-sm font-semibold">Actions avancées et notes internes</summary><div className="mt-4 space-y-4 border-t pt-4">
       <div className="flex flex-col gap-2">{transitions.map((transition)=><button key={transition.to} type="button" className="btn-secondary justify-start" disabled={pending || transition.requiresReason} onClick={()=>{const data=new FormData();data.set("ticketId",ticketId);data.set("nextStatus",transition.to);run(()=>transitionTicket(data))}}>{transition.label}{transition.requiresReason && " — depuis la vue avancée"}</button>)}</div>

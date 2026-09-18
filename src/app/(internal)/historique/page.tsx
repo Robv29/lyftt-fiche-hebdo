@@ -65,7 +65,8 @@ export default async function HistoriquePage({ searchParams }: { searchParams: P
       .select(`id, iso_week, period_start, period_end, approved_at, validation_deadline_at,
         weekly_sheet_versions!weekly_sheet_versions_weekly_sheet_id_fkey ( version_number, sent_to_client_at ),
         client_message_dispatches ( template_type, sent_at ),
-        weekly_sheet_items ( published_at, scheduled_date, format, is_cancelled )`)
+        weekly_sheet_items ( published_at, scheduled_date, format, is_cancelled ),
+        weekly_sheet_staff_validations ( created_at, validated_by_name )`)
       .eq("client_id", selected.id)
       .lte("period_start", range.currentEnd)
       .order("period_start", { ascending: false })
@@ -158,6 +159,9 @@ export default async function HistoriquePage({ searchParams }: { searchParams: P
         formatLabel: MEDIA_FORMAT_LABELS[item.format],
       })),
     productionRequests: requestsForWeek(sheet.period_start as string, sheet.period_end as string),
+    // Corrections validées par l'agence : la chronologie les distingue des validations du client.
+    staffValidations: ((sheet.weekly_sheet_staff_validations ?? []) as unknown as { created_at: string; validated_by_name: string | null }[])
+      .map((validation) => ({ at: validation.created_at, byName: validation.validated_by_name })),
   }));
 
   /* Synthèse : ce qu'on retient d'un client avant d'entrer dans le détail. */

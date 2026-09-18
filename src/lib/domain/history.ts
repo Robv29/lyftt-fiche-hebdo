@@ -22,6 +22,7 @@ export type HistoryEventKind =
   | "production_requested"
   | "production_delivered"
   | "approved"
+  | "staff_validated"
   | "published";
 
 export interface HistoryEvent {
@@ -76,8 +77,39 @@ export const HISTORY_EVENT_LABELS: Record<HistoryEventKind, string> = {
   production_requested: "Commande en production",
   production_delivered: "Production livrée",
   approved: "Validation du client",
+  staff_validated: "Validée par l’agence, sans renvoi au client",
   published: "Publication",
 };
+
+/**
+ * Libellé de la validation finale quand c'est l'agence qui l'a bouclée.
+ *
+ * Une correction validée par l'agence fait passer la fiche « validée » sans
+ * que le client ait cliqué : l'écrire « Validation du client » serait faux, et
+ * c'est exactement ce que l'historique doit pouvoir prouver.
+ */
+export const AGENCY_APPROVAL_LABEL = "Fiche validée par l’agence";
+
+/** Validation par l'agence, sans renvoi au client. */
+export interface StaffValidationRow {
+  at: string;
+  byName: string | null;
+}
+
+/*
+ * Écart toléré entre la validation par l'agence et la validation de la fiche
+ * qu'elle déclenche : les deux s'écrivent dans la même action, à quelques
+ * instants d'intervalle.
+ */
+const AGENCY_APPROVAL_WINDOW_MS = 2 * 60 * 1000;
+
+/** La validation de la fiche vient de l'agence, pas du client. */
+function approvedByAgency(input: SheetHistoryInput): boolean {
+  if (!input.approvedAt) return false;
+  const approvedAt = new Date(input.approvedAt).getTime();
+  return (input.staffValidations ?? []).some((validation) =>
+    Math.abs(new Date(validation.at).getTime() - approvedAt) <= AGENCY_APPROVAL_WINDOW_MS);
+}
 
 /** Envois enregistrés pour une fiche, tels qu'ils sortent de la base. */
 export interface DispatchRow {
@@ -145,6 +177,8 @@ export interface SheetHistoryInput {
   publications: PublicationRow[];
   /** Commandes en production tombant dans la semaine, rattachées par leur date. */
   productionRequests?: ProductionRequestRow[];
+  /** Corrections validées par l'agence, sans renvoi au client. */
+  staffValidations?: StaffValidationRow[];
 }
 
 /**
@@ -238,11 +272,20 @@ export function buildWeekHistory(input: SheetHistoryInput, now: Date = new Date(
     }
   }
 
+  for (const validation of input.staffValidations ?? []) {
+    events.push({
+      at: validation.at,
+      kind: "staff_validated",
+      label: HISTORY_EVENT_LABELS.staff_validated,
+      detail: validation.byName ? `par ${validation.byName}` : null,
+    });
+  }
+
   if (input.approvedAt) {
     events.push({
       at: input.approvedAt,
       kind: "approved",
-      label: HISTORY_EVENT_LABELS.approved,
+      label: approvedByAgency(input) ? AGENCY_APPROVAL_LABEL : HISTORY_EVENT_LABELS.approved,
     });
   }
 
@@ -314,7 +357,8 @@ function assessWeek(input: SheetHistoryInput, now: Date): WeekAssessment {
   }
 
   if (input.deadlineAt) {
-    if (input.approvedAt && input.approvedAt > input.deadlineAt) {
+    // Validée par l'agence : le client n'a pas validé, le retard ne lui est pas imputable.
+    if (input.approvedAt && input.approvedAt > input.deadlineAt && !approvedByAgency(input)) {
       client.push("validation après l'échéance");
     }
     // Sans validation ni échéance dépassée, rien à reprocher : le client a
@@ -337,7 +381,8 @@ function assessWeek(input: SheetHistoryInput, now: Date): WeekAssessment {
 export function validationDelayHours(week: WeekHistory): number | null {
   const sent = week.events.find((event) => event.kind === "sheet_sent");
   const approved = week.events.find((event) => event.kind === "approved");
-  if (!sent || !approved) return null;
+  // Validée par l'agence : ce n'est pas un délai de réponse du client, il ne compte pas.
+  if (!sent || !approved || approved.label === AGENCY_APPROVAL_LABEL) return null;
   const delta = new Date(approved.at).getTime() - new Date(sent.at).getTime();
   return delta < 0 ? null : Math.round(delta / 3_600_000);
 }
@@ -356,7 +401,7 @@ export const HISTORY_FAMILIES: ReadonlyArray<{ key: HistoryFamily; label: string
   { key: "envois", label: "Envois et relances", kinds: ["sheet_sent", "sheet_resent", "reminder"] },
   { key: "retours", label: "Retours clients", kinds: ["client_feedback", "feedback_resolved", "special_request"] },
   { key: "production", label: "Production", kinds: ["production_requested", "production_delivered"] },
-  { key: "validations", label: "Validations", kinds: ["approved"] },
+  { key: "validations", label: "Validations", kinds: ["approved", "staff_validated"] },
   { key: "publications", label: "Publications", kinds: ["published"] },
 ];
 
