@@ -263,6 +263,23 @@ const CADENCE_FORMATS: Array<{ key: keyof MonthlyCadence; format: MediaFormat; o
   { key: "visual", format: "visuel", offset: 3 },
 ];
 
+/** Volume mensuel d'un format, borné : une saisie illisible vaut zéro. */
+function monthlyVolume(cadence: MonthlyCadence, key: keyof MonthlyCadence): number {
+  const volume = Math.trunc(Number(cadence[key] ?? 0));
+  return Number.isNaN(volume) ? 0 : Math.max(0, Math.min(31, volume));
+}
+
+/**
+ * Le client a-t-il vendu au moins une publication par mois ?
+ *
+ * Distingue un rythme vendu mais clairsemé (deux vidéos par mois : une semaine
+ * sur deux sans rien) d'un rythme absent ou entièrement à zéro, que
+ * `weeklyFormatsForCadence` traite à part.
+ */
+export function hasMonthlyCadence(cadence: MonthlyCadence): boolean {
+  return CADENCE_FORMATS.some((entry) => monthlyVolume(cadence, entry.key) > 0);
+}
+
 /**
  * Répartit un volume mensuel sur quatre semaines, sans changer le contrat.
  *
@@ -271,12 +288,30 @@ const CADENCE_FORMATS: Array<{ key: keyof MonthlyCadence; format: MediaFormat; o
  * vides. La comparaison porte donc sur le reste multiplié par le rang de la
  * semaine, ce qui distribue les semaines retenues au lieu de les tasser en
  * début de cycle.
+ *
+ * La parité suit le numéro de semaine ISO. Une base continue (semaines depuis
+ * une date fixe) inverserait les semaines avec et sans publication de tous les
+ * clients. Limite connue : une année à 53 semaines enchaîne S53 et S1 sur la
+ * même parité.
+ *
+ * **Semaine creuse : liste vide.** Un rythme vendu clairsemé ne publie rien
+ * certaines semaines — c'est ce que le client a acheté. Renvoyer une photo
+ * « par défaut » ces semaines-là faisait proposer une publication chaque
+ * semaine à E-MOVE, vendu à deux vidéos par mois : le planning, le tableau de
+ * bord et la production réclamaient une fiche une semaine sur deux pour rien.
+ *
+ * **Rythme absent ou entièrement à zéro : une photo, comme avant.** Ce cas
+ * n'est pas une semaine creuse mais un réglage manquant — réglages illisibles
+ * (qui donnent `{}`), client antérieur au rythme, formulaire laissé à zéro. Ne
+ * rien proposer ferait disparaître ce client du planning, sans signal, pour
+ * toutes les semaines de son contrat : un oubli invisible coûte plus cher qu'une
+ * photo proposée que le community manager peut ignorer ou corriger.
  */
 export function weeklyFormatsForCadence(cadence: MonthlyCadence, isoWeek: number): MediaFormat[] {
   const formats: MediaFormat[] = [];
 
   for (const entry of CADENCE_FORMATS) {
-    const monthly = Math.max(0, Math.min(31, Math.trunc(Number(cadence[entry.key] ?? 0))));
+    const monthly = monthlyVolume(cadence, entry.key);
     const base = Math.floor(monthly / 4);
     const remainder = monthly % 4;
     // Décalage par format : deux prestations rares ne tombent pas le même jour.
@@ -285,7 +320,20 @@ export function weeklyFormatsForCadence(cadence: MonthlyCadence, isoWeek: number
     formats.push(...Array.from({ length: base + extra }, () => entry.format));
   }
 
-  return formats.length ? formats : ["photo"];
+  if (formats.length) return formats;
+  return hasMonthlyCadence(cadence) ? [] : ["photo"];
+}
+
+/**
+ * Le rythme vendu prévoit-il une publication cette semaine ?
+ *
+ * Faux seulement pour une semaine creuse d'un rythme clairsemé. Toute
+ * proposition de fiche ou de publication passe par cette règle, pour que le
+ * planning, le tableau de bord, la production et la création de fiche disent
+ * la même chose.
+ */
+export function expectsContentThisWeek(cadence: MonthlyCadence, isoWeek: number): boolean {
+  return weeklyFormatsForCadence(cadence, isoWeek).length > 0;
 }
 
 function hashSeed(value: string): number {
@@ -475,33 +523,43 @@ export function reconcileWeekItems(
   existing: readonly ExistingItem[],
   expectedFormats: readonly MediaFormat[],
 ): { toAdd: MediaFormat[]; toRemove: string[]; keptFilled: number } {
-  const needed = new Map<MediaFormat, number>();
-  for (const format of expectedFormats) needed.set(format, (needed.get(format) ?? 0) + 1);
+  /*
+   * On compare par famille, pas par format exact : un reels répond à une vidéo
+   * vendue, un carrousel à un visuel. Comparer au format près ajoutait une
+   * vidéo vide à côté d'un reels déjà rédigé, et la fiche retombait incomplète.
+   */
+  const needed = new Map<ContentBucket, MediaFormat[]>();
+  for (const format of expectedFormats) {
+    const bucket = bucketForFormat(format);
+    needed.set(bucket, [...(needed.get(bucket) ?? []), format]);
+  }
 
   const toAdd: MediaFormat[] = [];
   const toRemove: string[] = [];
   let keptFilled = 0;
 
-  const byFormat = new Map<MediaFormat, ExistingItem[]>();
+  const byBucket = new Map<ContentBucket, ExistingItem[]>();
   for (const item of existing) {
-    const list = byFormat.get(item.format) ?? [];
+    const bucket = bucketForFormat(item.format);
+    const list = byBucket.get(bucket) ?? [];
     list.push(item);
-    byFormat.set(item.format, list);
+    byBucket.set(bucket, list);
   }
 
-  const formats = new Set<MediaFormat>([...needed.keys(), ...byFormat.keys()]);
+  const buckets = new Set<ContentBucket>([...needed.keys(), ...byBucket.keys()]);
 
-  for (const format of formats) {
-    const want = needed.get(format) ?? 0;
+  for (const bucket of buckets) {
+    const wanted = needed.get(bucket) ?? [];
+    const want = wanted.length;
     /*
      * Les contenus déjà travaillés passent en tête : ce sont eux qu'on garde.
      * Le surplus se prend donc à la fin, sur les vides — l'inverse effacerait
      * un texte ou un média pour conserver une coquille vide.
      */
-    const present = [...(byFormat.get(format) ?? [])].sort((a, b) => Number(b.filled) - Number(a.filled));
+    const present = [...(byBucket.get(bucket) ?? [])].sort((a, b) => Number(b.filled) - Number(a.filled));
 
     if (present.length < want) {
-      for (let i = present.length; i < want; i += 1) toAdd.push(format);
+      for (let i = present.length; i < want; i += 1) toAdd.push(wanted[i]);
       continue;
     }
 
@@ -513,4 +571,26 @@ export function reconcileWeekItems(
   }
 
   return { toAdd, toRemove, keptFilled };
+}
+
+export type DraftReconciliation =
+  | { kind: "off_week" }
+  | ({ kind: "reconcile" } & ReturnType<typeof reconcileWeekItems>);
+
+/**
+ * Ce que la replanification fait des contenus d'un brouillon.
+ *
+ * **Semaine creuse : on ne touche à rien.** Passer une liste vide à
+ * `reconcileWeekItems` classerait chaque contenu en surplus, et les contenus
+ * encore vides seraient supprimés sans retour — une fiche créée exprès une
+ * semaine creuse (on publie quand même) se viderait au premier enregistrement
+ * de la fiche client. Si rien ne doit sortir cette semaine-là, c'est à
+ * l'utilisateur de supprimer la fiche, pas à un recalcul silencieux.
+ */
+export function draftReconciliation(
+  existing: readonly ExistingItem[],
+  expectedFormats: readonly MediaFormat[],
+): DraftReconciliation {
+  if (expectedFormats.length === 0) return { kind: "off_week" };
+  return { kind: "reconcile", ...reconcileWeekItems(existing, expectedFormats) };
 }

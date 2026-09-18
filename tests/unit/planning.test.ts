@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  draftReconciliation,
+  expectsContentThisWeek,
+  hasMonthlyCadence,
   isActionableOverdue,
   reconcileWeekItems,
   rescheduleItems,
@@ -141,6 +144,93 @@ describe("étalement du rythme mensuel", () => {
     for (const week of [33, 34, 35, 36]) {
       expect(weeklyFormatsForCadence({ video: 4 }, week).filter((f) => f === "video")).toHaveLength(1);
     }
+  });
+});
+
+/*
+ * Signalement : « E-MOVE, ça me propose de publier alors que c'est une semaine
+ * sur deux ». Deux vidéos par mois, rien d'autre : une semaine creuse renvoyait
+ * une photo « par défaut », si bien qu'une publication était proposée chaque
+ * semaine.
+ */
+describe("semaine creuse d'un rythme clairsemé", () => {
+  const emove = { photo: 0, video: 2, story: 0, visual: 0 };
+
+  it("donne une vidéo les semaines ISO impaires", () => {
+    for (const week of [35, 37, 39, 41, 49]) {
+      expect(weeklyFormatsForCadence(emove, week)).toEqual(["video"]);
+      expect(expectsContentThisWeek(emove, week)).toBe(true);
+    }
+  });
+
+  it("ne propose rien les semaines paires, pas même une photo", () => {
+    for (const week of [36, 38, 40, 48]) {
+      expect(weeklyFormatsForCadence(emove, week)).toEqual([]);
+      expect(expectsContentThisWeek(emove, week)).toBe(false);
+    }
+  });
+
+  it("garde deux vidéos sur quatre semaines consécutives", () => {
+    const month = [37, 38, 39, 40].flatMap((week) => weeklyFormatsForCadence(emove, week));
+    expect(month).toEqual(["video", "video"]);
+  });
+
+  it("vaut aussi pour une prestation mensuelle unique : trois semaines creuses sur quatre", () => {
+    const weeks = [33, 34, 35, 36].map((week) => weeklyFormatsForCadence({ visual: 1 }, week));
+    expect(weeks.filter((formats) => formats.length === 0)).toHaveLength(3);
+    expect(weeks.flat()).toEqual(["visuel"]);
+  });
+
+  /*
+   * Rythme absent ou tout à zéro : réglage manquant, pas semaine creuse. Le
+   * client resterait sinon invisible du planning pour toute la durée de son
+   * contrat ; une photo proposée se remarque et se corrige.
+   */
+  it("garde une photo de repli pour un rythme absent", () => {
+    expect(weeklyFormatsForCadence({}, 38)).toEqual(["photo"]);
+    expect(weeklyFormatsForCadence({}, 39)).toEqual(["photo"]);
+    expect(hasMonthlyCadence({})).toBe(false);
+  });
+
+  it("garde une photo de repli pour un rythme entièrement à zéro", () => {
+    const zero = { photo: 0, video: 0, story: 0, visual: 0 };
+    expect(weeklyFormatsForCadence(zero, 38)).toEqual(["photo"]);
+    expect(expectsContentThisWeek(zero, 38)).toBe(true);
+    expect(hasMonthlyCadence(zero)).toBe(false);
+  });
+
+  it("traite une saisie illisible comme zéro", () => {
+    const garbage = { photo: Number.NaN, video: -3 } as const;
+    expect(hasMonthlyCadence(garbage)).toBe(false);
+    expect(weeklyFormatsForCadence(garbage, 38)).toEqual(["photo"]);
+  });
+
+  it("reconnaît un rythme vendu, même clairsemé", () => {
+    expect(hasMonthlyCadence(emove)).toBe(true);
+    expect(hasMonthlyCadence({ story: 1 })).toBe(true);
+  });
+});
+
+describe("replanification d'un brouillon en semaine creuse", () => {
+  it("ne retire ni n'ajoute rien, même un contenu vide", () => {
+    const result = draftReconciliation([
+      { id: "rempli", format: "reels", filled: true },
+      { id: "vide", format: "photo", filled: false },
+    ], []);
+    expect(result).toEqual({ kind: "off_week" });
+  });
+
+  it("réconcilie normalement une semaine avec publication", () => {
+    const result = draftReconciliation([
+      { id: "vide", format: "photo", filled: false },
+    ], ["video"]);
+    expect(result).toEqual({ kind: "reconcile", toAdd: ["video"], toRemove: ["vide"], keptFilled: 0 });
+  });
+
+  it("n'insère plus de photo vide dans le brouillon S38 d'E-MOVE", () => {
+    const expected = weeklyFormatsForCadence({ photo: 0, video: 2, story: 0, visual: 0 }, 38);
+    expect(draftReconciliation([{ id: "reels", format: "reels", filled: true }], expected))
+      .toEqual({ kind: "off_week" });
   });
 });
 
@@ -374,6 +464,11 @@ describe("réconciliation des contenus d'une fiche", () => {
     const result = reconcileWeekItems([rempli("plein", "photo"), vide("creux", "photo")], ["photo"]);
     expect(result.toRemove).toEqual(["creux"]);
     expect(result.keptFilled).toBe(0);
+  });
+
+  it("compte un reels comme la vidéo vendue, un carrousel comme le visuel", () => {
+    const result = reconcileWeekItems([rempli("r", "reels"), vide("c", "carrousel")], ["video", "visuel"]);
+    expect(result).toEqual({ toAdd: [], toRemove: [], keptFilled: 0 });
   });
 
   it("retire un format qui n'est plus vendu", () => {

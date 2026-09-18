@@ -8,6 +8,11 @@ export interface OverviewRow {
   clientId: string;
   clientName: string;
   hasSheet: boolean;
+  /**
+   * Semaine creuse du rythme vendu, sans fiche : rien n'est attendu. Une
+   * fiche créée quand même une semaine creuse s'affiche normalement.
+   */
+  offWeek: boolean;
   topic: string | null;
   /** Fichiers déposés et textes rédigés, tout à la fois. */
   done: boolean;
@@ -68,13 +73,20 @@ export function ProductionOverview({ rows, weekLabel, weekOffset, maxWeekOffset,
   const filesDone = rows.filter((row) => row.deposit && row.deposit.filesMissing === 0).length;
   const visualsDone = rows.filter((row) => row.visuals?.state === "validated").length;
   const textsDone = rows.filter((row) => row.deposit && row.deposit.textsMissing === 0).length;
+  /*
+   * Une semaine sans publication ne compte pas dans « sur N clients » : elle
+   * ferait baisser les taux sans qu'il y ait rien à livrer.
+   */
+  const offWeek = rows.filter((row) => row.offWeek).length;
+  const expected = rows.length - offWeek;
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-xs text-ink-faint">
-          {weekLabel} · sur {rows.length} client{rows.length > 1 ? "s" : ""} : fichiers déposés {filesDone} ·
+          {weekLabel} · sur {expected} client{expected > 1 ? "s" : ""} : fichiers déposés {filesDone} ·
           visuels validés {visualsDone} · textes rédigés {textsDone}.
+          {offWeek > 0 && ` ${offWeek} sans publication cette semaine.`}
         </p>
         <div className="flex items-center gap-1.5">
           {weekOffset > 0 ? (
@@ -122,7 +134,9 @@ export function ProductionOverview({ rows, weekLabel, weekOffset, maxWeekOffset,
                       </td>
                     ))}
                     <td className="px-4 py-3 text-right">
-                      {!row.hasSheet || !row.deposit || !row.sheetId || !row.visuals
+                      {row.offWeek
+                        ? <span className="badge bg-canvas text-ink-faint" title="Le rythme vendu ne prévoit aucune publication cette semaine.">Pas de publication</span>
+                        : !row.hasSheet || !row.deposit || !row.sheetId || !row.visuals
                         ? <span className="badge bg-state-changes/10 text-state-changes">Fiche à créer</span>
                         : (
                           <span className="flex flex-col items-end gap-1">

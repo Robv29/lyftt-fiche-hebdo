@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { createSheet, type SheetActionResult } from "./actions";
 import { isoWeekStart } from "@/lib/domain/deadline";
 import {
+  expectsContentThisWeek,
   isoWeekIdentity,
   selectHashtags,
   publicationDatesForWeek,
@@ -131,6 +132,14 @@ const MEDIA_STATUS_LABEL: Record<DraftItem["mediaStatus"], string> = {
   erreur: "Échec",
 };
 
+/**
+ * Publications proposées d'office pour la semaine.
+ *
+ * Semaine creuse du rythme vendu : aucune. Proposer une photo « par défaut »
+ * faisait publier chaque semaine un client vendu à deux vidéos par mois.
+ * L'écran le dit, et « Ajouter une publication » reste là pour publier quand
+ * même.
+ */
 function createDraftItems(client: ClientPreset, isoYear: number, isoWeek: number): DraftItem[] {
   const formats = weeklyFormatsForCadence(client.monthlyCadence, isoWeek);
   /*
@@ -321,6 +330,8 @@ export function SheetBuilder({
   );
   const [items, setItems] = useState<DraftItem[]>(() => createDraftItems(initialClient, isoYear, isoWeek));
 
+  // Même règle que le planning : le rythme vendu ne prévoit rien cette semaine.
+  const offWeek = !expectsContentThisWeek(activeClient.monthlyCadence, isoWeek);
   const monday = useMemo(() => isoWeekStart(isoYear, isoWeek), [isoYear, isoWeek]);
   const dayOffset = (offset: number) => {
     const date = new Date(monday);
@@ -496,7 +507,8 @@ export function SheetBuilder({
     const client = clients.find((candidate) => candidate.id === selectedClientId) ?? initialClient;
     setItems((currentItems) => [...currentItems, {
       key: `manual-${Date.now()}`,
-      scheduledDate: "",
+      // Sur un jour de publication du client, pas le lundi par défaut — même une semaine creuse.
+      scheduledDate: publicationDatesForWeek(currentItems.length + 1, client.publicationWeekdays, isoWeekStart(isoYear, isoWeek)).at(-1) ?? "",
       scheduledTime: "18:00",
       format: "photo",
       caption: signatureBlock(client.postSignature),
@@ -586,6 +598,21 @@ export function SheetBuilder({
       </fieldset>
 
       <section className="space-y-4">
+        {offWeek && (
+          <div role="status" className="card border-[#cdd5df] bg-canvas p-4 sm:p-5">
+            <p className="flex items-center gap-2 text-sm font-semibold">
+              <Icon name="calendar" className="h-4 w-4 text-ink-faint"/>
+              Pas de publication prévue cette semaine au rythme vendu
+            </p>
+            <p className="mt-1 text-xs leading-relaxed text-ink-faint">
+              {items.length === 0
+                ? `Le rythme de ${activeClient.name} ne prévoit rien la semaine ${isoWeek}. Ajoutez une publication si vous voulez publier quand même.`
+                : "Les publications ajoutées ici viennent en plus du rythme vendu. Retirez-les si rien ne doit sortir cette semaine."}
+            </p>
+          </div>
+        )}
+
+        {items.length > 0 && (
         <div className="card sticky top-3 z-10 overflow-hidden p-4 shadow-[0_8px_30px_rgba(31,41,55,.08)] sm:p-5">
           <div className="flex items-center justify-between gap-3">
             <div><p className="eyebrow">Avancement</p><h2 className="mt-1 font-semibold">Préparation de la semaine prochaine</h2></div>
@@ -596,6 +623,7 @@ export function SheetBuilder({
           </div>
           <p className="mt-2 text-xs text-ink-faint">Pour atteindre 100 %, chaque contenu doit avoir son texte, ses hashtags et son média.</p>
         </div>
+        )}
 
         <div className="space-y-3">
           {resolvedItems.map((item, index) => {
@@ -618,7 +646,8 @@ export function SheetBuilder({
                     >
                       {previewing[item.key] ? "Masquer l’aperçu" : "Aperçu"}
                     </button>
-                    {items.length > 1 && <button type="button" className="min-h-11 px-2 text-xs text-state-changes hover:underline" onClick={() => setItems((currentItems) => currentItems.filter((candidate) => candidate.key !== item.key))}>Retirer</button>}
+                    {/* Semaine creuse : la seule publication, ajoutée à la main, doit pouvoir repartir. */}
+                    {(items.length > 1 || offWeek) && <button type="button" className="min-h-11 px-2 text-xs text-state-changes hover:underline" onClick={() => setItems((currentItems) => currentItems.filter((candidate) => candidate.key !== item.key))}>Retirer</button>}
                   </div>
                 </div>
 
@@ -670,7 +699,7 @@ export function SheetBuilder({
 
       <div className="grid gap-2 sm:flex sm:flex-wrap">
         <button type="button" className="btn-secondary" onClick={addPublication}><Icon name="plus" className="h-4 w-4"/>Ajouter une publication</button>
-        <button type="submit" className="btn-primary" disabled={pending || selectedNetworks.length === 0}>{pending ? "Enregistrement…" : progress === 100 ? "Enregistrer la fiche complète" : "Enregistrer et continuer plus tard"}<Icon name="arrow" className="h-4 w-4"/></button>
+        <button type="submit" className="btn-primary" disabled={pending || selectedNetworks.length === 0 || items.length === 0}>{pending ? "Enregistrement…" : progress === 100 ? "Enregistrer la fiche complète" : "Enregistrer et continuer plus tard"}<Icon name="arrow" className="h-4 w-4"/></button>
       </div>
     </form>
   );

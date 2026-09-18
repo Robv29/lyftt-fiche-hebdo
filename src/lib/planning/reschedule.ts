@@ -2,7 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  reconcileWeekItems,
+  draftReconciliation,
   rescheduleItems,
   weeklyFormatsForCadence,
   type MonthlyCadence,
@@ -24,22 +24,31 @@ import type { MediaFormat } from "@/lib/domain/types";
  * Renvoie ce qui a bougé, pour que l'appelant puisse le dire — et aussi ce qui
  * n'a **pas** bougé : les semaines déjà parties chez le client gardent leur
  * compte, et le taire donnait l'impression que changer le rythme ne servait à
- * rien.
+ * rien. Même chose pour un brouillon posé sur une semaine creuse du rythme
+ * (`offWeekDrafts`) : il est laissé tel quel, et c'est à l'utilisateur de le
+ * supprimer si rien ne doit sortir.
  */
 export async function rescheduleClientDrafts(
   supabase: SupabaseClient,
   clientId: string,
   weekdays: readonly number[],
   cadence?: MonthlyCadence,
-): Promise<{ moved: number; added: number; removed: number; keptFilled: number; lockedWeeks: number[] }> {
-  const nothing = { moved: 0, added: 0, removed: 0, keptFilled: 0, lockedWeeks: [] as number[] };
+): Promise<{ moved: number; added: number; removed: number; keptFilled: number; lockedWeeks: number[]; offWeekDrafts: number[] }> {
+  const nothing = { moved: 0, added: 0, removed: 0, keptFilled: 0, lockedWeeks: [] as number[], offWeekDrafts: [] as number[] };
   if (weekdays.length === 0) return nothing;
 
+  /*
+   * Semaines passées exclues, comme pour `frozenWeeksOffCadence` : une semaine
+   * publiée ne se rattrape pas, et y ajouter ou retirer des contenus
+   * réécrirait l'historique sans rien changer à ce qui est sorti.
+   */
+  const today = new Date().toISOString().slice(0, 10);
   const { data: sheets, error } = await supabase
     .from("weekly_sheets")
     .select("id, iso_week, period_start, weekly_sheet_items ( id, format, caption, hashtags, media_asset_id, media_external_url, position, scheduled_date, created_at, is_cancelled )")
     .eq("client_id", clientId)
-    .eq("status", "draft");
+    .eq("status", "draft")
+    .gte("period_end", today);
 
   if (error) {
     console.error("[replanification] lecture impossible", error.message);
@@ -50,7 +59,8 @@ export async function rescheduleClientDrafts(
   let added = 0;
   let removed = 0;
   let keptFilled = 0;
-  const lockedWeeks = await frozenWeeksOffCadence(supabase, clientId, cadence);
+  const offWeekDrafts: number[] = [];
+  const lockedWeeks = await frozenWeeksOffCadence(supabase, clientId, cadence, today);
 
   for (const sheet of sheets ?? []) {
     const raw = (sheet.weekly_sheet_items ?? []) as unknown as {
@@ -64,9 +74,9 @@ export async function rescheduleClientDrafts(
      * Sans cela, vendre deux vidéos de plus laissait la fiche à l'ancien
      * compte.
      */
-    if (cadence) {
-      const active = raw.filter((item) => !item.is_cancelled);
-      const { toAdd, toRemove, keptFilled: kept } = reconcileWeekItems(
+    const active = raw.filter((item) => !item.is_cancelled);
+    const reconciliation = cadence
+      ? draftReconciliation(
         active.map((item) => ({
           id: item.id,
           format: item.format,
@@ -76,7 +86,20 @@ export async function rescheduleClientDrafts(
             || Boolean(item.media_asset_id || item.media_external_url),
         })),
         weeklyFormatsForCadence(cadence, sheet.iso_week as number),
-      );
+      )
+      : null;
+
+    /*
+     * Semaine creuse du rythme : rien n'est ajouté ni retiré. Le brouillon a
+     * été créé exprès — on publie quand même — ou par erreur ; seul un humain
+     * peut trancher. On le signale, et les dates sont recalées comme ailleurs.
+     */
+    if (reconciliation?.kind === "off_week" && active.length > 0) {
+      offWeekDrafts.push(sheet.iso_week as number);
+    }
+
+    if (reconciliation?.kind === "reconcile") {
+      const { toAdd, toRemove, keptFilled: kept } = reconciliation;
       keptFilled += kept;
 
       if (toRemove.length > 0) {
@@ -138,7 +161,7 @@ export async function rescheduleClientDrafts(
     }
   }
 
-  return { moved, added, removed, keptFilled, lockedWeeks };
+  return { moved, added, removed, keptFilled, lockedWeeks, offWeekDrafts: offWeekDrafts.sort((a, b) => a - b) };
 }
 
 /**
@@ -150,16 +173,18 @@ export async function rescheduleClientDrafts(
  * semaine en cours inchangée ressemble à une panne.
  *
  * Seules les semaines encore à venir sont regardées : une semaine publiée ne
- * se rattrape pas.
+ * se rattrape pas. Une semaine creuse du rythme non plus : une fiche envoyée
+ * cette semaine-là est un ajout voulu, pas un compte à corriger — la signaler
+ * à chaque enregistrement ne serait que du bruit.
  */
 async function frozenWeeksOffCadence(
   supabase: SupabaseClient,
   clientId: string,
   cadence: MonthlyCadence | undefined,
+  today: string,
 ): Promise<number[]> {
   if (!cadence) return [];
 
-  const today = new Date().toISOString().slice(0, 10);
   const { data, error } = await supabase
     .from("weekly_sheets")
     .select("iso_week, period_end, weekly_sheet_items ( id, format, is_cancelled )")
@@ -178,14 +203,15 @@ async function frozenWeeksOffCadence(
       id: string; format: MediaFormat; is_cancelled: boolean;
     }[]).filter((item) => !item.is_cancelled);
 
-    const { toAdd, keptFilled } = reconcileWeekItems(
+    const reconciliation = draftReconciliation(
       // Tout est déclaré rempli : on ne cherche pas à retirer quoi que ce soit
       // ici, seulement à savoir si le compte diverge. Le surplus ressort donc
       // en « conservé » plutôt qu'en « à retirer ».
       items.map((item) => ({ id: item.id, format: item.format, filled: true })),
       weeklyFormatsForCadence(cadence, sheet.iso_week as number),
     );
-    if (toAdd.length > 0 || keptFilled > 0) weeks.push(sheet.iso_week as number);
+    if (reconciliation.kind !== "reconcile") continue;
+    if (reconciliation.toAdd.length > 0 || reconciliation.keptFilled > 0) weeks.push(sheet.iso_week as number);
   }
 
   return weeks.sort((a, b) => a - b);

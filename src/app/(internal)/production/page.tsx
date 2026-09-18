@@ -7,8 +7,9 @@ import { deadlineState, formatPeriod } from "@/lib/domain/deadline";
 import { ticketPriorityLabel, ticketStatusLabel, type MediaFormat } from "@/lib/domain/types";
 import { PageHeader } from "@/components/ui";
 import { resolveMediaUrl } from "@/lib/media/signed-url";
-import { clientLifecycleForWeek, todayInParis, parseClientKind } from "@/lib/domain/client-lifecycle";
-import { contentBucketProgress, depositSummary, isoWeekIdentity, planningWeekRange, sheetCompletion, visualsValidationState, weeklyFormatsForCadence, type BucketProgress, type MonthlyCadence } from "@/lib/domain/planning";
+import { todayInParis } from "@/lib/domain/client-lifecycle";
+import { contentBucketProgress, depositSummary, isoWeekIdentity, planningWeekRange, sheetCompletion, visualsValidationState, type BucketProgress } from "@/lib/domain/planning";
+import { weekExpectation } from "@/lib/domain/week-expectation";
 import { bucketForFormat, CONTENT_BUCKETS, type ContentBucket } from "@/lib/domain/content-buckets";
 import { ProductionRequests, type ProductionRequestRow } from "./ProductionRequests";
 import { TicketCorrections, type TicketCorrectionRow } from "./TicketCorrections";
@@ -168,30 +169,28 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
   for (const sheet of currentSheets) if (sheet.clients?.id) sheetByClientId.set(sheet.clients.id, sheet);
 
   /*
-   * Sans fiche créée, une famille de contenu comprise dans le forfait du
-   * client reste « attendue » (rond vide) plutôt que de se confondre avec une
-   * famille qui ne fait simplement pas partie de sa formule (tiret).
+   * Ce que le rythme vendu attend de chaque client cette semaine — même règle
+   * que le planning et le tableau de bord. Hors gestion : la ligne disparaît.
    */
-  const expectedBucketsForClient = (notes: unknown): Set<ContentBucket> => {
-    let settings: { monthlyCadence?: MonthlyCadence } = {};
-    try { settings = typeof notes === "string" ? JSON.parse(notes) : {}; } catch { settings = {}; }
-    const formats = weeklyFormatsForCadence(settings.monthlyCadence ?? {}, currentIso.week);
-    return new Set(formats.map(bucketForFormat));
-  };
+  const expectations = new Map((overviewClients ?? []).map((client) =>
+    [client.id, weekExpectation(client, weekRange.currentStart)]));
 
   const overviewRows: OverviewRow[] = (overviewClients ?? [])
-    .filter((client) => clientLifecycleForWeek({
-      isActive: client.is_active,
-      kind: parseClientKind(client.client_kind),
-      contractStartDate: client.contract_start_date,
-      contractEndDate: client.contract_end_date,
-      pauseStartDate: client.pause_start_date,
-      pauseEndDate: client.pause_end_date,
-    }, weekRange.currentStart).canProduce)
+    .filter((client) => expectations.get(client.id)?.kind !== "off_contract")
     .map((client): OverviewRow => {
       const sheet = sheetByClientId.get(client.id);
       if (!sheet) {
-        const expected = expectedBucketsForClient(client.notes);
+        const expectation = expectations.get(client.id);
+        /*
+         * Sans fiche créée, une famille de contenu comprise dans le forfait du
+         * client reste « attendue » (rond vide) plutôt que de se confondre avec
+         * une famille qui ne fait simplement pas partie de sa formule (tiret).
+         *
+         * Semaine creuse du rythme vendu (deux vidéos par mois : une semaine
+         * sur deux) : rien n'est attendu, et la ligne le dit au lieu de
+         * réclamer une fiche à créer.
+         */
+        const expected = new Set(expectation?.kind === "publish" ? expectation.formats.map(bucketForFormat) : []);
         const progress = Object.fromEntries(
           CONTENT_BUCKETS.map((bucket) => {
             const status = expected.has(bucket.key) ? "expected" : "none";
@@ -200,6 +199,7 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
         ) as Record<ContentBucket, BucketProgress>;
         return {
           clientId: client.id, clientName: client.name, hasSheet: false, topic: null, done: false,
+          offWeek: expectation?.kind === "off_week",
           href: `/fiches/nouvelle?client=${client.id}&isoYear=${currentIso.year}&isoWeek=${currentIso.week}`,
           progress,
           deposit: null,
@@ -221,6 +221,7 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
         clientId: client.id,
         clientName: client.name,
         hasSheet: true,
+        offWeek: false,
         topic: sheet.topic,
         // Fait : tout est là, et les visuels ont été regardés — quand il y en a.
         done: sheetCompletion(items).percentage === 100 && visualsState !== "to_validate",
@@ -240,8 +241,10 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
       /*
        * D'abord les fiches à créer, puis les fichiers à déposer — ce qui bloque
        * la production —, puis les textes seuls à rédiger, enfin ce qui est fait.
+       * Les semaines sans publication ferment la liste : rien à y faire.
        */
       const rank = (row: OverviewRow) => {
+        if (row.offWeek) return 5;
         if (!row.hasSheet || !row.deposit) return 0;
         if (row.deposit.filesMissing > 0) return 1;
         if (row.visuals?.state === "to_validate") return 2;

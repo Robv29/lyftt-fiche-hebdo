@@ -823,6 +823,14 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
       resync.lockedWeeks.length > 0
         ? `Semaine${resync.lockedWeeks.length > 1 ? "s" : ""} ${resync.lockedWeeks.join(", ")} : fiche déjà envoyée au client, le nombre de publications n'a pas été touché.`
         : null,
+      /*
+       * Un brouillon posé sur une semaine creuse du rythme n'est ni vidé ni
+       * complété : il a pu être créé exprès. Le dire laisse l'utilisateur
+       * trancher, au lieu de découvrir plus tard une publication non vendue.
+       */
+      resync.offWeekDrafts.length > 0
+        ? `Semaine${resync.offWeekDrafts.length > 1 ? "s" : ""} ${resync.offWeekDrafts.join(", ")} : aucune publication prévue au rythme vendu, les publications du brouillon existant ont été conservées — supprimez-le si rien ne doit sortir.`
+        : null,
     ].filter(Boolean).join(" "),
     clientId: clientId.data,
   };

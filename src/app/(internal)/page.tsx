@@ -19,6 +19,7 @@ import { clientLifecycle, todayInParis as civilToday, parseClientKind } from "@/
 import { HEALTH_TARGET, healthTone, topHealthAction } from "@/lib/domain/health-score";
 import { defaultMetricsSince, readAgencyMetrics, type AgencyMetrics } from "@/lib/metrics/agency-metrics";
 import { ScoreRing } from "@/components/ScoreRing";
+import { sheetsToCreate } from "@/lib/domain/week-expectation";
 import { ShootingReminders } from "./ShootingReminders";
 
 function todayInParis(): string {
@@ -33,6 +34,7 @@ export default async function DashboardPage() {
   const profile = await getCurrentProfile();
   const supabase = await createSupabaseServerClient();
   const today = todayInParis();
+  const range = planningWeekRange();
 
   const isAdmin = profile?.role === "super_admin";
 
@@ -67,14 +69,21 @@ export default async function DashboardPage() {
      */
     supabase.from("weekly_sheets")
       .select("id, client_id, weekly_sheet_items ( caption, hashtags, format, media_asset_id, media_external_url, is_cancelled )")
-      .gte("period_start", planningWeekRange().nextStart)
-      .lte("period_start", planningWeekRange().nextEnd),
+      .gte("period_start", range.nextStart)
+      .lte("period_start", range.nextEnd),
   ]);
 
   /*
    * Fiches à préparer : celles de la semaine prochaine qui ne sont pas
-   * complètes, plus les clients actifs pour lesquels aucune fiche n'existe
-   * encore — une fiche absente est le cas le moins prêt de tous.
+   * complètes, plus les clients pour lesquels aucune fiche n'existe encore —
+   * une fiche absente est le cas le moins prêt de tous.
+   *
+   * « Aucune fiche » ne compte que si une fiche est attendue : client en
+   * gestion **la semaine prochaine** (début de contrat compris) et rythme qui
+   * y prévoit une publication. Un client à deux vidéos par mois ne publie
+   * qu'une semaine sur deux ; le compter chaque semaine réclamait une fiche
+   * que personne n'a vendue. La règle est celle du planning (`sheetsToCreate`),
+   * pour que ce chiffre et « à créer » du planning ne divergent plus.
    */
   const activeClients = (clientsResult.data ?? []) as unknown as Array<{
     id: string;
@@ -105,6 +114,10 @@ export default async function DashboardPage() {
     })),
   ).percentage < 100).length;
   const coveredClients = new Set(nextWeekSheets.map((sheet) => sheet.client_id));
+  /*
+   * `producible` reste jugé au jour : il sert aussi aux shootings, aux budgets
+   * et à « Clients en gestion », qui ne dépendent pas du rythme de la semaine.
+   */
   const producible = (activeClients ?? []).filter((client) => clientLifecycle({
     isActive: client.is_active,
     kind: parseClientKind(client.client_kind),
@@ -112,7 +125,7 @@ export default async function DashboardPage() {
     pauseStartDate: client.pause_start_date,
     pauseEndDate: client.pause_end_date,
   }, civilToday()).canProduce);
-  const toPrepare = incompleteSheets + producible.filter((client) => !coveredClients.has(client.id)).length;
+  const toPrepare = incompleteSheets + sheetsToCreate(activeClients, coveredClients, range.nextStart).length;
 
   /*
    * Shootings du forfait à planifier.

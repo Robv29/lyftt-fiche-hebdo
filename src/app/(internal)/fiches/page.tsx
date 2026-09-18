@@ -7,12 +7,11 @@ import {
   planningBucketForPeriod,
   planningWeekRange,
   sheetCompletion,
-  weeklyFormatsForCadence,
-  type MonthlyCadence,
 } from "@/lib/domain/planning";
 import { sheetStatusLabel, type MediaFormat, type SheetStatus, type TicketPriority, type TicketStatus } from "@/lib/domain/types";
 import { isClientValidated, validationRate } from "@/lib/domain/sheet-status";
 import { clientLifecycleForWeek, parseClientKind } from "@/lib/domain/client-lifecycle";
+import { sheetsToCreate } from "@/lib/domain/week-expectation";
 import { isTicketOpen } from "@/lib/domain/workflow";
 import { PlanningTabs } from "./PlanningTabs";
 import { isPlanningTab } from "./planning-tab";
@@ -172,10 +171,15 @@ export default async function SheetsPage({ searchParams }: { searchParams: Promi
       || completionForSheet(a).percentage - completionForSheet(b).percentage);
   const next = sheets.filter((sheet) => planningBucketForPeriod(sheet.period_start, sheet.period_end) === "next"
     && isVisible(sheet, range.nextStart));
-  const nextClientIds = new Set(next.map((sheet) => sheet.clients?.id).filter(Boolean));
-  // Une proposition ne vaut que si le client produit la semaine prochaine.
-  const proposals = (clients ?? []).filter((client) =>
-    !nextClientIds.has(client.id) && producesOn(client.id, range.nextStart));
+  const nextClientIds = new Set(next.map((sheet) => sheet.clients?.id).filter((id): id is string => Boolean(id)));
+  /*
+   * Une proposition ne vaut que si le client produit la semaine prochaine
+   * **et** que son rythme y prévoit une publication. Un client vendu à deux
+   * vidéos par mois ne publie qu'une semaine sur deux : lui proposer une fiche
+   * l'autre semaine, c'était réclamer un travail que personne n'a vendu. Même
+   * règle que « Fiches à préparer » sur le tableau de bord.
+   */
+  const proposals = sheetsToCreate(clients ?? [], nextClientIds, range.nextStart);
   // Un taux par période : l'indicateur en tête suit l'onglet consulté.
   const rateOf = (group: PlanningSheet[]) =>
     validationRate(group.map((sheet) => sheet.status as SheetStatus));
@@ -183,10 +187,9 @@ export default async function SheetsPage({ searchParams }: { searchParams: Promi
 
   const nextEntries: PlanningEntry[] = [
     ...next.map(sheetEntry),
-    ...proposals.map((client): PlanningEntry => {
-      let settings: { monthlyCadence?: MonthlyCadence; recommendedHashtags?: string[] } = {};
+    ...proposals.map(({ client, formats }): PlanningEntry => {
+      let settings: { recommendedHashtags?: string[] } = {};
       try { settings = typeof client.notes === "string" ? JSON.parse(client.notes) : {}; } catch { settings = {}; }
-      const formats = weeklyFormatsForCadence(settings.monthlyCadence ?? {}, range.nextIsoWeek);
       const formatCounts = formats.reduce<Record<string, number>>((counts, format) => ({ ...counts, [format]: (counts[format] ?? 0) + 1 }), {});
       const summary = Object.entries(formatCounts).map(([format, count]) => `${count} ${format === "visuel" ? "visuel" : format}`).join(" · ");
       return {
