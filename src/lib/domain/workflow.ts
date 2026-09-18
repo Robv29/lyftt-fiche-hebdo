@@ -132,6 +132,45 @@ export function canTransition(
   return { allowed: true, requiresReason: Boolean(match.requiresReason) };
 }
 
+/*
+ * Confier une correction à quelqu'un.
+ *
+ * Choisir la personne qui produit vaut qualification et affectation : un ticket
+ * nouveau, à qualifier ou rouvert rejoint « Affecté » en empruntant les étapes
+ * de la table, sans en sauter aucune. Sans ce passage, la personne était bien
+ * désignée mais le ticket restait « Nouveau » — et l'écran de production, qui
+ * n'ouvre le dépôt qu'aux corrections affectées, le disait « pas encore confié ».
+ *
+ * Une correction déjà en production garde son étape : elle change de mains, pas
+ * d'avancement. La facturation à valider reste une décision à part. Un ticket
+ * terminé ne se confie plus.
+ */
+const ROUTE_TO_ASSIGNED: Partial<Record<TicketStatus, readonly TicketStatus[]>> = {
+  new: ["to_qualify", "assigned"],
+  to_qualify: ["assigned"],
+  reopened: ["to_qualify", "assigned"],
+};
+
+const CLOSED_TO_ASSIGNMENT: readonly TicketStatus[] = [
+  "closed",
+  "cancelled",
+  "rejected",
+  "out_of_scope",
+  "approved_by_client",
+];
+
+export type ContributorAssignment =
+  | { allowed: true; path: readonly TicketStatus[] }
+  | { allowed: false; error: string };
+
+/** Étapes à franchir quand l'encadrement confie la correction ; vide = statut inchangé. */
+export function contributorAssignment(from: TicketStatus): ContributorAssignment {
+  if (CLOSED_TO_ASSIGNMENT.includes(from)) {
+    return { allowed: false, error: "Ce ticket est terminé : il ne se confie plus." };
+  }
+  return { allowed: true, path: ROUTE_TO_ASSIGNED[from] ?? [] };
+}
+
 /** Le ticket pèse-t-il encore sur la fiche ? */
 export function isTicketOpen(status: TicketStatus): boolean {
   return !["closed", "cancelled", "rejected", "approved_by_client"].includes(status);

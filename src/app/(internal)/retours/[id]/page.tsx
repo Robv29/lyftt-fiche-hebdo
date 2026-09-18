@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
-import { availableTransitions } from "@/lib/domain/workflow";
+import { availableTransitions, contributorAssignment } from "@/lib/domain/workflow";
 import { diffWords, summarizeDiff } from "@/lib/domain/text-diff";
 import {
   appRoleLabel,
@@ -110,6 +110,7 @@ export default async function TicketDetailPage({
         .order("full_name")
     : { data: [] };
   const contributor = assignments.find((assignment) => assignment.assignment_role === "contributor");
+  const assignment = contributorAssignment(ticket.status);
 
   const showDiff = Boolean(item && ticket.client_suggestion);
   const segments = showDiff ? diffWords(item!.caption, ticket.client_suggestion!) : [];
@@ -190,6 +191,8 @@ export default async function TicketDetailPage({
               <AssignContributor
                 ticketId={ticket.id}
                 currentProfileId={contributor?.profile_id ?? null}
+                awaitingAssignment={assignment.allowed && assignment.path.length > 0}
+                locked={!assignment.allowed}
                 candidates={(producers ?? []).map((producer) => ({
                   id: producer.id as string,
                   name: producer.full_name as string,

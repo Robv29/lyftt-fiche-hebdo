@@ -73,6 +73,17 @@ export default async function InternalLayout({
             .select("id", { count: "exact", head: true })
             .in("category", ["graphic", "video"])
             .in("status", ["ready_for_review", "new_version_generated"]),
+          /*
+           * Commandes qui lui sont confiées. Le responsable de production
+           * commande aussi : sans ce compte, ce qu'on lui confie restait muet.
+           * Celles déjà en retard sont comptées juste en dessous, pas deux fois.
+           */
+          supabase
+            .from("production_requests")
+            .select("id", { count: "exact", head: true })
+            .eq("status", "a_faire")
+            .eq("assigned_to", profile.id)
+            .gte("due_on", todayInParis()),
           // En retard : sans ça, un community manager ou un admin qui ne produit
           // pas lui-même ne voit jamais que la production a pris du retard.
           supabase
@@ -86,6 +97,15 @@ export default async function InternalLayout({
             .in("category", ["graphic", "video"])
             .not("status", "in", "(closed,cancelled,rejected,approved_by_client)")
             .lt("due_at", new Date().toISOString()),
+          // Corrections confiées à la personne qui regarde — un responsable de
+          // production peut être désigné : sans ça, l'affectation ne se signale nulle part.
+          supabase
+            .from("client_tickets")
+            .select("id, client_ticket_assignments!inner(profile_id, assignment_role)", { count: "exact", head: true })
+            .in("category", ["graphic", "video"])
+            .in("status", ["assigned", "in_progress", "reopened"])
+            .eq("client_ticket_assignments.profile_id", profile.id)
+            .eq("client_ticket_assignments.assignment_role", "contributor"),
         ],
   );
   /*
@@ -108,7 +128,8 @@ export default async function InternalLayout({
       }
     : null;
 
-  const productionBadge = productionCounts.reduce(
+  // Les requêtes n'ont pas toutes la même forme : seul le compte nous intéresse.
+  const productionBadge = (productionCounts as { count: number | null }[]).reduce(
     (total, result) => total + (result.count ?? 0),
     0,
   );

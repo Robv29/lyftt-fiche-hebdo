@@ -38,7 +38,7 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
        weekly_sheet_item_id, client_id,
        clients ( name ),
        weekly_sheets ( period_start, period_end ),
-       client_ticket_assignments!inner ( assignment_role, profile_id )`,
+       client_ticket_assignments!inner ( assignment_role, profile_id, profiles ( full_name ) )`,
     )
     .in("category", ["graphic", "video"])
     .not("status", "in", "(closed,cancelled,rejected,approved_by_client)")
@@ -125,6 +125,10 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
      * noyait celles qu'on peut encore livrer à temps.
      */
     const period = ticket.weekly_sheets as unknown as { period_start: string | null; period_end: string | null } | null;
+    // Chefs de projet et direction voient toutes les corrections : la carte dit pour qui elle est.
+    const contributor = (ticket.client_ticket_assignments as unknown as {
+      assignment_role: string; profile_id: string; profiles: { full_name: string } | null;
+    }[]).find((assignment) => assignment.assignment_role === "contributor");
     return {
       id: ticket.id as string,
       ticketNumber: ticket.ticket_number as string,
@@ -144,6 +148,8 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
         periodEnd: period?.period_end,
       }),
       hasItem: Boolean(ticket.weekly_sheet_item_id),
+      assigneeName: contributor?.profiles?.full_name ?? null,
+      assignedToViewer: Boolean(contributor && contributor.profile_id === profile?.id),
     };
   });
 

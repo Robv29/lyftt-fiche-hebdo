@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   availableTransitions,
   canTransition,
+  contributorAssignment,
   isAwaitingProduction,
   isTicketOpen,
 } from "@/lib/domain/workflow";
-import type { TicketStatus } from "@/lib/domain/types";
+import { TICKET_STATUS_LABELS, type AppRole, type TicketStatus } from "@/lib/domain/types";
 
 describe("§10 — workflow des tickets", () => {
   it("suit le séquencement nominal de la spec", () => {
@@ -102,5 +103,48 @@ describe("§10 — workflow des tickets", () => {
     expect(isAwaitingProduction("assigned")).toBe(true);
     expect(isAwaitingProduction("in_progress")).toBe(true);
     expect(isAwaitingProduction("ready_for_review")).toBe(false);
+  });
+});
+
+describe("Confier une correction à la production", () => {
+  const ENCADREMENT: AppRole[] = ["super_admin", "production_manager", "community_manager"];
+
+  it("un ticket nouveau passe en « Affecté » par les étapes de la machine à états", () => {
+    const plan = contributorAssignment("new");
+    expect(plan).toEqual({ allowed: true, path: ["to_qualify", "assigned"] });
+  });
+
+  it("un ticket à qualifier ou rouvert rejoint aussi « Affecté »", () => {
+    expect(contributorAssignment("to_qualify")).toEqual({ allowed: true, path: ["assigned"] });
+    expect(contributorAssignment("reopened")).toEqual({ allowed: true, path: ["to_qualify", "assigned"] });
+  });
+
+  it("chaque étape est une transition permise à l'encadrement, sans justification", () => {
+    for (const from of Object.keys(TICKET_STATUS_LABELS) as TicketStatus[]) {
+      const plan = contributorAssignment(from);
+      if (!plan.allowed) continue;
+      for (const role of ENCADREMENT) {
+        let current = from;
+        for (const next of plan.path) {
+          const check = canTransition(current, next, role);
+          expect(check.allowed, `${role} : ${current} → ${next}`).toBe(true);
+          expect(check.requiresReason, `${role} : ${current} → ${next}`).toBe(false);
+          current = next;
+        }
+        if (plan.path.length > 0) expect(current).toBe("assigned");
+      }
+    }
+  });
+
+  it("ailleurs, la correction change de mains sans changer d'étape", () => {
+    for (const status of ["assigned", "in_progress", "awaiting_client", "ready_for_review", "billing_review"] as const) {
+      expect(contributorAssignment(status), status).toEqual({ allowed: true, path: [] });
+    }
+  });
+
+  it("un ticket terminé ne se confie plus", () => {
+    for (const status of ["closed", "cancelled", "rejected", "out_of_scope", "approved_by_client"] as const) {
+      expect(contributorAssignment(status).allowed, status).toBe(false);
+    }
   });
 });

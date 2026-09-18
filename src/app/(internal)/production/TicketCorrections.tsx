@@ -26,6 +26,9 @@ export interface TicketCorrectionRow {
   overdue: boolean;
   /** Faux quand la demande ne vise aucune publication précise. */
   hasItem: boolean;
+  /** Personne désignée pour produire la correction, s'il y en a une. */
+  assigneeName: string | null;
+  assignedToViewer: boolean;
 }
 
 /**
@@ -143,6 +146,9 @@ function TicketCard({ ticket, canValidate }: { ticket: TicketCorrectionRow; canV
               <div className="min-w-0">
                 <strong className="block truncate text-sm">{ticket.clientName}</strong>
                 <p className="truncate text-xs text-ink-faint">{ticket.typeLabel} · {ticket.ticketNumber}</p>
+                <p className={`truncate text-xs ${ticket.assignedToViewer ? "font-semibold text-[#0b4f88]" : "text-ink-faint"}`}>
+                  {ticket.assignedToViewer ? "Pour vous" : ticket.assigneeName ? `Pour ${ticket.assigneeName}` : "À confier"}
+                </p>
               </div>
             </div>
           </div>

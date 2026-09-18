@@ -7,7 +7,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { env } from "@/lib/supabase/env";
 import { ensureRequestLink } from "@/lib/review/request-link";
 import { generateReviewToken } from "@/lib/domain/tokens";
-import { canTransition } from "@/lib/domain/workflow";
+import { canTransition, contributorAssignment } from "@/lib/domain/workflow";
 import { checkExportBeforeSend } from "@/lib/domain/edge-cases";
 import { normalizeHashtags, sanitizeText } from "@/lib/security/sanitize";
 import type { TicketStatus } from "@/lib/domain/types";
@@ -932,18 +932,25 @@ export async function assignTicketContributor(
   const supabase = await createSupabaseServerClient();
   const { data: ticket } = await supabase
     .from("client_tickets")
-    .select("id, title")
+    .select("id, title, status")
     .eq("id", ids.data.ticketId)
     .maybeSingle();
   if (!ticket) return { ok: false, message: "Ticket introuvable ou accès refusé." };
 
+  const plan = contributorAssignment(ticket.status as TicketStatus);
+  if (!plan.allowed) return { ok: false, message: plan.error };
+
   const admin = createSupabaseAdminClient();
   const { data: target } = await admin
     .from("profiles")
-    .select("id, full_name, is_active")
+    .select("id, full_name, is_active, role")
     .eq("id", ids.data.profileId)
     .maybeSingle();
   if (!target?.is_active) return { ok: false, message: "Cette personne n'est plus active." };
+  // Même liste que le sélecteur : un ticket confié à quelqu'un hors production ne serait vu par personne.
+  if (!["graphic_designer", "video_editor", "production_manager"].includes(target.role as string)) {
+    return { ok: false, message: "Cette personne ne fait pas partie de la production." };
+  }
 
   // Un seul contributeur à la fois : sinon le ticket s'affiche sur deux écrans
   // et chacun attend que l'autre s'en occupe.
@@ -959,6 +966,20 @@ export async function assignTicketContributor(
     assignment_role: "contributor",
   });
   if (error) return { ok: false, message: `Affectation impossible : ${error.message}` };
+
+  // Le ticket passe en « Affecté » par les transitions ordinaires, une étape après l'autre.
+  for (const nextStatus of plan.path) {
+    const step = new FormData();
+    step.set("ticketId", ids.data.ticketId);
+    step.set("nextStatus", nextStatus);
+    const moved = await transitionTicket(step);
+    if (!moved.ok) {
+      return {
+        ok: false,
+        message: `${target.full_name} est désigné, mais le ticket n'a pas pu passer en production : ${moved.message}`,
+      };
+    }
+  }
 
   await admin.from("internal_notifications").insert({
     profile_id: ids.data.profileId,
