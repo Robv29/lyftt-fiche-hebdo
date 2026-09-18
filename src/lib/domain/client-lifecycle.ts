@@ -8,6 +8,8 @@
  * Ici, la lecture est toujours juste.
  */
 
+import { normalizeWeekdays, publicationDatesForWeek } from "./planning";
+
 export type ClientLifecycleState = "active" | "not_started" | "paused" | "ended" | "archived" | "one_shot";
 
 /**
@@ -41,6 +43,22 @@ export interface ClientLifecycleInput {
   pauseStartDate: string | null;
   /** Dernier jour de pause inclus. */
   pauseEndDate: string | null;
+}
+
+/**
+ * Entrée du cycle de vie **à la semaine** : il y faut en plus les jours de
+ * publication, sur lesquels se juge la fin du contrat (voir
+ * `clientLifecycleForWeek`).
+ */
+export interface ClientWeekLifecycleInput extends ClientLifecycleInput {
+  /*
+   * Jours de publication du client, en numérotation ISO (1 = lundi), tels que
+   * lus dans ses réglages. Obligatoire pour la même raison que `kind` : un
+   * appelant qui l'oublierait jugerait la fin de contrat au lundi, et
+   * réclamerait de nouveau une publication après la fin du contrat. Une liste
+   * vide est une réponse valable : pas de jour renseigné.
+   */
+  publicationWeekdays: readonly number[];
 }
 
 export interface ClientLifecycle {
@@ -117,12 +135,7 @@ export function clientLifecycle(
    * dernière journée du contrat reste pleinement exploitable.
    */
   if (input.contractEndDate && today > input.contractEndDate) {
-    return {
-      state: "ended",
-      canProduce: false,
-      label: "Gestion terminée",
-      detail: `Fin de gestion le ${formatDay(input.contractEndDate)}.`,
-    };
+    return endedLifecycle(input.contractEndDate);
   }
 
   // Pause en cours : bornes incluses.
@@ -154,6 +167,15 @@ export function clientLifecycle(
     canProduce: true,
     label: "Actif",
     detail: upcomingPause ?? upcomingEnd,
+  };
+}
+
+function endedLifecycle(contractEndDate: string): ClientLifecycle {
+  return {
+    state: "ended",
+    canProduce: false,
+    label: "Gestion terminée",
+    detail: `Fin de gestion le ${formatDay(contractEndDate)}.`,
   };
 }
 
@@ -190,14 +212,31 @@ function mondayAfter(date: string): string {
  *
  * La règle est donc : une semaine touchée par la pause, même d'un seul jour,
  * n'est pas produite ; la production reprend à la semaine suivante.
+ *
+ * **Fin de contrat : jugée sur les jours de publication.** Jugée au lundi, une
+ * semaine qui commence le dernier jour du contrat restait « en gestion » : le
+ * contrat d'E-MOVE s'arrête le lundi 30 novembre, E-MOVE publie le mercredi,
+ * et une vidéo était réclamée pour le 2 décembre, après la fin du contrat. Une
+ * semaine est donc hors contrat quand **toutes** ses dates de publication
+ * tombent après la fin. Sans jour de publication renseigné, rien ne permet de
+ * dire quand on publie : la fin se juge au lundi, comme avant.
+ *
+ * Le début du contrat, lui, reste jugé au lundi. C'est voulu : cette règle ne
+ * porte que sur la fin.
  */
 export function clientLifecycleForWeek(
-  input: ClientLifecycleInput,
+  input: ClientWeekLifecycleInput,
   weekStart: string,
 ): ClientLifecycle {
   const base = clientLifecycle(input, weekStart);
   // L'archivage et les bornes du contrat gardent la main : ils ne se rattrapent pas.
   if (base.state !== "active" && base.state !== "paused") return base;
+
+  // Même préséance qu'au jour : la fin du contrat passe avant la pause.
+  if (input.contractEndDate
+    && publishesOnlyAfter(input.contractEndDate, input.publicationWeekdays, weekStart)) {
+    return endedLifecycle(input.contractEndDate);
+  }
 
   const weekEnd = addDays(weekStart, 6);
   const pauseOverlapsWeek = input.pauseStartDate !== null
@@ -214,6 +253,20 @@ export function clientLifecycleForWeek(
       ? `Reprise de la production la semaine du ${formatDay(mondayAfter(input.pauseEndDate))}.`
       : "Pause sans date de reprise.",
   };
+}
+
+/**
+ * Toutes les publications de la semaine tombent-elles après cette date ?
+ *
+ * Les dates sont celles que la création de fiche poserait
+ * (`publicationDatesForWeek`) : la question et la fiche parlent des mêmes
+ * jours. Faux sans jour renseigné — l'appelant garde alors la règle du lundi.
+ */
+function publishesOnlyAfter(date: string, weekdays: readonly number[], weekStart: string): boolean {
+  const days = normalizeWeekdays(weekdays);
+  if (days.length === 0) return false;
+  return publicationDatesForWeek(days.length, days, new Date(`${weekStart}T00:00:00Z`))
+    .every((publication) => publication > date);
 }
 
 /** Message affiché quand on tente de produire pour un client indisponible. */

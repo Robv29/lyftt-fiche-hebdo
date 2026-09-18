@@ -3,15 +3,17 @@ import {
   clientLifecycle,
   clientLifecycleForWeek,
   productionBlockedMessage,
-  type ClientLifecycleInput,
+  type ClientWeekLifecycleInput,
 } from "@/lib/domain/client-lifecycle";
 
-const base: ClientLifecycleInput = {
+// Sans jour de publication : la fin de contrat se juge au lundi, comme avant.
+const base: ClientWeekLifecycleInput = {
   isActive: true,
   kind: "gestion",
   contractEndDate: null,
   pauseStartDate: null,
   pauseEndDate: null,
+  publicationWeekdays: [],
 };
 
 const today = "2026-08-10";
@@ -230,6 +232,80 @@ describe("pause jugée à la semaine de production", () => {
   });
 });
 
+
+/*
+ * La fin du contrat se juge sur les jours de publication de la semaine, pas
+ * sur son lundi : une semaine dont toutes les publications tombent après la
+ * fin n'est plus en gestion. Le début, lui, reste jugé au lundi.
+ */
+describe("fin de contrat jugée sur les jours de publication", () => {
+  // Cas réel d'E-MOVE : fin le lundi 30 novembre 2026, publication le mercredi.
+  const emove = { ...base, contractStartDate: "2026-09-01", contractEndDate: "2026-11-30", publicationWeekdays: [3] };
+  const semaine48 = "2026-11-23";
+  const semaine49 = "2026-11-30";
+
+  it("arrête E-MOVE après la semaine 48", () => {
+    expect(clientLifecycleForWeek(emove, semaine48).canProduce).toBe(true);
+    const s49 = clientLifecycleForWeek(emove, semaine49);
+    expect(s49.state).toBe("ended");
+    expect(s49.canProduce).toBe(false);
+    expect(s49.detail).toBe("Fin de gestion le 30 novembre 2026.");
+    expect(productionBlockedMessage(s49)).toContain("terminée");
+  });
+
+  it("garde la semaine dont une publication tombe encore dans le contrat", () => {
+    // Fin le mercredi 30 septembre, publication lundi et vendredi : le lundi 28 compte.
+    const client = { ...base, contractEndDate: "2026-09-30", publicationWeekdays: [1, 5] };
+    expect(clientLifecycleForWeek(client, "2026-09-28").canProduce).toBe(true);
+    expect(clientLifecycleForWeek(client, "2026-10-05").state).toBe("ended");
+  });
+
+  it("retient une publication le jour même de la fin", () => {
+    const client = { ...base, contractEndDate: "2026-09-30", publicationWeekdays: [3] };
+    expect(clientLifecycleForWeek(client, "2026-09-28").canProduce).toBe(true);
+  });
+
+  it("écarte la semaine dont toutes les publications suivent la fin", () => {
+    // Fin le mercredi 30 septembre, publication jeudi et vendredi.
+    const client = { ...base, contractEndDate: "2026-09-30", publicationWeekdays: [4, 5] };
+    expect(clientLifecycleForWeek(client, "2026-09-28").state).toBe("ended");
+  });
+
+  it("lit des jours dans le désordre ou en double comme la création de fiche", () => {
+    const client = { ...base, contractEndDate: "2026-09-30", publicationWeekdays: [5, 1, 1] };
+    expect(clientLifecycleForWeek(client, "2026-09-28").canProduce).toBe(true);
+  });
+
+  it("garde la règle du lundi sans jour de publication", () => {
+    const client = { ...emove, publicationWeekdays: [] };
+    expect(clientLifecycleForWeek(client, semaine49).canProduce).toBe(true);
+    expect(clientLifecycleForWeek(client, "2026-12-07").state).toBe("ended");
+  });
+
+  it("laisse le début du contrat jugé au lundi", () => {
+    // Début le jeudi 24 septembre, publication mercredi et vendredi : la
+    // semaine 39 reste hors gestion, même si le vendredi 25 est couvert.
+    const client = { ...base, contractStartDate: "2026-09-24", publicationWeekdays: [3, 5] };
+    expect(clientLifecycleForWeek(client, "2026-09-21").state).toBe("not_started");
+    expect(clientLifecycleForWeek(client, "2026-09-28").canProduce).toBe(true);
+  });
+
+  it("ne change rien à la pause", () => {
+    const paused = { ...base, pauseStartDate: "2026-08-20", pauseEndDate: "2026-09-05" };
+    const withDays = { ...paused, publicationWeekdays: [3] };
+    for (const week of ["2026-08-17", "2026-08-24", "2026-08-31", "2026-09-07"]) {
+      expect(clientLifecycleForWeek(withDays, week)).toEqual(clientLifecycleForWeek(paused, week));
+    }
+    expect(clientLifecycleForWeek(withDays, "2026-08-31").state).toBe("paused");
+    expect(clientLifecycleForWeek(withDays, "2026-09-07").canProduce).toBe(true);
+  });
+
+  it("fait primer la fin du contrat sur une pause, comme au jour", () => {
+    const client = { ...emove, pauseStartDate: "2026-11-25", pauseEndDate: null };
+    expect(clientLifecycleForWeek(client, semaine48).state).toBe("paused");
+    expect(clientLifecycleForWeek(client, semaine49).state).toBe("ended");
+  });
+});
 
 describe("prestation ponctuelle", () => {
   it("ne propose aucune fiche à un client ponctuel", () => {

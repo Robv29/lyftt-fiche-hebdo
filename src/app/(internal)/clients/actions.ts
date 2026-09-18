@@ -666,7 +666,7 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
   const admin = createSupabaseAdminClient();
   const { data: current } = await admin
     .from("clients")
-    .select("id, client_kind, notes, logo_url, latitude, contract_start_date, contract_end_date, pause_start_date, pause_end_date, client_contacts ( id, is_primary )")
+    .select("id, is_active, client_kind, notes, logo_url, latitude, contract_start_date, contract_end_date, pause_start_date, pause_end_date, client_contacts ( id, is_primary )")
     .eq("id", clientId.data)
     .maybeSingle();
   if (!current) return { ok: false, message: "Client introuvable." };
@@ -782,11 +782,20 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
     }),
   });
 
-  const resync = await rescheduleClientDrafts(admin, clientId.data, input.publicationWeekdays, {
-    photo: input.photoPerMonth,
-    video: input.videoPerMonth,
-    story: input.storyPerMonth,
-    visual: input.visualPerMonth,
+  /*
+   * La ligne telle qu'enregistrée : jours de publication et rythme viennent
+   * des réglages tout juste écrits, et chaque semaine est jugée par la même
+   * règle que le planning — fin de contrat comprise.
+   */
+  const resync = await rescheduleClientDrafts(admin, {
+    id: clientId.data,
+    is_active: current.is_active,
+    client_kind: current.client_kind,
+    notes: JSON.stringify(notes),
+    contract_start_date: current.contract_start_date,
+    contract_end_date: current.contract_end_date,
+    pause_start_date: current.pause_start_date,
+    pause_end_date: current.pause_end_date,
   });
 
   revalidatePath("/clients");
@@ -830,6 +839,15 @@ export async function updateClient(formData: FormData): Promise<ClientActionResu
        */
       resync.offWeekDrafts.length > 0
         ? `Semaine${resync.offWeekDrafts.length > 1 ? "s" : ""} ${resync.offWeekDrafts.join(", ")} : aucune publication prévue au rythme vendu, les publications du brouillon existant ont été conservées — supprimez-le si rien ne doit sortir.`
+        : null,
+      /*
+       * Même chose hors gestion : un brouillon posé après la fin du contrat,
+       * avant son début ou pendant une pause n'est pas complété d'après le
+       * rythme — ce serait réclamer une publication que le contrat ne couvre
+       * pas.
+       */
+      resync.offContractDrafts.length > 0
+        ? `Semaine${resync.offContractDrafts.length > 1 ? "s" : ""} ${resync.offContractDrafts.join(", ")} : hors période de gestion, le brouillon existant n'a pas été complété — supprimez-le si rien ne doit sortir.`
         : null,
     ].filter(Boolean).join(" "),
     clientId: clientId.data,

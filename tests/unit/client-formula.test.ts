@@ -32,9 +32,17 @@ describe("clientFormula", () => {
     expect(f.pauseEndDate).toBe("2026-10-31");
   });
 
+  it("lit les jours de publication, dans l'ordre et sans doublon", () => {
+    expect(clientFormula(row({ publicationWeekdays: [5, 3, 3] })).publicationWeekdays).toEqual([3, 5]);
+    expect(clientFormula(row({ publicationWeekdays: ["2", 9, null] })).publicationWeekdays).toEqual([2]);
+    expect(clientFormula(row({})).publicationWeekdays).toEqual([]);
+    expect(clientFormula(row({ publicationWeekdays: "mercredi" })).publicationWeekdays).toEqual([]);
+  });
+
   it("résiste à des réglages illisibles plutôt que de planter l'écran", () => {
     const f = clientFormula({ client_kind: null, notes: "{pas du json", contract_start_date: null, contract_end_date: null });
     expect(f.cadence).toEqual({});
+    expect(f.publicationWeekdays).toEqual([]);
     expect(f.baseFeeCents).toBeNull();
     expect(f.pauseStartDate).toBeNull();
   });

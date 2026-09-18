@@ -10,8 +10,7 @@ import {
 } from "@/lib/domain/planning";
 import { sheetStatusLabel, type MediaFormat, type SheetStatus, type TicketPriority, type TicketStatus } from "@/lib/domain/types";
 import { isClientValidated, validationRate } from "@/lib/domain/sheet-status";
-import { clientLifecycleForWeek, parseClientKind } from "@/lib/domain/client-lifecycle";
-import { sheetsToCreate } from "@/lib/domain/week-expectation";
+import { sheetShownForWeek, sheetsToCreate } from "@/lib/domain/week-expectation";
 import { isTicketOpen } from "@/lib/domain/workflow";
 import { PlanningTabs } from "./PlanningTabs";
 import { isPlanningTab } from "./planning-tab";
@@ -134,31 +133,10 @@ export default async function SheetsPage({ searchParams }: { searchParams: Promi
    * date du jour donnait les deux erreurs à la fois.
    */
   const clientById = new Map((clients ?? []).map((client) => [client.id, client]));
-  const producesOn = (clientId: string | undefined, weekStart: string): boolean => {
-    if (!clientId) return true;
-    const client = clientById.get(clientId);
-    if (!client) return true;
-    return clientLifecycleForWeek({
-      isActive: client.is_active,
-      kind: parseClientKind(client.client_kind),
-      contractStartDate: client.contract_start_date,
-      contractEndDate: client.contract_end_date,
-      pauseStartDate: client.pause_start_date,
-      pauseEndDate: client.pause_end_date,
-    }, weekStart).canProduce;
-  };
 
-  /*
-   * Une fiche déjà partie chez le client reste visible quoi qu'il arrive.
-   *
-   * Le filtre sert à ne pas proposer de travail pour un client hors gestion ;
-   * il ne doit pas escamoter un travail réel — une fiche envoyée, corrigée ou
-   * validée — sur la foi d'une date de contrat mal saisie. Seul un brouillon
-   * jamais transmis peut disparaître sans rien coûter.
-   */
+  // Une fiche partie chez le client reste visible ; un brouillon hors gestion disparaît (règle partagée).
   const isVisible = (sheet: PlanningSheet, weekStart: string): boolean =>
-    !["draft", "internal_review", "ready_to_send"].includes(sheet.status)
-    || producesOn(sheet.clients?.id, weekStart);
+    sheetShownForWeek(sheet.status, sheet.clients?.id ? clientById.get(sheet.clients.id) : undefined, weekStart);
 
   const past = sheets.filter((sheet) =>
     planningBucketForPeriod(sheet.period_start, sheet.period_end) === "past"

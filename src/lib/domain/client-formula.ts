@@ -5,7 +5,7 @@ import {
   type CustomMonthlyService,
   type ShootingPlan,
 } from "./budget";
-import type { MonthlyCadence } from "./planning";
+import { normalizeWeekdays, type MonthlyCadence } from "./planning";
 import { parseClientKind } from "./client-lifecycle";
 
 /**
@@ -44,6 +44,11 @@ export interface ClientFormula {
    */
   managed: boolean;
   cadence: MonthlyCadence;
+  /**
+   * Jours de publication (ISO, 1 = lundi), dédoublonnés et dans l'ordre. Vide
+   * quand rien n'est renseigné ou que les réglages sont illisibles.
+   */
+  publicationWeekdays: number[];
   shooting: ShootingPlan | null;
   customMonthly: CustomMonthlyService | null;
   baseFeeCents: number | null;
@@ -68,6 +73,9 @@ export function clientFormula(row: ClientFormulaRow): ClientFormula {
   return {
     managed: parseClientKind(row.client_kind) === "gestion",
     cadence: cadence && typeof cadence === "object" ? (cadence as MonthlyCadence) : {},
+    publicationWeekdays: Array.isArray(settings.publicationWeekdays)
+      ? normalizeWeekdays(settings.publicationWeekdays.map(Number))
+      : [],
     shooting: parseShootingPlan(settings.shootingPlan),
     customMonthly: parseCustomMonthly(settings.customMonthlyService),
     baseFeeCents: parseBaseFee(settings.baseMonthlyFeeCents),

@@ -9,7 +9,8 @@ import {
   requireEditorialProfile,
 } from "@/lib/internal/authorization";
 import { isoWeekStart } from "@/lib/domain/deadline";
-import { clientLifecycleForWeek, productionBlockedMessage, parseClientKind } from "@/lib/domain/client-lifecycle";
+import { productionBlockedMessage } from "@/lib/domain/client-lifecycle";
+import { weekLifecycle } from "@/lib/domain/week-expectation";
 import { normalizeHashtags, sanitizeText } from "@/lib/security/sanitize";
 import { SOCIAL_NETWORKS } from "@/lib/domain/types";
 
@@ -90,23 +91,19 @@ export async function createSheet(formData: FormData): Promise<SheetActionResult
    * jour présent refusait de préparer la fiche de la semaine suivante pendant
    * une pause qui s'y terminait : il fallait attendre la reprise pour s'y
    * mettre, donc produire en retard.
+   *
+   * Les réglages (`notes`) sont lus pour les jours de publication : la fin du
+   * contrat se juge sur eux, comme au planning.
    */
   const admin = createSupabaseAdminClient();
   const { data: clientRow } = await admin
     .from("clients")
-    .select("is_active, client_kind, contract_start_date, contract_end_date, pause_start_date, pause_end_date")
+    .select("is_active, client_kind, notes, contract_start_date, contract_end_date, pause_start_date, pause_end_date")
     .eq("id", input.clientId)
     .maybeSingle();
 
   if (clientRow) {
-    const lifecycle = clientLifecycleForWeek({
-      isActive: clientRow.is_active,
-      kind: parseClientKind(clientRow.client_kind),
-      contractStartDate: clientRow.contract_start_date,
-      contractEndDate: clientRow.contract_end_date,
-      pauseStartDate: clientRow.pause_start_date,
-      pauseEndDate: clientRow.pause_end_date,
-    }, monday.toISOString().slice(0, 10));
+    const lifecycle = weekLifecycle(clientRow, monday.toISOString().slice(0, 10));
     if (!lifecycle.canProduce) {
       return { ok: false, message: productionBlockedMessage(lifecycle) };
     }

@@ -1,13 +1,15 @@
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import {
-  draftReconciliation,
-  rescheduleItems,
-  weeklyFormatsForCadence,
-  type MonthlyCadence,
-} from "@/lib/domain/planning";
+import { clientFormula } from "@/lib/domain/client-formula";
+import { draftReconciliation, rescheduleItems } from "@/lib/domain/planning";
 import type { MediaFormat } from "@/lib/domain/types";
+import { weekExpectation, type WeekExpectation, type WeekExpectationRow } from "@/lib/domain/week-expectation";
+
+/** Formats que la semaine attend : rien en semaine creuse ni hors gestion. */
+function expectedFormats(expectation: WeekExpectation): MediaFormat[] {
+  return expectation.kind === "publish" ? expectation.formats : [];
+}
 
 /**
  * Recale les brouillons d'un client sur ses jours de publication.
@@ -27,14 +29,25 @@ import type { MediaFormat } from "@/lib/domain/types";
  * rien. Même chose pour un brouillon posé sur une semaine creuse du rythme
  * (`offWeekDrafts`) : il est laissé tel quel, et c'est à l'utilisateur de le
  * supprimer si rien ne doit sortir.
+ *
+ * Ce que chaque semaine attend vient de `weekExpectation`, la règle du
+ * planning et de la création de fiche. Un brouillon posé sur une semaine hors
+ * gestion (`offContractDrafts`) — après la fin du contrat, jugée sur les jours
+ * de publication, avant son début ou pendant une pause — n'est donc ni
+ * complété ni vidé : le compléter d'après le rythme réclamait une publication
+ * que le contrat ne couvre plus.
+ *
+ * @param client la ligne du client **telle qu'enregistrée** : jours de
+ * publication et rythme sont lus dans ses réglages, les bornes du contrat et
+ * de la pause dans ses colonnes.
  */
 export async function rescheduleClientDrafts(
   supabase: SupabaseClient,
-  clientId: string,
-  weekdays: readonly number[],
-  cadence?: MonthlyCadence,
-): Promise<{ moved: number; added: number; removed: number; keptFilled: number; lockedWeeks: number[]; offWeekDrafts: number[] }> {
-  const nothing = { moved: 0, added: 0, removed: 0, keptFilled: 0, lockedWeeks: [] as number[], offWeekDrafts: [] as number[] };
+  client: WeekExpectationRow & { id: string },
+): Promise<{ moved: number; added: number; removed: number; keptFilled: number; lockedWeeks: number[]; offWeekDrafts: number[]; offContractDrafts: number[] }> {
+  const nothing = { moved: 0, added: 0, removed: 0, keptFilled: 0, lockedWeeks: [] as number[], offWeekDrafts: [] as number[], offContractDrafts: [] as number[] };
+  const clientId = client.id;
+  const weekdays = clientFormula(client).publicationWeekdays;
   if (weekdays.length === 0) return nothing;
 
   /*
@@ -60,7 +73,8 @@ export async function rescheduleClientDrafts(
   let removed = 0;
   let keptFilled = 0;
   const offWeekDrafts: number[] = [];
-  const lockedWeeks = await frozenWeeksOffCadence(supabase, clientId, cadence, today);
+  const offContractDrafts: number[] = [];
+  const lockedWeeks = await frozenWeeksOffCadence(supabase, client, today);
 
   for (const sheet of sheets ?? []) {
     const raw = (sheet.weekly_sheet_items ?? []) as unknown as {
@@ -75,8 +89,16 @@ export async function rescheduleClientDrafts(
      * compte.
      */
     const active = raw.filter((item) => !item.is_cancelled);
-    const reconciliation = cadence
-      ? draftReconciliation(
+    const expectation = weekExpectation(client, sheet.period_start as string);
+    /*
+     * Semaine hors gestion : rien n'est ajouté ni retiré, pour la même raison
+     * qu'en semaine creuse — seul un humain sait si ce brouillon doit sortir.
+     * On le signale, et les dates sont recalées comme ailleurs.
+     */
+    if (expectation.kind === "off_contract") offContractDrafts.push(sheet.iso_week as number);
+    const reconciliation = expectation.kind === "off_contract"
+      ? null
+      : draftReconciliation(
         active.map((item) => ({
           id: item.id,
           format: item.format,
@@ -85,9 +107,8 @@ export async function rescheduleClientDrafts(
             || (item.hashtags?.length ?? 0) > 0
             || Boolean(item.media_asset_id || item.media_external_url),
         })),
-        weeklyFormatsForCadence(cadence, sheet.iso_week as number),
-      )
-      : null;
+        expectedFormats(expectation),
+      );
 
     /*
      * Semaine creuse du rythme : rien n'est ajouté ni retiré. Le brouillon a
@@ -161,7 +182,15 @@ export async function rescheduleClientDrafts(
     }
   }
 
-  return { moved, added, removed, keptFilled, lockedWeeks, offWeekDrafts: offWeekDrafts.sort((a, b) => a - b) };
+  return {
+    moved,
+    added,
+    removed,
+    keptFilled,
+    lockedWeeks,
+    offWeekDrafts: offWeekDrafts.sort((a, b) => a - b),
+    offContractDrafts: offContractDrafts.sort((a, b) => a - b),
+  };
 }
 
 /**
@@ -175,20 +204,17 @@ export async function rescheduleClientDrafts(
  * Seules les semaines encore à venir sont regardées : une semaine publiée ne
  * se rattrape pas. Une semaine creuse du rythme non plus : une fiche envoyée
  * cette semaine-là est un ajout voulu, pas un compte à corriger — la signaler
- * à chaque enregistrement ne serait que du bruit.
+ * à chaque enregistrement ne serait que du bruit. Même chose hors gestion.
  */
 async function frozenWeeksOffCadence(
   supabase: SupabaseClient,
-  clientId: string,
-  cadence: MonthlyCadence | undefined,
+  client: WeekExpectationRow & { id: string },
   today: string,
 ): Promise<number[]> {
-  if (!cadence) return [];
-
   const { data, error } = await supabase
     .from("weekly_sheets")
-    .select("iso_week, period_end, weekly_sheet_items ( id, format, is_cancelled )")
-    .eq("client_id", clientId)
+    .select("iso_week, period_start, period_end, weekly_sheet_items ( id, format, is_cancelled )")
+    .eq("client_id", client.id)
     .neq("status", "draft")
     .gte("period_end", today);
 
@@ -208,7 +234,7 @@ async function frozenWeeksOffCadence(
       // ici, seulement à savoir si le compte diverge. Le surplus ressort donc
       // en « conservé » plutôt qu'en « à retirer ».
       items.map((item) => ({ id: item.id, format: item.format, filled: true })),
-      weeklyFormatsForCadence(cadence, sheet.iso_week as number),
+      expectedFormats(weekExpectation(client, sheet.period_start as string)),
     );
     if (reconciliation.kind !== "reconcile") continue;
     if (reconciliation.toAdd.length > 0 || reconciliation.keptFilled > 0) weeks.push(sheet.iso_week as number);

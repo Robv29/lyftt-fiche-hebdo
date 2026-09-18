@@ -1,5 +1,5 @@
-import { clientFormula, type ClientFormulaRow } from "./client-formula";
-import { clientLifecycleForWeek, parseClientKind } from "./client-lifecycle";
+import { clientFormula, type ClientFormula, type ClientFormulaRow } from "./client-formula";
+import { clientLifecycleForWeek, parseClientKind, type ClientLifecycle } from "./client-lifecycle";
 import { isoWeekIdentity, weeklyFormatsForCadence } from "./planning";
 import type { MediaFormat } from "./types";
 
@@ -29,21 +29,60 @@ export interface WeekExpectationRow extends ClientFormulaRow {
 }
 
 /**
- * @param weekStart lundi de la semaine, en date civile. Le numéro de semaine
- * ISO en est déduit : le passer à part laissait la porte ouverte à un lundi et
- * un numéro qui ne se correspondent pas.
+ * Le client est-il en gestion cette semaine-là ? Lu depuis sa ligne en base.
+ *
+ * Seul endroit où une ligne client devient l'entrée de
+ * `clientLifecycleForWeek`. Chaque écran assemblait cette entrée à la main, et
+ * le jour où la fin de contrat s'est jugée sur les jours de publication, il
+ * aurait fallu penser à les ajouter partout : un oubli, et le planning, la
+ * production et la création de fiche ne s'accordaient plus sur la semaine où
+ * la gestion s'arrête.
  */
-export function weekExpectation(row: WeekExpectationRow, weekStart: string): WeekExpectation {
-  const formula = clientFormula(row);
-  const lifecycle = clientLifecycleForWeek({
+export function weekLifecycle(row: WeekExpectationRow, weekStart: string): ClientLifecycle {
+  return lifecycleOf(row, clientFormula(row), weekStart);
+}
+
+/**
+ * Une fiche existante reste-t-elle affichée pour cette semaine ?
+ *
+ * Une fiche déjà partie chez le client reste visible quoi qu'il arrive : le
+ * filtre sert à ne pas proposer de travail hors gestion, pas à escamoter un
+ * travail réel sur la foi d'une date de contrat mal saisie. Seul un brouillon
+ * jamais transmis disparaît quand le client n'est pas en gestion cette
+ * semaine-là. Client inconnu (inactif, hors liste) : visible, comme avant.
+ *
+ * Partagé par le Planning et le tableau de bord, pour que « à préparer » ne
+ * compte pas un brouillon que le Planning ne montre plus.
+ */
+export function sheetShownForWeek(
+  status: string,
+  client: WeekExpectationRow | undefined,
+  weekStart: string,
+): boolean {
+  if (!["draft", "internal_review", "ready_to_send"].includes(status)) return true;
+  return !client || weekLifecycle(client, weekStart).canProduce;
+}
+
+function lifecycleOf(row: WeekExpectationRow, formula: ClientFormula, weekStart: string): ClientLifecycle {
+  return clientLifecycleForWeek({
     isActive: row.is_active,
     kind: parseClientKind(row.client_kind),
     contractStartDate: formula.contractStartDate,
     contractEndDate: formula.contractEndDate,
     pauseStartDate: formula.pauseStartDate,
     pauseEndDate: formula.pauseEndDate,
+    publicationWeekdays: formula.publicationWeekdays,
   }, weekStart);
-  if (!lifecycle.canProduce) return { kind: "off_contract" };
+}
+
+/**
+ * @param weekStart lundi de la semaine, en date civile. Le numéro de semaine
+ * ISO en est déduit : le passer à part laissait la porte ouverte à un lundi et
+ * un numéro qui ne se correspondent pas.
+ */
+export function weekExpectation(row: WeekExpectationRow, weekStart: string): WeekExpectation {
+  const formula = clientFormula(row);
+  if (!lifecycleOf(row, formula, weekStart).canProduce) return { kind: "off_contract" };
 
   const { week } = isoWeekIdentity(new Date(`${weekStart}T00:00:00Z`));
   const formats = weeklyFormatsForCadence(formula.cadence, week);

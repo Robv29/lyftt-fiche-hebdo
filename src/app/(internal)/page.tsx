@@ -19,7 +19,7 @@ import { clientLifecycle, todayInParis as civilToday, parseClientKind } from "@/
 import { HEALTH_TARGET, healthTone, topHealthAction } from "@/lib/domain/health-score";
 import { defaultMetricsSince, readAgencyMetrics, type AgencyMetrics } from "@/lib/metrics/agency-metrics";
 import { ScoreRing } from "@/components/ScoreRing";
-import { sheetsToCreate } from "@/lib/domain/week-expectation";
+import { sheetShownForWeek, sheetsToCreate } from "@/lib/domain/week-expectation";
 import { ShootingReminders } from "./ShootingReminders";
 
 function todayInParis(): string {
@@ -68,7 +68,7 @@ export default async function DashboardPage() {
      * paraître avancée sans un seul média.
      */
     supabase.from("weekly_sheets")
-      .select("id, client_id, weekly_sheet_items ( caption, hashtags, format, media_asset_id, media_external_url, is_cancelled )")
+      .select("id, client_id, status, weekly_sheet_items ( caption, hashtags, format, media_asset_id, media_external_url, is_cancelled )")
       .gte("period_start", range.nextStart)
       .lte("period_start", range.nextEnd),
   ]);
@@ -98,11 +98,14 @@ export default async function DashboardPage() {
     client_contacts: Array<{ first_name: string | null; is_primary: boolean }> | null;
   }>;
 
-  const nextWeekSheets = (preparationResult.data ?? []) as unknown as Array<{
+  // Même visibilité que le Planning : un brouillon hors gestion n'est ni du travail à préparer, ni une semaine couverte.
+  const clientById = new Map(activeClients.map((client) => [client.id, client]));
+  const nextWeekSheets = ((preparationResult.data ?? []) as unknown as Array<{
     id: string;
     client_id: string;
+    status: string;
     weekly_sheet_items: Array<{ caption: string | null; hashtags: string[] | null; format: string; media_asset_id: string | null; media_external_url: string | null; is_cancelled: boolean }>;
-  }>;
+  }>).filter((sheet) => sheetShownForWeek(sheet.status, clientById.get(sheet.client_id), range.nextStart));
   const incompleteSheets = nextWeekSheets.filter((sheet) => sheetCompletion(
     (sheet.weekly_sheet_items ?? []).map((item) => ({
       caption: item.caption,
