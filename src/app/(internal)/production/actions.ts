@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { EDITORIAL_ROLES } from "@/lib/internal/authorization";
+import { loadProductionAssignees, type ProductionAssignee } from "@/lib/internal/production-assignees";
 import { sanitizeText } from "@/lib/security/sanitize";
 import { prepareCorrectionForClient, transitionTicket } from "@/lib/internal/actions";
 import { depositSummary, visualsValidationState } from "@/lib/domain/planning";
@@ -46,7 +48,39 @@ const createSchema = z.object({
    * est plafonné — une photo de téléphone le dépasse sans peine.
    */
   referenceMediaId: z.string().uuid().optional(),
+  /* Personne de production à qui la commande est confiée. */
+  assignedTo: z.string().uuid("Choisissez à qui confier la demande.").optional(),
 });
+
+function formatDueDay(dueOn: string): string {
+  return new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" })
+    .format(new Date(`${dueOn}T12:00:00Z`));
+}
+
+/**
+ * Prévenir la personne à qui l'on confie une commande.
+ *
+ * Les notifications ne se lisent qu'entre soi (RLS) : écrire pour quelqu'un
+ * d'autre passe par la clé service, et seulement une fois la commande écrite
+ * au nom de l'utilisateur — c'est cette écriture qui a vérifié le périmètre.
+ * Un échec ici ne défait pas l'affectation : la carte « Pour vous » et la
+ * pastille de navigation suffisent à la faire voir.
+ */
+async function notifyAssignee(input: {
+  assigneeId: string;
+  byName: string;
+  title: string;
+  clientName: string | null;
+  dueOn: string;
+}) {
+  const admin = createSupabaseAdminClient();
+  const { error } = await admin.from("internal_notifications").insert({
+    profile_id: input.assigneeId,
+    title: "Production à réaliser",
+    body: `${input.byName} vous confie : ${input.title}${input.clientName ? ` — ${input.clientName}` : ""}, pour le ${formatDueDay(input.dueOn)}.`,
+  });
+  if (error) console.error("[production] notification non envoyée", error.message);
+}
 
 export async function createProductionRequest(formData: FormData): Promise<ProductionActionResult> {
   const profile = await requireProfile();
@@ -59,16 +93,33 @@ export async function createProductionRequest(formData: FormData): Promise<Produ
     brief: formData.get("brief") ?? undefined,
     dueOn: formData.get("dueOn"),
     referenceMediaId: formData.get("referenceMediaId") || undefined,
+    assignedTo: formData.get("assignedTo") || undefined,
   });
   if (!parsed.success) {
     return { ok: false, message: parsed.error.issues[0]?.message ?? "Formulaire invalide." };
   }
 
+  /*
+   * Même liste que le menu du formulaire : dès qu'il existe quelqu'un en
+   * production, la demande doit lui être confiée — une commande sans
+   * destinataire est celle que chacun croit prise par l'autre.
+   */
+  const { assignees, error: assigneesError } = await loadProductionAssignees();
+  if (assigneesError) return { ok: false, message: `Liste de la production indisponible : ${assigneesError}` };
+  let assignee: ProductionAssignee | null = null;
+  if (parsed.data.assignedTo) {
+    assignee = assignees.find((person) => person.id === parsed.data.assignedTo) ?? null;
+    if (!assignee) return { ok: false, message: "Cette personne ne reçoit plus de commandes de production." };
+  } else if (assignees.length > 0) {
+    return { ok: false, message: "Choisissez à qui confier la demande." };
+  }
+
   const supabase = await createSupabaseServerClient();
-  const { error } = await supabase.from("production_requests").insert({
+  const title = sanitizeText(parsed.data.title, 160);
+  const { data: created, error } = await supabase.from("production_requests").insert({
     client_id: parsed.data.clientId,
     kind: parsed.data.kind,
-    title: sanitizeText(parsed.data.title, 160),
+    title,
     brief: parsed.data.brief ? sanitizeText(parsed.data.brief, 2000) : null,
     due_on: parsed.data.dueOn,
     requested_by: profile.id,
@@ -78,12 +129,25 @@ export async function createProductionRequest(formData: FormData): Promise<Produ
      */
     requested_by_name: profile.full_name ?? null,
     reference_media_id: parsed.data.referenceMediaId ?? null,
-  });
+    assigned_to: assignee?.id ?? null,
+    assigned_to_name: assignee?.fullName ?? null,
+  }).select("id, clients ( name )").single();
 
-  if (error) return { ok: false, message: `Demande non enregistrée : ${error.message}` };
+  if (error || !created) return { ok: false, message: `Demande non enregistrée : ${error?.message ?? "réessayez."}` };
+
+  if (assignee && assignee.id !== profile.id) {
+    await notifyAssignee({
+      assigneeId: assignee.id,
+      byName: profile.full_name,
+      title,
+      clientName: (created.clients as unknown as { name: string } | null)?.name ?? null,
+      dueOn: parsed.data.dueOn,
+    });
+  }
 
   revalidatePath("/production");
-  return { ok: true, message: "Demande envoyée à la production." };
+  revalidatePath("/historique/production");
+  return { ok: true, message: assignee ? `Demande confiée à ${assignee.label}.` : "Demande envoyée à la production." };
 }
 
 const KIND_EXPECTATIONS: Record<string, "image" | "video"> = {
@@ -150,12 +214,36 @@ export async function deliverProductionRequest(formData: FormData): Promise<Prod
     media_asset_id: asset.id,
     status: "livree",
     delivered_at: new Date().toISOString(),
+    // Qui a livré : l'historique de production le dit à côté de la date.
+    delivered_by: profile.id,
+    delivered_by_name: profile.full_name ?? null,
   }).eq("id", request.id);
 
   if (error) return { ok: false, message: `Livraison non enregistrée : ${error.message}` };
 
   revalidatePath("/production");
+  revalidatePath("/historique/production");
   return { ok: true, message: "Fichier livré. Le demandeur peut valider." };
+}
+
+/**
+ * Qui peut clore ou rouvrir une commande : son demandeur, et l'encadrement.
+ * Le bouton n'apparaît qu'au demandeur ; la garde tient même sans l'écran.
+ */
+async function readClosableRequest(requestId: string, profile: { id: string; role: string }) {
+  const supabase = await createSupabaseServerClient();
+  const { data: request } = await supabase
+    .from("production_requests")
+    .select("id, requested_by, status")
+    .eq("id", requestId)
+    .maybeSingle();
+  if (!request) return { supabase, request: null, error: "Commande introuvable ou accès refusé." };
+  const isOwner = request.requested_by === profile.id;
+  const isManager = ["super_admin", "production_manager"].includes(profile.role);
+  if (!isOwner && !isManager) {
+    return { supabase, request: null, error: "Seul le demandeur peut valider ou renvoyer cette commande." };
+  }
+  return { supabase, request, error: null };
 }
 
 /** Validation par le demandeur : la commande est close. */
@@ -166,15 +254,25 @@ export async function validateProductionRequest(requestId: string): Promise<Prod
   const parsed = z.string().uuid().safeParse(requestId);
   if (!parsed.success) return { ok: false, message: "Commande invalide." };
 
-  const supabase = await createSupabaseServerClient();
-  const { error } = await supabase.from("production_requests").update({
+  const { supabase, request, error: denied } = await readClosableRequest(parsed.data, profile);
+  if (!request) return { ok: false, message: denied ?? ACCESS_DENIED };
+  // Valider ce qui n'a pas été livré fausserait l'historique : rien à valider.
+  if (request.status !== "livree") {
+    return { ok: false, message: request.status === "validee" ? "Commande déjà validée." : "Rien n'a encore été livré." };
+  }
+
+  const { data: updated, error } = await supabase.from("production_requests").update({
     status: "validee",
     validated_at: new Date().toISOString(),
-  }).eq("id", parsed.data);
+    validated_by: profile.id,
+    validated_by_name: profile.full_name ?? null,
+  }).eq("id", parsed.data).eq("status", "livree").select("id");
 
   if (error) return { ok: false, message: `Validation impossible : ${error.message}` };
+  if (!updated?.length) return { ok: false, message: "La commande a changé entre-temps. Rechargez la page." };
 
   revalidatePath("/production");
+  revalidatePath("/historique/production");
   return { ok: true, message: "Commande validée." };
 }
 
@@ -191,16 +289,24 @@ export async function reopenProductionRequest(requestId: string): Promise<Produc
   const parsed = z.string().uuid().safeParse(requestId);
   if (!parsed.success) return { ok: false, message: "Commande invalide." };
 
-  const supabase = await createSupabaseServerClient();
+  const { supabase, request, error: denied } = await readClosableRequest(parsed.data, profile);
+  if (!request) return { ok: false, message: denied ?? ACCESS_DENIED };
+  if (request.status === "a_faire") return { ok: false, message: "Commande déjà en production." };
+
   const { error } = await supabase.from("production_requests").update({
     status: "a_faire",
     delivered_at: null,
+    delivered_by: null,
+    delivered_by_name: null,
     validated_at: null,
+    validated_by: null,
+    validated_by_name: null,
   }).eq("id", parsed.data);
 
   if (error) return { ok: false, message: `Réouverture impossible : ${error.message}` };
 
   revalidatePath("/production");
+  revalidatePath("/historique/production");
   return { ok: true, message: "Commande renvoyée en production." };
 }
 
@@ -230,7 +336,70 @@ export async function deleteProductionRequest(requestId: string): Promise<Produc
   if (error) return { ok: false, message: `Retrait impossible : ${error.message}` };
 
   revalidatePath("/production");
+  revalidatePath("/historique/production");
   return { ok: true, message: "Commande retirée." };
+}
+
+/**
+ * Confier une commande à quelqu'un d'autre.
+ *
+ * Congés, surcharge, compétence : la personne choisie à la commande n'est pas
+ * toujours celle qui la fera. Le changement reste possible tant que rien n'est
+ * livré ; après, l'historique doit dire à qui la commande était confiée quand
+ * elle a été rendue.
+ */
+export async function assignProductionRequest(requestId: string, assigneeId: string): Promise<ProductionActionResult> {
+  const profile = await requireProfile();
+  if (!profile) return { ok: false, message: ACCESS_DENIED };
+
+  const ids = z.object({ requestId: z.string().uuid(), assigneeId: z.string().uuid() })
+    .safeParse({ requestId, assigneeId });
+  if (!ids.success) return { ok: false, message: "Affectation invalide." };
+
+  // Lecture sous RLS d'abord : hors périmètre, la commande n'existe pas.
+  const supabase = await createSupabaseServerClient();
+  const { data: request } = await supabase
+    .from("production_requests")
+    .select("id, title, due_on, status, requested_by, assigned_to, clients ( name )")
+    .eq("id", ids.data.requestId)
+    .maybeSingle();
+  if (!request) return { ok: false, message: "Commande introuvable ou accès refusé." };
+
+  const isOwner = request.requested_by === profile.id;
+  if (!isOwner && !EDITORIAL_ROLES.includes(profile.role)) {
+    return { ok: false, message: "Seuls le demandeur et l'encadrement changent l'affectation." };
+  }
+  if (request.status !== "a_faire") {
+    return { ok: false, message: "Commande déjà livrée : l'affectation ne change plus." };
+  }
+
+  const { assignees, error: assigneesError } = await loadProductionAssignees();
+  if (assigneesError) return { ok: false, message: `Liste de la production indisponible : ${assigneesError}` };
+  const assignee = assignees.find((person) => person.id === ids.data.assigneeId);
+  if (!assignee) return { ok: false, message: "Cette personne ne reçoit plus de commandes de production." };
+  if (request.assigned_to === assignee.id) return { ok: true, message: `Déjà confiée à ${assignee.label}.` };
+
+  const { data: updated, error } = await supabase.from("production_requests").update({
+    assigned_to: assignee.id,
+    assigned_to_name: assignee.fullName,
+  }).eq("id", request.id).eq("status", "a_faire").select("id");
+
+  if (error) return { ok: false, message: `Affectation impossible : ${error.message}` };
+  if (!updated?.length) return { ok: false, message: "La commande a changé entre-temps. Rechargez la page." };
+
+  if (assignee.id !== profile.id) {
+    await notifyAssignee({
+      assigneeId: assignee.id,
+      byName: profile.full_name,
+      title: request.title as string,
+      clientName: (request.clients as unknown as { name: string } | null)?.name ?? null,
+      dueOn: request.due_on as string,
+    });
+  }
+
+  revalidatePath("/production");
+  revalidatePath("/historique/production");
+  return { ok: true, message: `Confiée à ${assignee.label}.` };
 }
 
 // ---------------------------------------------------------------------------

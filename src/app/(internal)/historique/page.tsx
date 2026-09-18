@@ -11,6 +11,7 @@ import {
 } from "@/lib/domain/history";
 import { HistoryToolbar } from "./HistoryToolbar";
 import { HistoryView } from "./HistoryView";
+import { HistoriqueTabs } from "./HistoriqueTabs";
 
 export const dynamic = "force-dynamic";
 
@@ -40,6 +41,7 @@ export default async function HistoriquePage({ searchParams }: { searchParams: P
     return (
       <div className="space-y-6">
         <header><p className="eyebrow">Suivi</p><h1 className="page-title mt-1">Historique</h1></header>
+        <HistoriqueTabs active="clients"/>
         <p className="card px-4 py-8 text-center text-sm text-ink-faint">Aucun client enregistré.</p>
       </div>
     );
@@ -189,6 +191,9 @@ export default async function HistoriquePage({ searchParams }: { searchParams: P
           Édité le {dayOnly.format(new Date())}
         </p>
       </header>
+
+      {/* Le client ne suit que s'il a été choisi : par défaut, la production se lit tous clients confondus. */}
+      <HistoriqueTabs active="clients" clientId={requested === selected.id ? selected.id : null}/>
 
       <HistoryToolbar clients={clients ?? []} selectedId={selected.id} clientName={selected.name}/>
 

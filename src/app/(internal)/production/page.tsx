@@ -15,6 +15,9 @@ import { ProductionRequests, type ProductionRequestRow } from "./ProductionReque
 import { TicketCorrections, type TicketCorrectionRow } from "./TicketCorrections";
 import { ProductionOverview, type OverviewRow } from "./ProductionOverview";
 import { ProductionTabs } from "./ProductionTabs";
+import { EDITORIAL_ROLES } from "@/lib/internal/authorization";
+import { loadProductionAssignees } from "@/lib/internal/production-assignees";
+import { firstNameOf, PRODUCTION_ASSIGNEE_ROLES } from "@/lib/domain/production-requests";
 
 /**
  * §22 — Espace de production.
@@ -56,10 +59,10 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
   const weekRange = planningWeekRange(viewedNow);
   const currentIso = isoWeekIdentity(viewedNow);
 
-  const [{ data: rawRequests }, { data: overviewClients }, { data: rawCurrentSheets }] = await Promise.all([
+  const [{ data: rawRequests }, { data: overviewClients }, { data: rawCurrentSheets }, { assignees }] = await Promise.all([
     supabase
       .from("production_requests")
-      .select(`id, client_id, kind, title, brief, due_on, status, requested_by, requested_by_name, clients ( name ),
+      .select(`id, client_id, kind, title, brief, due_on, status, requested_by, requested_by_name, assigned_to, assigned_to_name, clients ( name ),
         media_assets:media_asset_id ( kind, file_name, storage_path, preview_path, purged_at, preview_purged_at ),
         reference:reference_media_id ( storage_path, preview_path, purged_at, preview_purged_at )`)
       .order("due_on", { ascending: true }),
@@ -74,8 +77,12 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
         clients ( id, name ),
         weekly_sheet_items ( caption, hashtags, format, media_asset_id, media_external_url, is_cancelled )`)
       .eq("period_start", weekRange.currentStart),
+    // Personnes à qui confier une commande : le menu « Confier à ».
+    loadProductionAssignees(),
   ]);
   const requestClients = overviewClients;
+  const assigneeLabelById = new Map(assignees.map((person) => [person.id, person.label]));
+  const canManageRequests = EDITORIAL_ROLES.includes(profile?.role ?? "observer");
 
   const today = todayInParis();
   const requests: ProductionRequestRow[] = await Promise.all((rawRequests ?? []).map(async (row) => {
@@ -99,6 +106,13 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
       status: row.status as ProductionRequestRow["status"],
       requestedByName: (row.requested_by_name as string | null) ?? null,
       isMine: row.requested_by === profile?.id,
+      assignedToId: (row.assigned_to as string | null) ?? null,
+      assigneeLabel: row.assigned_to
+        ? assigneeLabelById.get(row.assigned_to as string) ?? firstNameOf(row.assigned_to_name as string | null)
+        : firstNameOf(row.assigned_to_name as string | null),
+      assignedToViewer: Boolean(row.assigned_to) && row.assigned_to === profile?.id,
+      // Tant que rien n'est livré, le demandeur et l'encadrement peuvent confier à quelqu'un d'autre.
+      canReassign: row.status === "a_faire" && (row.requested_by === profile?.id || canManageRequests),
       mediaUrl: resolved?.url ?? null,
       mediaFileName: media?.file_name ?? null,
       mediaKind: media?.kind ?? null,
@@ -280,6 +294,8 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
         requests={requests}
         clients={(requestClients ?? []).map((client) => ({ id: client.id as string, name: client.name as string }))}
         canRequest={!isProductionRole}
+        assignees={assignees.map((person) => ({ id: person.id, label: person.label }))}
+        viewerProduces={(PRODUCTION_ASSIGNEE_ROLES as readonly string[]).includes(profile?.role ?? "")}
       />
 
       <div className="flex items-baseline justify-between gap-3">

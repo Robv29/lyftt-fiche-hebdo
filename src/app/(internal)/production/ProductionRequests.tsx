@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { uploadMediaDirect } from "@/lib/media/direct-upload";
 import {
+  assignProductionRequest,
   createProductionRequest,
   deleteProductionRequest,
   deliverProductionRequest,
@@ -27,6 +28,14 @@ export interface ProductionRequestRow {
   requestedByName: string | null;
   /** La commande a-t-elle été passée par la personne connectée ? */
   isMine: boolean;
+  /** Personne de production à qui la commande est confiée. */
+  assignedToId: string | null;
+  /** Son prénom, tel qu'affiché dans le menu « Confier à ». */
+  assigneeLabel: string | null;
+  /** La commande est-elle confiée à la personne connectée ? */
+  assignedToViewer: boolean;
+  /** La personne connectée peut-elle la confier à quelqu'un d'autre ? */
+  canReassign: boolean;
   mediaUrl: string | null;
   mediaFileName: string | null;
   mediaKind: string | null;
@@ -58,6 +67,9 @@ function formatDay(date: string): string {
   }).format(new Date(`${date}T00:00:00Z`));
 }
 
+/** Filtre de la file : tout, ce qui vous est confié, ce qui n'est confié à personne. */
+type RequestFilter = "toutes" | "pour_vous" | "a_confier";
+
 /**
  * Commandes de production internes.
  *
@@ -70,10 +82,16 @@ export function ProductionRequests({
   requests,
   clients,
   canRequest,
+  assignees,
+  viewerProduces,
 }: {
   requests: ProductionRequestRow[];
   clients: { id: string; name: string }[];
   canRequest: boolean;
+  /** Personnes de production actives, par prénom. Vide : la demande part sans destinataire. */
+  assignees: { id: string; label: string }[];
+  /** La personne connectée produit-elle ? Sa vue s'ouvre alors sur ce qui lui est confié. */
+  viewerProduces: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -120,6 +138,19 @@ export function ProductionRequests({
   // Les commandes validées sont closes : elles n'encombrent pas la file.
   const active = requests.filter((request) => request.status !== "validee");
   const awaitingValidation = active.filter((request) => request.status === "livree");
+  const forViewer = active.filter((request) => request.assignedToViewer);
+  const unassigned = active.filter((request) => request.status === "a_faire" && !request.assignedToId);
+  const [filter, setFilter] = useState<RequestFilter>(
+    viewerProduces && forViewer.length > 0 ? "pour_vous" : "toutes",
+  );
+  const shown = filter === "pour_vous" ? forViewer : filter === "a_confier" ? unassigned : active;
+  const filters: { key: RequestFilter; label: string; count: number }[] = [
+    { key: "toutes", label: "Toutes", count: active.length },
+    { key: "pour_vous", label: "Pour vous", count: forViewer.length },
+    ...(unassigned.length > 0 || filter === "a_confier"
+      ? [{ key: "a_confier" as const, label: "À confier", count: unassigned.length }]
+      : []),
+  ];
 
   return (
     <section className="space-y-4">
@@ -129,7 +160,7 @@ export function ProductionRequests({
           <p className="mt-1 text-xs text-ink-faint">
             {active.length === 0
               ? "Aucune commande en cours."
-              : `${active.length} en cours${awaitingValidation.length > 0 ? ` · ${awaitingValidation.length} en attente de validation` : ""}`}
+              : `${active.length} en cours${forViewer.length > 0 ? ` · ${forViewer.length} pour vous` : ""}${awaitingValidation.length > 0 ? ` · ${awaitingValidation.length} en attente de validation` : ""}`}
           </p>
         </div>
         {canRequest && (
@@ -174,7 +205,7 @@ export function ProductionRequests({
             </p>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className={`grid gap-4 ${assignees.length > 0 ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}>
             <div>
               <label className="label" htmlFor="request-client">Client concerné</label>
               <select id="request-client" name="clientId" required className="field" value={clientId} onChange={(event) => setClientId(event.target.value)}>
@@ -184,6 +215,21 @@ export function ProductionRequests({
                 ))}
               </select>
             </div>
+            {/*
+              Aucun choix par défaut : confier une commande est une décision,
+              pas un réglage qu'on laisse passer sans le voir.
+            */}
+            {assignees.length > 0 && (
+              <div>
+                <label className="label" htmlFor="request-assignee">Confier à</label>
+                <select id="request-assignee" name="assignedTo" required defaultValue="" className="field">
+                  <option value="" disabled>Choisir…</option>
+                  {assignees.map((person) => (
+                    <option key={person.id} value={person.id}>{person.label}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div>
               <label className="label" htmlFor="request-due">Date limite</label>
               <input id="request-due" name="dueOn" type="date" required className="field"/>
@@ -264,17 +310,37 @@ export function ProductionRequests({
         </form>
       )}
 
-      {active.length === 0 ? (
+      {active.length > 0 && (filter !== "toutes" || forViewer.length > 0 || unassigned.length > 0) && (
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Filtrer les commandes">
+          {filters.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              aria-pressed={filter === item.key}
+              onClick={() => setFilter(item.key)}
+              className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${filter === item.key ? "bg-[#1176d3] text-white" : "bg-white text-ink-soft ring-1 ring-line hover:bg-canvas"}`}
+            >
+              {item.label} · {item.count}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {shown.length === 0 ? (
         <p className="card px-4 py-8 text-center text-sm text-ink-faint">
-          Aucune commande interne en cours.
+          {filter === "pour_vous" ? "Aucune commande ne vous est confiée."
+            : filter === "a_confier" ? "Toutes les commandes sont confiées."
+            : "Aucune commande interne en cours."}
         </p>
       ) : (
         <ul className="grid gap-4 lg:grid-cols-2">
-          {active.map((request) => (
+          {shown.map((request) => (
             <RequestCard
               key={request.id}
               request={request}
               pending={pending}
+              assignees={assignees}
+              onAssign={(assigneeId) => run(() => assignProductionRequest(request.id, assigneeId))}
               onDeliver={(formData) => run(() => deliverProductionRequest(formData))}
               onValidate={() => run(() => validateProductionRequest(request.id))}
               onReopen={() => run(() => reopenProductionRequest(request.id))}
@@ -290,6 +356,8 @@ export function ProductionRequests({
 function RequestCard({
   request,
   pending,
+  assignees,
+  onAssign,
   onDeliver,
   onValidate,
   onReopen,
@@ -297,6 +365,8 @@ function RequestCard({
 }: {
   request: ProductionRequestRow;
   pending: boolean;
+  assignees: { id: string; label: string }[];
+  onAssign: (assigneeId: string) => void;
   onDeliver: (formData: FormData) => void;
   onValidate: () => void;
   onReopen: () => void;
@@ -345,6 +415,12 @@ function RequestCard({
             <div className="flex items-center gap-2">
               <span className="badge bg-[#f1edff] text-[#6f50c9]">{KIND_LABELS[request.kind]}</span>
               <strong className="truncate text-sm">{request.clientName}</strong>
+              {/* Mêmes mots que les corrections clients : « Pour vous », « À confier ». */}
+              {request.assignedToViewer ? (
+                <span className="badge shrink-0 bg-[#e8f2ff] text-[#0b5e9f]">Pour vous</span>
+              ) : request.status === "a_faire" && !request.assignedToId ? (
+                <span className="badge shrink-0 bg-[#fff4e5] text-[#8a5700]">À confier</span>
+              ) : null}
             </div>
             <h3 className="mt-2 text-sm font-semibold leading-snug">{request.title}</h3>
           </div>
@@ -376,9 +452,34 @@ function RequestCard({
           </figure>
         )}
 
-        <p className="mt-3 text-[11px] text-ink-faint">
-          Demandé par {request.requestedByName ?? "l’équipe"}
-        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] text-ink-faint">
+          <span>Demandé par {request.requestedByName ?? "l’équipe"}</span>
+          {/* « Pour vous » et « À confier » sont déjà dits en tête de carte. */}
+          {request.canReassign && assignees.length > 0 ? (
+            <label className="inline-flex items-center gap-1.5">
+              <span aria-hidden="true">·</span>
+              <span>Confiée à</span>
+              <select
+                aria-label={`Confier la commande « ${request.title} » à`}
+                className="rounded-lg border border-line bg-white px-2 py-1 text-xs text-ink"
+                value={request.assignedToId ?? ""}
+                disabled={pending}
+                onChange={(event) => { if (event.target.value) onAssign(event.target.value); }}
+              >
+                <option value="" disabled>À confier</option>
+                {/* Personne qui ne produit plus : gardée affichée, plus proposée. */}
+                {request.assignedToId && !assignees.some((person) => person.id === request.assignedToId) && (
+                  <option value={request.assignedToId} disabled>{request.assigneeLabel ?? "Ancien membre"}</option>
+                )}
+                {assignees.map((person) => (
+                  <option key={person.id} value={person.id}>{person.label}</option>
+                ))}
+              </select>
+            </label>
+          ) : request.assigneeLabel && !request.assignedToViewer ? (
+            <span>· Pour {request.assigneeLabel}</span>
+          ) : null}
+        </div>
       </div>
 
       {/*
