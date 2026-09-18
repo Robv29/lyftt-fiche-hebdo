@@ -1,7 +1,7 @@
-import { NextResponse, type NextRequest } from "next/server";
+import "server-only";
+
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { cronAuthorizationError } from "@/lib/internal/cron-auth";
-import { parseClientKind, todayInParis } from "@/lib/domain/client-lifecycle";
+import { parseClientKind } from "@/lib/domain/client-lifecycle";
 import {
   FOLLOW_UP_BOOKING_URL,
   followUpKey,
@@ -15,49 +15,31 @@ import {
   buildFollowUpSubject,
   buildFollowUpText,
 } from "@/lib/notifications/monthly-follow-up";
+import { AGENCY_DISPLAY_NAME, AGENCY_REPLY_TO } from "@/lib/notifications/agency";
 import { RESEND_BATCH_LIMIT, isEmailConfigured, sendEmailBatch } from "@/lib/notifications/resend";
+import type { CampaignRun } from "./types";
 
 /**
  * Bilan mensuel : le 5 du mois, chaque client en gestion active reçoit une
  * proposition de rendez-vous de suivi.
  *
- * Tâche planifiée du 5 au 7 à 9 h (heure d'été) : le 5 envoie, les deux jours
- * suivants rattrapent un passage manqué. Chaque envoi est réservé en base avant
- * de partir ; un contact déjà servi ce mois-ci n'est jamais resollicité.
+ * Lancé chaque jour par la tâche des e-mails clients, il n'agit que du 5 au 7 :
+ * le 5 envoie, les deux jours suivants rattrapent un passage manqué. Chaque
+ * envoi est réservé en base avant de partir ; un contact déjà servi ce mois-ci
+ * n'est jamais resollicité.
  *
- * `?apercu=1` liste les destinataires du jour sans rien envoyer, même hors
- * calendrier — de quoi vérifier la liste avant le premier passage.
+ * En aperçu, il liste les destinataires du jour sans rien envoyer, même hors
+ * calendrier — de quoi vérifier la liste avant un passage.
  */
-
-/*
- * Le rendez-vous se prend dans l'agenda de Théo : c'est donc à lui que le
- * client répond, pas à l'adresse technique d'envoi.
- */
-const REPLY_TO = "theo.simbert@lyftt.fr";
-
-export const dynamic = "force-dynamic";
-export const maxDuration = 60;
-
-// Vercel déclenche ses tâches planifiées en GET.
-export const GET = handle;
-export const POST = handle;
-
-async function handle(request: NextRequest) {
-  const denied = cronAuthorizationError(request);
-  if (denied) return denied;
-
-  const today = todayInParis();
-  const preview = request.nextUrl.searchParams.get("apercu") === "1";
+export async function runMonthlyFollowUp(today: string, preview: boolean): Promise<CampaignRun> {
+  const campaign = "bilan_mensuel";
 
   if (!preview && !isFollowUpDay(today)) {
-    return NextResponse.json({ skipped: `Aucun bilan à proposer le ${today}.` });
+    return { campaign, status: 200, body: { skipped: `Aucun bilan à proposer le ${today}.` } };
   }
   if (!preview && !isEmailConfigured()) {
     console.error("[bilan mensuel] messagerie non configurée");
-    return NextResponse.json(
-      { error: "Messagerie non configurée (RESEND_API_KEY et MAIL_FROM)." },
-      { status: 503 },
-    );
+    return { campaign, status: 503, body: { error: "Messagerie non configurée (RESEND_API_KEY et MAIL_FROM)." } };
   }
 
   const admin = createSupabaseAdminClient();
@@ -78,7 +60,7 @@ async function handle(request: NextRequest) {
   if (clientsError || sentError) {
     const message = clientsError?.message ?? sentError?.message;
     console.error("[bilan mensuel] lecture impossible", message);
-    return NextResponse.json({ error: `Lecture impossible : ${message}` }, { status: 500 });
+    return { campaign, status: 500, body: { error: `Lecture impossible : ${message}` } };
   }
 
   const recipients = followUpRecipients({
@@ -106,14 +88,17 @@ async function handle(request: NextRequest) {
   });
 
   if (preview) {
-    return NextResponse.json({
-      today,
-      period,
-      recipients: recipients.map((recipient) => ({
-        email: recipient.email,
-        clients: recipient.clients.map((client) => client.name),
-      })),
-    });
+    return {
+      campaign,
+      status: 200,
+      body: {
+        period,
+        recipients: recipients.map((recipient) => ({
+          email: recipient.email,
+          clients: recipient.clients.map((client) => client.name),
+        })),
+      },
+    };
   }
 
   const reviewedMonth = reviewedMonthName(today);
@@ -175,8 +160,8 @@ async function handle(request: NextRequest) {
         subject: buildFollowUpSubject(input),
         html: buildFollowUpHtml(input),
         text: buildFollowUpText(input),
-        replyTo: REPLY_TO,
-        displayName: "Lyftt",
+        replyTo: AGENCY_REPLY_TO,
+        displayName: AGENCY_DISPLAY_NAME,
       };
     }));
 
@@ -208,8 +193,9 @@ async function handle(request: NextRequest) {
   }
 
   if (failures.length > 0) console.error("[bilan mensuel] échecs", failures);
-  return NextResponse.json(
-    { period, sent: sentCount, failures },
-    { status: failures.length > 0 ? 502 : 200 },
-  );
+  return {
+    campaign,
+    status: failures.length > 0 ? 502 : 200,
+    body: { period, sent: sentCount, failures },
+  };
 }

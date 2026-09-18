@@ -5,8 +5,8 @@
       "schedule": "17 3 * * *"
     },
     {
-      "path": "/api/maintenance/suivi-mensuel",
-      "schedule": "0 7 5-7 * *"
+      "path": "/api/maintenance/emails-clients",
+      "schedule": "0 7 * * *"
     }
   ]
 }
