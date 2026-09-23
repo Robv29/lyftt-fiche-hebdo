@@ -15,15 +15,22 @@ import { ProductionRequests, type ProductionRequestRow } from "./ProductionReque
 import { TicketCorrections, type TicketCorrectionRow } from "./TicketCorrections";
 import { ProductionOverview, type OverviewRow } from "./ProductionOverview";
 import { ProductionTabs } from "./ProductionTabs";
-import { EDITORIAL_ROLES } from "@/lib/internal/authorization";
 import { loadProductionAssignees } from "@/lib/internal/production-assignees";
+import { loadProductionRequestClients } from "@/lib/internal/production-clients";
 import { firstNameOf, PRODUCTION_ASSIGNEE_ROLES } from "@/lib/domain/production-requests";
+import { productionRequestRights } from "@/lib/domain/production-board";
 
 /**
  * §22 — Espace de production.
  *
  * Graphistes et vidéastes ne voient que les tickets qui leur sont affectés :
  * la restriction est appliquée par RLS (`can_access_ticket`), pas seulement ici.
+ *
+ * Les commandes internes, elles, se lisent en entier : toute l'équipe voit le
+ * plan de charge de l'agence (`production_requests_select_equipe`). Agir dessus
+ * reste réservé aux personnes concernées — demandeur, affectataire,
+ * encadrement —, et c'est `productionRequestRights` qui le dit, ici comme dans
+ * les actions serveur.
  */
 const MAX_WEEK_OFFSET = 6;
 
@@ -52,19 +59,30 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
   );
 
   /*
-   * Commandes internes : la RLS borne déjà la lecture au périmètre de chacun.
-   * Les médias livrés sont signés ici — bucket privé oblige.
+   * Commandes internes : la file porte celles de toute l'agence. Les commandes
+   * validées sont closes — elles sont écartées ici plutôt qu'à l'écran, sans
+   * quoi la page chargerait tout l'historique de l'agence pour n'en rien faire.
+   *
+   * Les médias livrés sont signés ici — bucket privé oblige. La signature
+   * emploie la clé service : elle ne doit donc porter que sur ce que la
+   * jointure a rendu, et la jointure est soumise à `media_assets_select`
+   * (`can_access_client`). Hors périmètre, elle revient nulle et rien n'est
+   * signé. Ne jamais signer depuis une colonne scalaire.
    */
   const viewedNow = new Date(Date.now() + weekOffset * 7 * 86400000);
   const weekRange = planningWeekRange(viewedNow);
   const currentIso = isoWeekIdentity(viewedNow);
 
-  const [{ data: rawRequests }, { data: overviewClients }, { data: rawCurrentSheets }, { assignees }] = await Promise.all([
+  const [{ data: rawRequests }, { data: overviewClients }, { data: rawCurrentSheets }, { assignees }, { names: requestClientNames, error: clientNamesError }] = await Promise.all([
     supabase
       .from("production_requests")
-      .select(`id, client_id, kind, title, brief, due_on, status, requested_by, requested_by_name, assigned_to, assigned_to_name, clients ( name ),
+      .select(`id, client_id, kind, title, brief, due_on, status, created_at, delivered_at,
+        requested_by, requested_by_name, assigned_to, assigned_to_name,
+        media_asset_id, reference_media_id,
+        clients ( name ),
         media_assets:media_asset_id ( kind, file_name, storage_path, preview_path, purged_at, preview_purged_at ),
         reference:reference_media_id ( storage_path, preview_path, purged_at, preview_purged_at )`)
+      .neq("status", "validee")
       .order("due_on", { ascending: true }),
     supabase
       .from("clients")
@@ -79,10 +97,19 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
       .eq("period_start", weekRange.currentStart),
     // Personnes à qui confier une commande : le menu « Confier à ».
     loadProductionAssignees(),
+    // Noms des clients de la file — et rien d'autre de leur fiche.
+    loadProductionRequestClients(),
   ]);
+  // La panne ne doit pas passer inaperçue : les noms retombent sur la jointure, mais on veut le savoir.
+  if (clientNamesError) console.error("[production] noms des clients indisponibles", clientNamesError);
+  /*
+   * Le formulaire de commande, lui, reste borné au périmètre : on ne commande
+   * que pour un client qu'on suit, et c'est `production_requests_write` qui le
+   * tient en base.
+   */
   const requestClients = overviewClients;
   const assigneeLabelById = new Map(assignees.map((person) => [person.id, person.label]));
-  const canManageRequests = EDITORIAL_ROLES.includes(profile?.role ?? "observer");
+  const viewer = profile ? { id: profile.id, role: profile.role } : null;
 
   const today = todayInParis();
   const requests: ProductionRequestRow[] = await Promise.all((rawRequests ?? []).map(async (row) => {
@@ -95,32 +122,61 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
     const resolvedReference = reference
       ? await resolveMediaUrl({ storagePath: reference.storage_path, previewPath: reference.preview_path, purgedAt: reference.purged_at, previewPurgedAt: reference.preview_purged_at })
       : null;
+    const status = row.status as ProductionRequestRow["status"];
+    // Unique règle d'autorité : la même dans les six actions serveur.
+    const rights = productionRequestRights(
+      {
+        requestedBy: (row.requested_by as string | null) ?? null,
+        assignedTo: (row.assigned_to as string | null) ?? null,
+        status,
+      },
+      viewer,
+    );
     return {
       id: row.id as string,
       clientId: row.client_id as string,
-      clientName: (row.clients as unknown as { name: string } | null)?.name ?? "Client",
+      /*
+       * Le nom vient de la fonction ouverte à toute l'équipe ; si elle manque
+       * ou tombe, la jointure nomme encore les clients du périmètre du lecteur,
+       * comme avant l'élargissement. Seules les lignes hors périmètre
+       * retombent sur « Client ».
+       */
+      clientName: requestClientNames.get(row.client_id as string)
+        ?? (row.clients as unknown as { name: string } | null)?.name
+        ?? "Client",
       kind: row.kind as ProductionRequestRow["kind"],
       title: row.title as string,
       brief: (row.brief as string | null) ?? null,
       dueOn: row.due_on as string,
-      status: row.status as ProductionRequestRow["status"],
+      createdAt: row.created_at as string,
+      deliveredAt: (row.delivered_at as string | null) ?? null,
+      status,
       requestedByName: (row.requested_by_name as string | null) ?? null,
-      isMine: row.requested_by === profile?.id,
+      isMine: rights.isRequester,
       assignedToId: (row.assigned_to as string | null) ?? null,
       assigneeLabel: row.assigned_to
         ? assigneeLabelById.get(row.assigned_to as string) ?? firstNameOf(row.assigned_to_name as string | null)
         : firstNameOf(row.assigned_to_name as string | null),
-      assignedToViewer: Boolean(row.assigned_to) && row.assigned_to === profile?.id,
-      // Tant que rien n'est livré, le demandeur et l'encadrement peuvent confier à quelqu'un d'autre.
-      canReassign: row.status === "a_faire" && (row.requested_by === profile?.id || canManageRequests),
+      assignedToViewer: rights.isAssignee,
+      isConcerned: rights.isConcerned,
+      canDeliver: rights.canDeliver,
+      canValidate: rights.canValidate,
+      canReopen: rights.canReopen,
+      canDelete: rights.canDelete,
+      canReassign: rights.canReassign,
       mediaUrl: resolved?.url ?? null,
       mediaFileName: media?.file_name ?? null,
       mediaKind: media?.kind ?? null,
+      /*
+       * Un fichier a été livré, un exemple a été joint : la colonne le dit même
+       * quand la jointure revient nulle faute d'accès au client. La carte
+       * annonce alors leur existence sans les montrer — le contenu d'un client
+       * ne circule pas hors de son équipe.
+       */
+      hasMedia: Boolean(row.media_asset_id),
+      hasReference: Boolean(row.reference_media_id),
       referenceUrl: resolvedReference?.url ?? null,
-      urgency: productionUrgency(
-        { dueOn: row.due_on as string, status: row.status as ProductionRequestRow["status"] },
-        today,
-      ),
+      urgency: productionUrgency({ dueOn: row.due_on as string, status }, today),
     };
   }));
 

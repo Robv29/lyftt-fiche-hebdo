@@ -4,6 +4,7 @@ import { appRoleLabel } from "@/lib/domain/types";
 import { nextDay, todayInParis } from "@/lib/domain/client-lifecycle";
 import { InternalShell } from "@/components/InternalShell";
 import { EDITORIAL_ROLES } from "@/lib/internal/authorization";
+import { PRODUCTION_LEAD_ROLES } from "@/lib/domain/production-board";
 
 /** §8 — La navigation porte la pastille des retours clients à traiter. */
 export default async function InternalLayout({
@@ -46,16 +47,30 @@ export default async function InternalLayout({
    * déposées qu'il doit contrôler, et les versions corrigées qui restent à
    * envoyer au client.
    *
-   * Le périmètre est tenu par la RLS : un graphiste ne compte que les tickets
-   * qui lui sont affectés, sans que cette requête ait à le redire.
+   * Le périmètre des tickets est tenu par la RLS : un graphiste ne compte que
+   * ceux qui lui sont affectés, sans que cette requête ait à le redire. Les
+   * commandes de production, elles, se lisent en entier depuis que l'équipe
+   * voit le plan de charge de l'agence : chaque compte dit donc explicitement
+   * ce qui revient à la personne qui regarde. Sans cela, la pastille porterait
+   * le travail et le retard de tout le monde.
    */
+  // Confiée à moi, ou commandée par moi : le reste est le travail des autres.
+  const mineOrAssigned = `assigned_to.eq.${profile.id},requested_by.eq.${profile.id}`;
+  /*
+   * L'encadrement voyait déjà le retard de toute l'agence — la RLS ne le
+   * bornait pas. Seuls les rôles qui gagnent la lecture ont besoin d'être
+   * ramenés à leurs propres commandes, sinon la pastille compterait le travail
+   * des autres.
+   */
+  const scopeToMe = !(PRODUCTION_LEAD_ROLES as readonly string[]).includes(profile.role);
   const productionCounts = await Promise.all(
     isProduction
       ? [
           supabase
             .from("production_requests")
             .select("id", { count: "exact", head: true })
-            .eq("status", "a_faire"),
+            .eq("status", "a_faire")
+            .eq("assigned_to", profile.id),
           supabase
             .from("client_tickets")
             .select("id", { count: "exact", head: true })
@@ -86,11 +101,14 @@ export default async function InternalLayout({
             .gte("due_on", todayInParis()),
           // En retard : sans ça, un community manager ou un admin qui ne produit
           // pas lui-même ne voit jamais que la production a pris du retard.
-          supabase
-            .from("production_requests")
-            .select("id", { count: "exact", head: true })
-            .eq("status", "a_faire")
-            .lt("due_on", todayInParis()),
+          (() => {
+            const overdue = supabase
+              .from("production_requests")
+              .select("id", { count: "exact", head: true })
+              .eq("status", "a_faire")
+              .lt("due_on", todayInParis());
+            return scopeToMe ? overdue.or(mineOrAssigned) : overdue;
+          })(),
           supabase
             .from("client_tickets")
             .select("id", { count: "exact", head: true })
@@ -116,11 +134,12 @@ export default async function InternalLayout({
    * retard : la pastille prévient la veille, tant qu'il reste une journée
    * pour s'y mettre.
    */
-  const { count: dueTomorrow } = await supabase
+  const dueTomorrowQuery = supabase
     .from("production_requests")
     .select("id", { count: "exact", head: true })
     .eq("status", "a_faire")
     .eq("due_on", nextDay(todayInParis()));
+  const { count: dueTomorrow } = await (scopeToMe ? dueTomorrowQuery.or(mineOrAssigned) : dueTomorrowQuery);
 
   const productionAlert = (dueTomorrow ?? 0) > 0
     ? {

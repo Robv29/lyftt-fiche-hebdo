@@ -1,10 +1,21 @@
 "use client";
 
-import { useRef, useState, useTransition, type DragEvent } from "react";
+import { useMemo, useRef, useState, useTransition, type DragEvent } from "react";
 import type { ProductionUrgency } from "@/lib/domain/production";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { uploadMediaDirect } from "@/lib/media/direct-upload";
+import {
+  BOARD_SORT_LABELS,
+  EMPTY_BOARD_FILTERS,
+  inBoardScope,
+  matchesBoardFilters,
+  sortBoard,
+  type BoardFilters,
+  type BoardScope,
+  type BoardSort,
+} from "@/lib/domain/production-board";
+import { UNKNOWN_PERSON_KEY } from "@/lib/domain/production-requests";
 import {
   assignProductionRequest,
   createProductionRequest,
@@ -23,6 +34,10 @@ export interface ProductionRequestRow {
   title: string;
   brief: string | null;
   dueOn: string;
+  /** Date de la commande : sert au tri « plus récentes d'abord ». */
+  createdAt: string;
+  /** Instant de la dernière livraison, ou null. */
+  deliveredAt: string | null;
   status: "a_faire" | "livree" | "validee";
   /** Nom de la personne qui a passé la commande. */
   requestedByName: string | null;
@@ -34,11 +49,25 @@ export interface ProductionRequestRow {
   assigneeLabel: string | null;
   /** La commande est-elle confiée à la personne connectée ? */
   assignedToViewer: boolean;
-  /** La personne connectée peut-elle la confier à quelqu'un d'autre ? */
+  /*
+   * Droits, calculés une seule fois côté serveur par `productionRequestRights`
+   * — le même module que les six actions serveur. L'écran n'invente aucune
+   * règle : il n'affiche que des boutons qui aboutiront.
+   */
+  /** Demandeur, affectataire ou encadrement : la carte n'est pas en lecture seule. */
+  isConcerned: boolean;
+  canDeliver: boolean;
+  canValidate: boolean;
+  canReopen: boolean;
+  canDelete: boolean;
   canReassign: boolean;
   mediaUrl: string | null;
   mediaFileName: string | null;
   mediaKind: string | null;
+  /** Un fichier a été livré — même quand le lecteur n'a pas le droit de le voir. */
+  hasMedia: boolean;
+  /** Un visuel d'exemple a été joint — même quand il reste invisible. */
+  hasReference: boolean;
   /** Visuel d'exemple joint à la demande : une inspiration, pas un modèle. */
   referenceUrl: string | null;
   /*
@@ -61,14 +90,23 @@ const KIND_ACCEPT: Record<ProductionRequestRow["kind"], string> = {
   visuel: "image/*",
 };
 
+const STATUS_FILTERS: { value: BoardFilters["status"]; label: string }[] = [
+  { value: "", label: "Tous les états" },
+  { value: "a_faire", label: "À produire" },
+  { value: "livree", label: "En attente de validation" },
+];
+
 function formatDay(date: string): string {
   return new Intl.DateTimeFormat("fr-FR", {
     weekday: "short", day: "numeric", month: "long", timeZone: "UTC",
   }).format(new Date(`${date}T00:00:00Z`));
 }
 
-/** Filtre de la file : tout, ce qui vous est confié, ce qui n'est confié à personne. */
-type RequestFilter = "toutes" | "pour_vous" | "a_confier";
+function formatMoment(instant: string): string {
+  return new Intl.DateTimeFormat("fr-FR", {
+    day: "numeric", month: "short", timeZone: "Europe/Paris",
+  }).format(new Date(instant));
+}
 
 /**
  * Commandes de production internes.
@@ -77,6 +115,11 @@ type RequestFilter = "toutes" | "pour_vous" | "a_confier";
  * recontacter, ni revalidation à obtenir — juste un fichier attendu par un
  * collègue, avant une date. D'où un écran court : la commande, le dépôt, la
  * validation.
+ *
+ * La file porte désormais les commandes de toute l'agence : chacun voit ce que
+ * produisent les autres et ce qui part en retard ailleurs. Ce qui ne le
+ * concerne pas se lit sans un seul bouton — et se classe, sans quoi une liste
+ * complète cesse d'être utilisable.
  */
 export function ProductionRequests({
   requests,
@@ -135,22 +178,85 @@ export function ProductionRequests({
     });
   };
 
-  // Les commandes validées sont closes : elles n'encombrent pas la file.
-  const active = requests.filter((request) => request.status !== "validee");
+  // Les commandes validées sont closes : le serveur ne les envoie déjà plus.
+  const active = useMemo(() => requests.filter((request) => request.status !== "validee"), [requests]);
   const awaitingValidation = active.filter((request) => request.status === "livree");
   const forViewer = active.filter((request) => request.assignedToViewer);
+  const mine = active.filter((request) => request.isMine);
   const unassigned = active.filter((request) => request.status === "a_faire" && !request.assignedToId);
-  const [filter, setFilter] = useState<RequestFilter>(
-    viewerProduces && forViewer.length > 0 ? "pour_vous" : "toutes",
+  const overdue = active.filter((request) => request.urgency === "overdue");
+
+  /*
+   * Vue d'ouverture : ce qui appelle un geste de la personne qui regarde. Celui
+   * qui produit ouvre sur ce qui lui est confié, celui qui commande sur ses
+   * propres demandes. La vue « toute l'agence » reste un choix explicite :
+   * l'élargissement ne doit pas noyer la liste de ceux qui s'en servent chaque
+   * jour.
+   */
+  const [scope, setScope] = useState<BoardScope>(
+    viewerProduces && forViewer.length > 0 ? "pour_vous" : mine.length > 0 ? "mes_demandes" : "toutes",
   );
-  const shown = filter === "pour_vous" ? forViewer : filter === "a_confier" ? unassigned : active;
-  const filters: { key: RequestFilter; label: string; count: number }[] = [
-    { key: "toutes", label: "Toutes", count: active.length },
-    { key: "pour_vous", label: "Pour vous", count: forViewer.length },
-    ...(unassigned.length > 0 || filter === "a_confier"
-      ? [{ key: "a_confier" as const, label: "À confier", count: unassigned.length }]
+  const [filters, setFilters] = useState<BoardFilters>(EMPTY_BOARD_FILTERS);
+  const [sort, setSort] = useState<BoardSort>("echeance");
+  const setFilter = <K extends keyof BoardFilters>(key: K, value: BoardFilters[K]) =>
+    setFilters((current) => ({ ...current, [key]: value }));
+  const filtering = Boolean(filters.query.trim() || filters.clientId || filters.person || filters.status);
+
+  /*
+   * Les pastilles comptent ce qu'elles ouvrent : la barre de filtres s'applique
+   * avant elles, sinon « En retard · 4 » pourrait rendre une liste vide sans
+   * qu'on voie le filtre, deux lignes plus haut, qui l'a vidée.
+   */
+  const matching = useMemo(
+    () => active.filter((request) => matchesBoardFilters(request, filters)),
+    [active, filters],
+  );
+
+  const shown = useMemo(
+    () => sortBoard(matching.filter((request) => inBoardScope(request, scope)), sort),
+    [matching, scope, sort],
+  );
+
+  // Menus déroulants : seulement ce que la file contient réellement.
+  const clientOptions = useMemo(() => {
+    const byId = new Map(active.map((request) => [request.clientId, request.clientName]));
+    return [...byId].map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, "fr"));
+  }, [active]);
+
+  const personOptions = useMemo(() => {
+    const byKey = new Map<string, string>();
+    for (const request of active) {
+      if (request.assignedToId) byKey.set(request.assignedToId, request.assigneeLabel ?? "Ancien membre");
+    }
+    const people = [...byKey].map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, "fr"));
+    return unassigned.length > 0
+      ? [...people, { value: UNKNOWN_PERSON_KEY, label: "Non confiée" }]
+      : people;
+  }, [active, unassigned.length]);
+
+  // Les pastilles restent affichées selon ce que contient la file, mais comptent ce qui est filtré.
+  const chipCount = (key: BoardScope) => matching.filter((request) => inBoardScope(request, key)).length;
+  const chips: { key: BoardScope; label: string; count: number; alert?: boolean }[] = [
+    { key: "pour_vous", label: "Pour vous", count: chipCount("pour_vous") },
+    { key: "mes_demandes", label: "Mes demandes", count: chipCount("mes_demandes") },
+    ...(unassigned.length > 0 || scope === "a_confier"
+      ? [{ key: "a_confier" as const, label: "À confier", count: chipCount("a_confier") }]
       : []),
+    ...(overdue.length > 0 || scope === "en_retard"
+      ? [{ key: "en_retard" as const, label: "En retard", count: chipCount("en_retard"), alert: true }]
+      : []),
+    { key: "toutes", label: "Toutes", count: matching.length },
   ];
+
+  const emptyLabel = filtering
+    ? "Aucune commande ne correspond à ces filtres."
+    : scope === "pour_vous" ? "Aucune commande ne vous est confiée."
+    : scope === "mes_demandes" ? "Vous n’avez aucune commande en cours."
+    : scope === "a_confier" ? "Toutes les commandes sont confiées."
+    : scope === "en_retard" ? "Aucune commande en retard."
+    : "Aucune commande interne en cours.";
 
   return (
     <section className="space-y-4">
@@ -162,6 +268,11 @@ export function ProductionRequests({
               ? "Aucune commande en cours."
               : `${active.length} en cours${forViewer.length > 0 ? ` · ${forViewer.length} pour vous` : ""}${awaitingValidation.length > 0 ? ` · ${awaitingValidation.length} en attente de validation` : ""}`}
           </p>
+          {scope === "toutes" && active.some((request) => !request.isConcerned) && (
+            <p className="mt-1 text-xs text-ink-faint">
+              Toute la production de l’agence. Vous n’agissez que sur les commandes qui vous concernent.
+            </p>
+          )}
         </div>
         {canRequest && (
           <button type="button" className="btn-primary sm:w-auto" onClick={() => { setOpen((value) => !value); setFeedback(null); }}>
@@ -208,6 +319,7 @@ export function ProductionRequests({
           <div className={`grid gap-4 ${assignees.length > 0 ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}>
             <div>
               <label className="label" htmlFor="request-client">Client concerné</label>
+              {/* Les clients qu'on suit, et eux seuls : on ne commande pas pour l'équipe d'à côté. */}
               <select id="request-client" name="clientId" required className="field" value={clientId} onChange={(event) => setClientId(event.target.value)}>
                 <option value="" disabled>Choisir un client…</option>
                 {clients.map((client) => (
@@ -310,15 +422,19 @@ export function ProductionRequests({
         </form>
       )}
 
-      {active.length > 0 && (filter !== "toutes" || forViewer.length > 0 || unassigned.length > 0) && (
+      {active.length > 0 && (
         <div className="flex flex-wrap gap-2" role="group" aria-label="Filtrer les commandes">
-          {filters.map((item) => (
+          {chips.map((item) => (
             <button
               key={item.key}
               type="button"
-              aria-pressed={filter === item.key}
-              onClick={() => setFilter(item.key)}
-              className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${filter === item.key ? "bg-[#1176d3] text-white" : "bg-white text-ink-soft ring-1 ring-line hover:bg-canvas"}`}
+              aria-pressed={scope === item.key}
+              onClick={() => setScope(item.key)}
+              className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
+                scope === item.key ? "bg-[#1176d3] text-white"
+                : item.alert ? "bg-state-changes/10 text-state-changes ring-1 ring-state-changes/20 hover:bg-state-changes/15"
+                : "bg-white text-ink-soft ring-1 ring-line hover:bg-canvas"
+              }`}
             >
               {item.label} · {item.count}
             </button>
@@ -326,12 +442,66 @@ export function ProductionRequests({
         </div>
       )}
 
+      {/*
+        Classer : même barre que la liste des fiches — une recherche, des menus.
+        Elle n'apparaît que quand il y a de quoi trier.
+      */}
+      {active.length > 1 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-0 flex-1">
+            <Icon name="search" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint"/>
+            <input
+              type="search"
+              className="field pl-9"
+              placeholder="Chercher un client, une commande…"
+              value={filters.query}
+              onChange={(event) => setFilter("query", event.target.value)}
+              aria-label="Chercher un client ou une commande"
+            />
+          </div>
+          {clientOptions.length > 1 && (
+            <select
+              className="field w-auto shrink-0"
+              value={filters.clientId}
+              onChange={(event) => setFilter("clientId", event.target.value)}
+              aria-label="Filtrer par client"
+            >
+              <option value="">Tous les clients</option>
+              {clientOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          )}
+          {personOptions.length > 1 && (
+            <select
+              className="field w-auto shrink-0"
+              value={filters.person}
+              onChange={(event) => setFilter("person", event.target.value)}
+              aria-label="Filtrer par personne"
+            >
+              <option value="">Tout le monde</option>
+              {personOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          )}
+          <select
+            className="field w-auto shrink-0"
+            value={filters.status}
+            onChange={(event) => setFilter("status", event.target.value as BoardFilters["status"])}
+            aria-label="Filtrer par état"
+          >
+            {STATUS_FILTERS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+          <select
+            className="field w-auto shrink-0"
+            value={sort}
+            onChange={(event) => setSort(event.target.value as BoardSort)}
+            aria-label="Trier la liste"
+          >
+            {Object.entries(BOARD_SORT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </div>
+      )}
+
       {shown.length === 0 ? (
-        <p className="card px-4 py-8 text-center text-sm text-ink-faint">
-          {filter === "pour_vous" ? "Aucune commande ne vous est confiée."
-            : filter === "a_confier" ? "Toutes les commandes sont confiées."
-            : "Aucune commande interne en cours."}
-        </p>
+        <p className="card px-4 py-8 text-center text-sm text-ink-faint">{emptyLabel}</p>
       ) : (
         <ul className="grid gap-4 lg:grid-cols-2">
           {shown.map((request) => (
@@ -350,6 +520,22 @@ export function ProductionRequests({
         </ul>
       )}
     </section>
+  );
+}
+
+/** Aperçu du fichier livré. Affiché seulement quand le serveur a signé une URL. */
+function DeliveredPreview({ request, className = "" }: { request: ProductionRequestRow; className?: string }) {
+  if (!request.mediaUrl) return null;
+  return (
+    <div className={`overflow-hidden rounded-xl border border-line bg-white ${className}`}>
+      {request.mediaKind === "video" ? (
+        <video src={request.mediaUrl} controls className="max-h-56 w-full bg-black object-contain"/>
+      ) : (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={request.mediaUrl} alt={request.mediaFileName ?? request.title} className="max-h-56 w-full object-contain"/>
+      )}
+      <p className="truncate border-t px-3 py-2 text-[11px] text-ink-faint">{request.mediaFileName}</p>
+    </div>
   );
 }
 
@@ -375,6 +561,13 @@ function RequestCard({
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const delivered = request.status === "livree";
+  /*
+   * Une carte qui n'appelle aucun geste n'a pas de pied gris : c'est l'écart le
+   * plus lisible entre « à vous de jouer » et « pour information ». Rien n'est
+   * grisé pour autant — une carte grise se lit « annulée », et un retard doit
+   * se voir de tout le monde.
+   */
+  const canAct = request.canDeliver || request.canValidate || request.canReopen || request.canDelete;
 
   const [sending, setSending] = useState(false);
 
@@ -404,6 +597,13 @@ function RequestCard({
     if (file) void deliver(file);
   };
 
+  const statusBadge = delivered
+    ? <span className="badge bg-[#fff4e5] text-[#8a5700]">En attente de validation</span>
+    : <span className="badge bg-canvas text-ink-soft">À produire</span>;
+
+  // Livré sans aperçu : le fichier appartient au client, il reste dans son équipe.
+  const hiddenDelivery = delivered && request.hasMedia && !request.mediaUrl;
+
   return (
     <li className={`card overflow-hidden ${
       request.urgency === "overdue" ? "border-state-changes/40"
@@ -418,6 +618,10 @@ function RequestCard({
               {/* Mêmes mots que les corrections clients : « Pour vous », « À confier ». */}
               {request.assignedToViewer ? (
                 <span className="badge shrink-0 bg-[#e8f2ff] text-[#0b5e9f]">Pour vous</span>
+              ) : !request.isConcerned ? (
+                <span className="badge shrink-0 bg-canvas text-ink-faint" title="Commande d’une autre équipe : vous la consultez">
+                  Lecture
+                </span>
               ) : request.status === "a_faire" && !request.assignedToId ? (
                 <span className="badge shrink-0 bg-[#fff4e5] text-[#8a5700]">À confier</span>
               ) : null}
@@ -444,13 +648,15 @@ function RequestCard({
           <p className="mt-3 whitespace-pre-line text-xs leading-relaxed text-ink-soft">{request.brief}</p>
         )}
 
-        {request.referenceUrl && (
+        {request.referenceUrl ? (
           <figure className="mt-3 overflow-hidden rounded-xl border border-line bg-white">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={request.referenceUrl} alt="Visuel d’exemple" className="block max-h-40 w-full object-contain"/>
             <figcaption className="border-t px-3 py-2 text-[11px] text-ink-faint">Exemple donné à la demande — pour l’idée, pas à reproduire</figcaption>
           </figure>
-        )}
+        ) : request.hasReference ? (
+          <p className="mt-3 text-[11px] text-ink-faint">Exemple joint — visible par l’équipe du client.</p>
+        ) : null}
 
         <div className="mt-3 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] text-ink-faint">
           <span>Demandé par {request.requestedByName ?? "l’équipe"}</span>
@@ -479,91 +685,95 @@ function RequestCard({
           ) : request.assigneeLabel && !request.assignedToViewer ? (
             <span>· Pour {request.assigneeLabel}</span>
           ) : null}
+          {delivered && request.deliveredAt && <span>· Livré le {formatMoment(request.deliveredAt)}</span>}
         </div>
+
+        {/* Carte en lecture : l'état se dit en une ligne, et rien ne se clique. */}
+        {!canAct && (
+          <div className="mt-4 space-y-2">
+            <DeliveredPreview request={request}/>
+            <div className="flex flex-wrap items-center gap-2">{statusBadge}</div>
+            {hiddenDelivery && (
+              <p className="text-[11px] text-ink-faint">Fichier livré — visible par l’équipe du client.</p>
+            )}
+          </div>
+        )}
       </div>
 
       {/*
         Le dépôt reste ouvert après une livraison : une nouvelle version se
         dépose au même endroit, sans avoir à rouvrir la commande.
       */}
-      <div className="border-t bg-[#fbfcfe] p-5">
-        {delivered && request.mediaUrl && (
-          <div className="mb-4 overflow-hidden rounded-xl border border-line bg-white">
-            {request.mediaKind === "video" ? (
-              <video src={request.mediaUrl} controls className="max-h-56 w-full bg-black object-contain"/>
-            ) : (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={request.mediaUrl} alt={request.mediaFileName ?? request.title} className="max-h-56 w-full object-contain"/>
-            )}
-            <p className="truncate border-t px-3 py-2 text-[11px] text-ink-faint">{request.mediaFileName}</p>
-          </div>
-        )}
+      {canAct && (
+        <div className="border-t bg-[#fbfcfe] p-5">
+          <DeliveredPreview request={request} className="mb-4"/>
 
-        <div
-          role="presentation"
-          onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={onDrop}
-          onClick={() => inputRef.current?.click()}
-          className={`cursor-pointer rounded-xl border-2 border-dashed px-4 py-6 text-center transition-colors ${dragging ? "border-[#1468ff] bg-[#f0f6ff]" : "border-line bg-white hover:bg-canvas"}`}
-        >
-          <Icon name="layers" className="mx-auto h-5 w-5 text-ink-faint"/>
-          <p className="mt-2 text-xs font-semibold">
-            {/*
-              L'envoi d'un montage prend du temps : le dire, sinon on croit
-              l'écran figé et on dépose une seconde fois.
-            */}
-            {sending
-              ? "Envoi du fichier…"
-              : delivered ? "Déposer une nouvelle version" : `Glissez ${request.kind === "video" ? "la vidéo" : "le fichier"} ici`}
-          </p>
-          <p className="mt-1 text-[11px] text-ink-faint">ou cliquez pour choisir un fichier</p>
-          <input
-            ref={inputRef}
-            type="file"
-            accept={KIND_ACCEPT[request.kind]}
-            className="hidden"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) void deliver(file);
-              event.target.value = "";
-            }}
-          />
-        </div>
-
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          {delivered ? (
-            <>
-              <span className="badge bg-[#fff4e5] text-[#8a5700]">En attente de validation</span>
-              {request.isMine && (
-                <>
-                  <button type="button" className="btn-primary" disabled={pending} onClick={onValidate}>
-                    <Icon name="check" className="h-4 w-4"/>Valider
-                  </button>
-                  <button type="button" className="text-xs text-ink-faint hover:underline" disabled={pending} onClick={onReopen}>
-                    Renvoyer en production
-                  </button>
-                </>
-              )}
-            </>
-          ) : (
-            <span className="badge bg-canvas text-ink-soft">À produire</span>
-          )}
-
-          {request.isMine && (
-            <button
-              type="button"
-              className="ml-auto text-xs text-state-changes hover:underline"
-              disabled={pending}
-              onClick={() => {
-                if (window.confirm(`Retirer la commande « ${request.title} » ?`)) onDelete();
-              }}
+          {request.canDeliver && (
+            <div
+              role="presentation"
+              onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={onDrop}
+              onClick={() => inputRef.current?.click()}
+              className={`cursor-pointer rounded-xl border-2 border-dashed px-4 py-6 text-center transition-colors ${dragging ? "border-[#1468ff] bg-[#f0f6ff]" : "border-line bg-white hover:bg-canvas"}`}
             >
-              Retirer
-            </button>
+              <Icon name="layers" className="mx-auto h-5 w-5 text-ink-faint"/>
+              <p className="mt-2 text-xs font-semibold">
+                {/*
+                  L'envoi d'un montage prend du temps : le dire, sinon on croit
+                  l'écran figé et on dépose une seconde fois.
+                */}
+                {sending
+                  ? "Envoi du fichier…"
+                  : delivered ? "Déposer une nouvelle version" : `Glissez ${request.kind === "video" ? "la vidéo" : "le fichier"} ici`}
+              </p>
+              <p className="mt-1 text-[11px] text-ink-faint">ou cliquez pour choisir un fichier</p>
+              <input
+                ref={inputRef}
+                type="file"
+                accept={KIND_ACCEPT[request.kind]}
+                className="hidden"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) void deliver(file);
+                  event.target.value = "";
+                }}
+              />
+            </div>
+          )}
+
+          <div className={`flex flex-wrap items-center gap-2 ${request.canDeliver ? "mt-4" : ""}`}>
+            {statusBadge}
+            {request.canValidate && (
+              <button type="button" className="btn-primary" disabled={pending} onClick={onValidate}>
+                <Icon name="check" className="h-4 w-4"/>Valider
+              </button>
+            )}
+            {request.canReopen && (
+              <button type="button" className="text-xs text-ink-faint hover:underline" disabled={pending} onClick={onReopen}>
+                Renvoyer en production
+              </button>
+            )}
+
+            {request.canDelete && (
+              <button
+                type="button"
+                className="ml-auto text-xs text-state-changes hover:underline"
+                disabled={pending}
+                onClick={() => {
+                  if (window.confirm(`Retirer la commande « ${request.title} » ?`)) onDelete();
+                }}
+              >
+                Retirer
+              </button>
+            )}
+          </div>
+
+          {hiddenDelivery && (
+            <p className="mt-2 text-[11px] text-ink-faint">Fichier livré — visible par l’équipe du client.</p>
           )}
         </div>
-      </div>
+      )}
     </li>
   );
 }

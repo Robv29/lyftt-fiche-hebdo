@@ -20,6 +20,8 @@ import {
   type ProductionVerdict,
   type ProductionVerdictFilter,
 } from "@/lib/domain/production-requests";
+import { loadProductionRequestClients } from "@/lib/internal/production-clients";
+import { PRODUCTION_LEAD_ROLES } from "@/lib/domain/production-board";
 import { HistoriqueTabs } from "../HistoriqueTabs";
 import { ProductionHistoryFilters } from "./ProductionHistoryFilters";
 import type { FilterOption } from "./ProductionHistoryFilters";
@@ -96,8 +98,15 @@ export default async function ProductionHistoryPage({
   const supabase = await createSupabaseServerClient();
   const today = todayInParis();
 
-  const clientsResult = await supabase.from("clients").select("id, name").order("name");
-  const clients = clientsResult.data ?? [];
+  /*
+   * Les noms des clients viennent de `production_request_clients()` : depuis
+   * que l'historique porte les commandes de toute l'agence, `clients_select`
+   * n'en nommerait qu'une partie et le reste s'afficherait « Client ». La
+   * fonction ne rend que l'identifiant et le nom — la fiche client, elle, ne
+   * s'ouvre pas.
+   */
+  const clientsResult = await loadProductionRequestClients();
+  const clients = [...clientsResult.names].map(([id, name]) => ({ id, name }));
   const selectedClient = clients.find((client) => client.id === params.client) ?? null;
   const period = PERIODS.find((option) => option.value === params.periode)
     ?? PERIODS.find((option) => option.value === DEFAULT_PERIOD)!;
@@ -108,7 +117,7 @@ export default async function ProductionHistoryPage({
     .from("production_requests")
     .select(`id, client_id, kind, title, created_at, requested_by_name, due_on, status,
       assigned_to, assigned_to_name, delivered_at, delivered_by, delivered_by_name,
-      validated_at, validated_by_name, clients ( name )`)
+      validated_at, validated_by_name`)
     .order("due_on", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(MAX_ROWS);
@@ -133,7 +142,7 @@ export default async function ProductionHistoryPage({
    * Une requête en échec ne doit pas se lire comme une absence de commandes :
    * un tableau vide ferait croire que tout a été rendu à l'heure. On le dit.
    */
-  const failure = clientsResult.error ?? requestsResult.error;
+  const failure = clientsResult.error ? { message: clientsResult.error } : requestsResult.error;
   if (failure) {
     console.error("[historique/production] chargement impossible", failure.message);
     return (
@@ -163,7 +172,7 @@ export default async function ProductionHistoryPage({
       id: row.id as string,
       kind: row.kind as ProductionRequestKind,
       title: row.title as string,
-      clientName: (row.clients as unknown as { name: string } | null)?.name ?? "Client",
+      clientName: clientsResult.names.get(row.client_id as string) ?? "Client",
       createdAt: row.created_at as string,
       requestedByName: (row.requested_by_name as string | null) ?? null,
       validatedAt: (row.validated_at as string | null) ?? null,
@@ -214,7 +223,7 @@ export default async function ProductionHistoryPage({
           statut: verdictFilter ?? "",
           personne: personKey ?? "",
         }}
-        clients={clients.map((client) => ({ value: client.id as string, label: client.name as string }))}
+        clients={clients.map((client) => ({ value: client.id, label: client.name }))}
         periods={PERIODS.map(({ value, label }) => ({ value, label }))}
         statuses={VERDICT_FILTERS}
         people={people}
@@ -228,7 +237,13 @@ export default async function ProductionHistoryPage({
 
       <SummaryTiles total={summary.total}/>
 
-      {byPerson.length > 0 && (
+      {/*
+        Le palmarès nominatif reste à l'encadrement : depuis que l'historique
+        porte les commandes de toute l'agence, ce tableau classerait chaque
+        graphiste et vidéaste devant toute l'équipe. Le détail des commandes,
+        lui, reste lisible de tous.
+      */}
+      {byPerson.length > 0 && (PRODUCTION_LEAD_ROLES as readonly string[]).includes(profile.role) && (
         <section className="section-card">
           <div className="section-card-header">
             <div>

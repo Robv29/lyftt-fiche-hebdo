@@ -4,7 +4,10 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { EDITORIAL_ROLES } from "@/lib/internal/authorization";
+import { canAccessClient } from "@/lib/internal/authorization";
+import { productionRequestRights, type ProductionRequestRights } from "@/lib/domain/production-board";
+import type { ProductionRequestStatus } from "@/lib/domain/production-requests";
+import type { AppRole } from "@/lib/domain/types";
 import { loadProductionAssignees, type ProductionAssignee } from "@/lib/internal/production-assignees";
 import { sanitizeText } from "@/lib/security/sanitize";
 import { prepareCorrectionForClient, transitionTicket } from "@/lib/internal/actions";
@@ -28,6 +31,20 @@ export interface ProductionActionResult {
  * écritures passent donc par le client utilisateur, et non par la clé service,
  * pour que la base reste le dernier mot. Seul le stockage du fichier, qui n'a
  * pas de politique par ligne, emploie la clé service.
+ *
+ * Depuis que toute l'équipe *lit* le plan de charge
+ * (`production_requests_select_equipe`), lire n'est plus pouvoir écrire. Deux
+ * gardes se cumulent donc devant chaque écriture :
+ *
+ *   • qui est concerné par la commande — demandeur, affectataire,
+ *     encadrement —, dit une seule fois par `productionRequestRights` ;
+ *   • le périmètre client, toujours tenu par `production_requests_write`.
+ *     `canAccessClient()` le sonde en amont pour rendre un refus lisible :
+ *     sans lui, l'écriture rendrait simplement zéro ligne.
+ *
+ * Et toute écriture se termine par `.select("id")` : un UPDATE que la RLS
+ * écarte ne renvoie pas d'erreur, il ne touche aucune ligne. Sans ce contrôle,
+ * un refus s'afficherait comme un succès.
  */
 async function requireProfile() {
   const profile = await getCurrentProfile();
@@ -35,6 +52,54 @@ async function requireProfile() {
 }
 
 const ACCESS_DENIED = "Action non autorisée.";
+const OUT_OF_SCOPE = "Ce client n'est pas dans votre périmètre : vous ne pouvez que consulter cette commande.";
+const CHANGED = "La commande a changé entre-temps. Rechargez la page.";
+
+interface ActionableRequest {
+  id: string;
+  client_id: string;
+  kind: string;
+  requested_by: string | null;
+  assigned_to: string | null;
+  status: ProductionRequestStatus;
+}
+
+/**
+ * Commande lue sous RLS, avec les droits de l'appelant et son périmètre.
+ *
+ * Unique porte d'entrée des actions qui écrivent : une seule lecture, une
+ * seule règle, les mêmes messages partout.
+ */
+async function readRequestForAction(requestId: string, profile: { id: string; role: AppRole }): Promise<{
+  request: ActionableRequest | null;
+  rights: ProductionRequestRights;
+  inScope: boolean;
+  error: string | null;
+}> {
+  const supabase = await createSupabaseServerClient();
+  const { data } = await supabase
+    .from("production_requests")
+    .select("id, client_id, kind, requested_by, assigned_to, status")
+    .eq("id", requestId)
+    .maybeSingle();
+
+  const rights = productionRequestRights(
+    {
+      requestedBy: (data?.requested_by as string | null) ?? null,
+      assignedTo: (data?.assigned_to as string | null) ?? null,
+      status: (data?.status as ProductionRequestStatus) ?? "a_faire",
+    },
+    { id: profile.id, role: profile.role },
+  );
+
+  if (!data) return { request: null, rights, inScope: false, error: "Commande introuvable ou accès refusé." };
+  return {
+    request: data as ActionableRequest,
+    rights,
+    inScope: await canAccessClient(data.client_id as string),
+    error: null,
+  };
+}
 
 const createSchema = z.object({
   clientId: z.string().uuid("Choisissez le client concerné."),
@@ -114,6 +179,15 @@ export async function createProductionRequest(formData: FormData): Promise<Produ
     return { ok: false, message: "Choisissez à qui confier la demande." };
   }
 
+  /*
+   * On ne commande que pour un client qu'on suit. `production_requests_write`
+   * le refuserait de toute façon ; le dire ici évite de rendre le message
+   * technique de la RLS à l'écran.
+   */
+  if (!await canAccessClient(parsed.data.clientId)) {
+    return { ok: false, message: "Ce client n'est pas dans votre périmètre." };
+  }
+
   const supabase = await createSupabaseServerClient();
   const title = sanitizeText(parsed.data.title, 160);
   const { data: created, error } = await supabase.from("production_requests").insert({
@@ -180,15 +254,22 @@ export async function deliverProductionRequest(formData: FormData): Promise<Prod
   const mediaAssetId = z.string().uuid().safeParse(formData.get("mediaAssetId"));
   if (!mediaAssetId.success) return { ok: false, message: "Déposez le fichier produit." };
 
-  const supabase = await createSupabaseServerClient();
-  const { data: request } = await supabase
-    .from("production_requests")
-    .select("id, client_id, kind, media_asset_id")
-    .eq("id", requestId.data)
-    .maybeSingle();
-  if (!request) return { ok: false, message: "Commande introuvable ou accès refusé." };
+  /*
+   * Livrer était la seule action sans garde : la commande était lisible, donc
+   * livrable. Depuis que toute l'équipe lit le plan de charge, cela ne tient
+   * plus — seules les personnes concernées déposent un fichier.
+   */
+  const { request, rights, inScope, error: denied } = await readRequestForAction(requestId.data, profile);
+  if (!request) return { ok: false, message: denied ?? ACCESS_DENIED };
+  if (!rights.canDeliver) {
+    return { ok: false, message: request.status === "validee"
+      ? "Commande validée : renvoyez-la en production avant de déposer un fichier."
+      : "Seules les personnes concernées par cette commande peuvent y déposer un fichier." };
+  }
+  if (!inScope) return { ok: false, message: OUT_OF_SCOPE };
 
-  const expected = KIND_EXPECTATIONS[request.kind as string] ?? "image";
+  const supabase = await createSupabaseServerClient();
+  const expected = KIND_EXPECTATIONS[request.kind] ?? "image";
   const admin = createSupabaseAdminClient();
   const { data: asset } = await admin
     .from("media_assets")
@@ -210,40 +291,23 @@ export async function deliverProductionRequest(formData: FormData): Promise<Prod
     };
   }
 
-  const { error } = await supabase.from("production_requests").update({
+  const { data: updated, error } = await supabase.from("production_requests").update({
     media_asset_id: asset.id,
     status: "livree",
     delivered_at: new Date().toISOString(),
     // Qui a livré : l'historique de production le dit à côté de la date.
     delivered_by: profile.id,
     delivered_by_name: profile.full_name ?? null,
-  }).eq("id", request.id);
+  // Validée entre-temps : le dépôt ne doit pas la ramener en « livrée » derrière la validation.
+  }).eq("id", request.id).neq("status", "validee").select("id");
 
   if (error) return { ok: false, message: `Livraison non enregistrée : ${error.message}` };
+  // Zéro ligne touchée : la RLS a écarté l'écriture sans lever d'erreur.
+  if (!updated?.length) return { ok: false, message: CHANGED };
 
   revalidatePath("/production");
   revalidatePath("/historique/production");
   return { ok: true, message: "Fichier livré. Le demandeur peut valider." };
-}
-
-/**
- * Qui peut clore ou rouvrir une commande : son demandeur, et l'encadrement.
- * Le bouton n'apparaît qu'au demandeur ; la garde tient même sans l'écran.
- */
-async function readClosableRequest(requestId: string, profile: { id: string; role: string }) {
-  const supabase = await createSupabaseServerClient();
-  const { data: request } = await supabase
-    .from("production_requests")
-    .select("id, requested_by, status")
-    .eq("id", requestId)
-    .maybeSingle();
-  if (!request) return { supabase, request: null, error: "Commande introuvable ou accès refusé." };
-  const isOwner = request.requested_by === profile.id;
-  const isManager = ["super_admin", "production_manager"].includes(profile.role);
-  if (!isOwner && !isManager) {
-    return { supabase, request: null, error: "Seul le demandeur peut valider ou renvoyer cette commande." };
-  }
-  return { supabase, request, error: null };
 }
 
 /** Validation par le demandeur : la commande est close. */
@@ -254,13 +318,18 @@ export async function validateProductionRequest(requestId: string): Promise<Prod
   const parsed = z.string().uuid().safeParse(requestId);
   if (!parsed.success) return { ok: false, message: "Commande invalide." };
 
-  const { supabase, request, error: denied } = await readClosableRequest(parsed.data, profile);
+  const { request, rights, inScope, error: denied } = await readRequestForAction(parsed.data, profile);
   if (!request) return { ok: false, message: denied ?? ACCESS_DENIED };
+  if (!rights.mayDecide) {
+    return { ok: false, message: "Seuls le demandeur et l'encadrement valident cette commande." };
+  }
   // Valider ce qui n'a pas été livré fausserait l'historique : rien à valider.
   if (request.status !== "livree") {
     return { ok: false, message: request.status === "validee" ? "Commande déjà validée." : "Rien n'a encore été livré." };
   }
+  if (!inScope) return { ok: false, message: OUT_OF_SCOPE };
 
+  const supabase = await createSupabaseServerClient();
   const { data: updated, error } = await supabase.from("production_requests").update({
     status: "validee",
     validated_at: new Date().toISOString(),
@@ -269,7 +338,7 @@ export async function validateProductionRequest(requestId: string): Promise<Prod
   }).eq("id", parsed.data).eq("status", "livree").select("id");
 
   if (error) return { ok: false, message: `Validation impossible : ${error.message}` };
-  if (!updated?.length) return { ok: false, message: "La commande a changé entre-temps. Rechargez la page." };
+  if (!updated?.length) return { ok: false, message: CHANGED };
 
   revalidatePath("/production");
   revalidatePath("/historique/production");
@@ -289,11 +358,16 @@ export async function reopenProductionRequest(requestId: string): Promise<Produc
   const parsed = z.string().uuid().safeParse(requestId);
   if (!parsed.success) return { ok: false, message: "Commande invalide." };
 
-  const { supabase, request, error: denied } = await readClosableRequest(parsed.data, profile);
+  const { request, rights, inScope, error: denied } = await readRequestForAction(parsed.data, profile);
   if (!request) return { ok: false, message: denied ?? ACCESS_DENIED };
+  if (!rights.mayDecide) {
+    return { ok: false, message: "Seuls le demandeur et l'encadrement renvoient cette commande en production." };
+  }
   if (request.status === "a_faire") return { ok: false, message: "Commande déjà en production." };
+  if (!inScope) return { ok: false, message: OUT_OF_SCOPE };
 
-  const { error } = await supabase.from("production_requests").update({
+  const supabase = await createSupabaseServerClient();
+  const { data: updated, error } = await supabase.from("production_requests").update({
     status: "a_faire",
     delivered_at: null,
     delivered_by: null,
@@ -301,9 +375,10 @@ export async function reopenProductionRequest(requestId: string): Promise<Produc
     validated_at: null,
     validated_by: null,
     validated_by_name: null,
-  }).eq("id", parsed.data);
+  }).eq("id", parsed.data).select("id");
 
   if (error) return { ok: false, message: `Réouverture impossible : ${error.message}` };
+  if (!updated?.length) return { ok: false, message: CHANGED };
 
   revalidatePath("/production");
   revalidatePath("/historique/production");
@@ -318,22 +393,18 @@ export async function deleteProductionRequest(requestId: string): Promise<Produc
   const parsed = z.string().uuid().safeParse(requestId);
   if (!parsed.success) return { ok: false, message: "Commande invalide." };
 
-  const supabase = await createSupabaseServerClient();
-  const { data: request } = await supabase
-    .from("production_requests")
-    .select("id, requested_by")
-    .eq("id", parsed.data)
-    .maybeSingle();
-  if (!request) return { ok: false, message: "Commande introuvable ou accès refusé." };
-
-  const isOwner = request.requested_by === profile.id;
-  const isManager = ["super_admin", "production_manager"].includes(profile.role);
-  if (!isOwner && !isManager) {
-    return { ok: false, message: "Seul le demandeur peut retirer cette commande." };
+  const { request, rights, inScope, error: denied } = await readRequestForAction(parsed.data, profile);
+  if (!request) return { ok: false, message: denied ?? ACCESS_DENIED };
+  if (!rights.canDelete) {
+    return { ok: false, message: "Seuls le demandeur et l'encadrement retirent cette commande." };
   }
+  if (!inScope) return { ok: false, message: OUT_OF_SCOPE };
 
-  const { error } = await supabase.from("production_requests").delete().eq("id", parsed.data);
+  const supabase = await createSupabaseServerClient();
+  const { data: removed, error } = await supabase
+    .from("production_requests").delete().eq("id", parsed.data).select("id");
   if (error) return { ok: false, message: `Retrait impossible : ${error.message}` };
+  if (!removed?.length) return { ok: false, message: CHANGED };
 
   revalidatePath("/production");
   revalidatePath("/historique/production");
@@ -356,22 +427,20 @@ export async function assignProductionRequest(requestId: string, assigneeId: str
     .safeParse({ requestId, assigneeId });
   if (!ids.success) return { ok: false, message: "Affectation invalide." };
 
-  // Lecture sous RLS d'abord : hors périmètre, la commande n'existe pas.
-  const supabase = await createSupabaseServerClient();
-  const { data: request } = await supabase
-    .from("production_requests")
-    .select("id, title, due_on, status, requested_by, assigned_to, clients ( name )")
-    .eq("id", ids.data.requestId)
-    .maybeSingle();
-  if (!request) return { ok: false, message: "Commande introuvable ou accès refusé." };
-
-  const isOwner = request.requested_by === profile.id;
-  if (!isOwner && !EDITORIAL_ROLES.includes(profile.role)) {
+  const { request, rights, inScope, error: denied } = await readRequestForAction(ids.data.requestId, profile);
+  if (!request) return { ok: false, message: denied ?? ACCESS_DENIED };
+  if (!rights.mayDecide) {
     return { ok: false, message: "Seuls le demandeur et l'encadrement changent l'affectation." };
   }
   if (request.status !== "a_faire") {
     return { ok: false, message: "Commande déjà livrée : l'affectation ne change plus." };
   }
+  /*
+   * Confier suppose d'avoir la main sur la commande : sans périmètre client,
+   * l'écriture rendrait zéro ligne et l'écran annoncerait un conflit qui
+   * n'existe pas.
+   */
+  if (!inScope) return { ok: false, message: OUT_OF_SCOPE };
 
   const { assignees, error: assigneesError } = await loadProductionAssignees();
   if (assigneesError) return { ok: false, message: `Liste de la production indisponible : ${assigneesError}` };
@@ -379,22 +448,34 @@ export async function assignProductionRequest(requestId: string, assigneeId: str
   if (!assignee) return { ok: false, message: "Cette personne ne reçoit plus de commandes de production." };
   if (request.assigned_to === assignee.id) return { ok: true, message: `Déjà confiée à ${assignee.label}.` };
 
+  const supabase = await createSupabaseServerClient();
   const { data: updated, error } = await supabase.from("production_requests").update({
     assigned_to: assignee.id,
     assigned_to_name: assignee.fullName,
   }).eq("id", request.id).eq("status", "a_faire").select("id");
 
   if (error) return { ok: false, message: `Affectation impossible : ${error.message}` };
-  if (!updated?.length) return { ok: false, message: "La commande a changé entre-temps. Rechargez la page." };
+  if (!updated?.length) return { ok: false, message: CHANGED };
 
   if (assignee.id !== profile.id) {
-    await notifyAssignee({
-      assigneeId: assignee.id,
-      byName: profile.full_name,
-      title: request.title as string,
-      clientName: (request.clients as unknown as { name: string } | null)?.name ?? null,
-      dueOn: request.due_on as string,
-    });
+    /*
+     * De quoi écrire la notification. Relu après l'écriture : la ligne vient
+     * d'être touchée, elle est donc bien dans le périmètre de l'appelant.
+     */
+    const { data: notice } = await supabase
+      .from("production_requests")
+      .select("title, due_on, clients ( name )")
+      .eq("id", request.id)
+      .maybeSingle();
+    if (notice) {
+      await notifyAssignee({
+        assigneeId: assignee.id,
+        byName: profile.full_name,
+        title: notice.title as string,
+        clientName: (notice.clients as unknown as { name: string } | null)?.name ?? null,
+        dueOn: notice.due_on as string,
+      });
+    }
   }
 
   revalidatePath("/production");
