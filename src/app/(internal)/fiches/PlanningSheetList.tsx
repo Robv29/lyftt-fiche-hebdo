@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { CONTENT_BUCKETS, type ContentBucket } from "@/lib/domain/content-buckets";
 import type { BucketStatus } from "@/lib/domain/planning";
+import type { SheetTopicEditState } from "@/lib/domain/sheet-status";
 import { SheetTopic } from "./SheetTopic";
 
 export type PlanningEntry =
@@ -23,8 +24,10 @@ export type PlanningEntry =
       total: number;
       /** État par famille de contenu : dit *quoi* manque, là où le pourcentage ne dit que *combien*. */
       buckets: Record<ContentBucket, BucketStatus>;
-      /** Sujet de la semaine, modifiable sur place — seulement affiché si `showTopic`. */
+      /** Sujet de la semaine, modifiable sur place. */
       topic: string | null;
+      /** Le sujet est-il encore modifiable, et faut-il rappeler qu'il reste interne ? */
+      topicState: SheetTopicEditState;
     }
   | {
       kind: "proposal";
@@ -120,12 +123,16 @@ export function PlanningSheetList({
   entries,
   emptyLabel,
   showProgress = false,
-  showTopic = false,
+  topicAlert = true,
 }: {
   entries: PlanningEntry[];
   emptyLabel: string;
   showProgress?: boolean;
-  showTopic?: boolean;
+  /**
+   * Un sujet manquant est-il une alerte ? Oui pour une semaine encore à
+   * produire, non pour une semaine passée : le travail y est déjà fait.
+   */
+  topicAlert?: boolean;
 }) {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortOption>("default");
@@ -203,8 +210,20 @@ export function PlanningSheetList({
                 </div>
               </Link>
 
-              {/* Hors du lien : le sujet se saisit sur place, sans ouvrir la fiche. */}
-              {showTopic && <div className="px-4 pb-4 sm:px-5 sm:pb-5"><SheetTopic sheetId={entry.id} initialTopic={entry.topic}/></div>}
+              {/*
+                Hors du lien : le sujet se saisit sur place, sans ouvrir la fiche —
+                et sur toutes les périodes, la consigne se précisant souvent une
+                fois la semaine lancée ou la fiche validée.
+              */}
+              <div className="px-4 pb-4 pt-3 sm:px-5 sm:pb-5">
+                <SheetTopic
+                  sheetId={entry.id}
+                  initialTopic={entry.topic}
+                  state={entry.topicState}
+                  // Alerte seulement s'il reste du travail : une fiche validée et complète n'a plus de consigne à réclamer.
+                  alertWhenEmpty={topicAlert && !entry.validated && entry.percentage < 100}
+                />
+              </div>
             </li>
           ) : (
             <li key={entry.id} className="card reveal-panel overflow-hidden border-[#bfd4ff] bg-[#f8fbff]">

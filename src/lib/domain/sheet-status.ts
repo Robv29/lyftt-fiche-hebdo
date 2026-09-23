@@ -109,6 +109,37 @@ export function editRequiresRevalidation(status: SheetStatus): boolean {
   ].includes(status) && canEditSheetContent(status);
 }
 
+/**
+ * Le sujet de la semaine se modifie-t-il encore, et faut-il le dire ?
+ *
+ * Le sujet n'est pas un contenu : c'est la consigne interne que la production
+ * lit avant de produire. Le client ne le voit nulle part — ni sur son lien de
+ * validation, ni dans les messages envoyés — donc le corriger après coup ne
+ * touche pas à ce qu'il a validé et n'appelle aucune nouvelle version. C'est
+ * précisément pourquoi il reste modifiable une fois la fiche partie : la
+ * semaine se prépare souvent après l'accord du client, et la consigne devait
+ * pouvoir suivre.
+ *
+ * - `editable` : la fiche n'est pas encore partie, rien de plus à dire ;
+ * - `internal_notice` : le client a la fiche sous les yeux ; l'écran précise
+ *   que le sujet lui reste invisible, pour qu'on ne croie pas toucher à sa
+ *   validation ;
+ * - `locked` : fiche refusée ou périmée — elle ne se reprend pas, elle se
+ *   refait. Écrire une consigne que personne n'exécutera ne rend service à
+ *   personne : même frontière que le contenu, pour ne pas avoir deux réponses
+ *   à « cette fiche est-elle encore vivante ? ».
+ */
+export type SheetTopicEditState = "editable" | "internal_notice" | "locked";
+
+export function sheetTopicEditState(status: SheetStatus): SheetTopicEditState {
+  if (!canEditSheetContent(status)) return "locked";
+  return editRequiresRevalidation(status) ? "internal_notice" : "editable";
+}
+
+export function canEditSheetTopic(status: SheetStatus): boolean {
+  return sheetTopicEditState(status) !== "locked";
+}
+
 /** Part des fiches validées, pour le suivi hebdomadaire. */
 export function validationRate(statuses: SheetStatus[]): {
   validated: number;

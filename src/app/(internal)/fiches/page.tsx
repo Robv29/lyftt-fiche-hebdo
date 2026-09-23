@@ -9,7 +9,7 @@ import {
   sheetCompletion,
 } from "@/lib/domain/planning";
 import { sheetStatusLabel, type MediaFormat, type SheetStatus, type TicketPriority, type TicketStatus } from "@/lib/domain/types";
-import { isClientValidated, validationRate } from "@/lib/domain/sheet-status";
+import { isClientValidated, sheetTopicEditState, validationRate } from "@/lib/domain/sheet-status";
 import { sheetShownForWeek, sheetsToCreate } from "@/lib/domain/week-expectation";
 import { isTicketOpen } from "@/lib/domain/workflow";
 import { PlanningTabs } from "./PlanningTabs";
@@ -92,6 +92,7 @@ function sheetEntry(sheet: PlanningSheet): PlanningEntry {
      */
     buckets: contentBucketStatuses(completionItems(sheet)),
     topic: sheet.topic,
+    topicState: sheetTopicEditState(sheet.status as SheetStatus),
   };
 }
 
@@ -194,9 +195,9 @@ export default async function SheetsPage({ searchParams }: { searchParams: Promi
         validation={validation}
         toCreate={proposals.length}
         initialTab={initialTab}
-        past={<PlanningSheetList entries={past.map(sheetEntry)} emptyLabel="Aucune fiche passée."/>}
+        past={<PlanningSheetList entries={past.map(sheetEntry)} emptyLabel="Aucune fiche passée." topicAlert={false}/>}
         current={<PlanningSheetList entries={current.map(sheetEntry)} emptyLabel="Tout est calme cette semaine."/>}
-        next={<PlanningSheetList entries={nextEntries} emptyLabel="Ajoutez un client actif pour préparer sa prochaine semaine." showProgress showTopic/>}
+        next={<PlanningSheetList entries={nextEntries} emptyLabel="Ajoutez un client actif pour préparer sa prochaine semaine." showProgress/>}
       />
     </div>
   );

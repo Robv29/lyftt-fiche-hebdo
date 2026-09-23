@@ -2,13 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   canApproveAll,
   canEditSheetContent,
+  canEditSheetTopic,
   computeSheetStatus,
   editRequiresRevalidation,
   isClientValidated,
   isSheetFullyApproved,
+  sheetTopicEditState,
   validationRate,
 } from "@/lib/domain/sheet-status";
-import type { ItemApprovalStatus } from "@/lib/domain/types";
+import { SHEET_STATUS_LABELS, type ItemApprovalStatus, type SheetStatus } from "@/lib/domain/types";
 
 const item = (approvalStatus: ItemApprovalStatus, isCancelled = false) => ({
   approvalStatus,
@@ -248,5 +250,48 @@ describe("fiches validées par le client", () => {
 
   it("ne divise pas par zéro quand rien n'a été envoyé", () => {
     expect(validationRate(["draft"])).toEqual({ validated: 0, total: 0, percentage: 0 });
+  });
+});
+
+describe("sujet de la semaine", () => {
+  const ALL_STATUSES = Object.keys(SHEET_STATUS_LABELS) as SheetStatus[];
+
+  it("reste modifiable une fois la fiche validée par le client", () => {
+    /*
+     * Le besoin d'origine : la consigne de production se précise souvent après
+     * l'accord du client. Le sujet ne fait pas partie de cet accord — le client
+     * ne le voit nulle part — donc la validation ne doit pas le figer.
+     */
+    expect(canEditSheetTopic("approved_by_client")).toBe(true);
+    expect(canEditSheetTopic("tacitly_approved")).toBe(true);
+    expect(canEditSheetTopic("sent_to_client")).toBe(true);
+  });
+
+  it("suit exactement la frontière du contenu : une fiche vivante, une seule réponse", () => {
+    // Deux frontières voisines mais distinctes finiraient par diverger.
+    for (const status of ALL_STATUSES) {
+      expect(canEditSheetTopic(status)).toBe(canEditSheetContent(status));
+    }
+  });
+
+  it("se ferme sur une fiche refusée ou périmée", () => {
+    expect(sheetTopicEditState("rejected")).toBe("locked");
+    expect(sheetTopicEditState("expired")).toBe("locked");
+  });
+
+  it("n'annonce « consigne interne » que si le client a déjà la fiche sous les yeux", () => {
+    /*
+     * La phrase répond à une inquiétude précise — « est-ce que je touche à ce
+     * qu'il a validé ? ». Avant l'envoi, la question ne se pose pas : l'afficher
+     * partout la viderait de son sens.
+     */
+    for (const status of ALL_STATUSES.filter((status) => canEditSheetContent(status))) {
+      expect(sheetTopicEditState(status)).toBe(
+        editRequiresRevalidation(status) ? "internal_notice" : "editable",
+      );
+    }
+    expect(sheetTopicEditState("draft")).toBe("editable");
+    expect(sheetTopicEditState("ready_to_send")).toBe("editable");
+    expect(sheetTopicEditState("approved_by_client")).toBe("internal_notice");
   });
 });

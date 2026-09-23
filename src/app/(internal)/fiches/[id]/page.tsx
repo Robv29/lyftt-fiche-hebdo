@@ -17,9 +17,10 @@ import { SendPanel } from "./SendPanel";
 import { SheetContentEditor } from "./SheetContentEditor";
 import { planningBucketForPeriod, sheetCompletion } from "@/lib/domain/planning";
 import { planningHrefForBucket } from "../planning-tab";
+import { SheetTopic } from "../SheetTopic";
 import { resolveMediaUrl } from "@/lib/media/signed-url";
 import { resolveClientLogoUrl } from "@/lib/media/client-logo";
-import { canEditSheetContent, editRequiresRevalidation } from "@/lib/domain/sheet-status";
+import { canEditSheetContent, editRequiresRevalidation, isClientValidated, sheetTopicEditState } from "@/lib/domain/sheet-status";
 
 /** §21 — Onglet « Retours et validations » d'une fiche. */
 export default async function SheetDetailPage({
@@ -37,7 +38,7 @@ export default async function SheetDetailPage({
   const { data: sheet } = await supabase
     .from("weekly_sheets")
     .select(
-      `id, iso_year, iso_week, period_start, period_end, status, validation_deadline_at,
+      `id, iso_year, iso_week, period_start, period_end, status, topic, validation_deadline_at,
        sent_to_client_at, first_viewed_at, current_version_id,
        clients ( id, name, logo_url, timezone, approval_policy ),
        profiles:community_manager_id ( full_name ),
@@ -191,10 +192,9 @@ export default async function SheetDetailPage({
     isCancelled: item.is_cancelled,
   })));
 
+  const bucket = planningBucketForPeriod(sheet.period_start, sheet.period_end);
   // Retour sur l'onglet de la période de la fiche, et non « Cette semaine ».
-  const backHref = planningHrefForBucket(
-    planningBucketForPeriod(sheet.period_start, sheet.period_end),
-  );
+  const backHref = planningHrefForBucket(bucket);
 
   return (
     <div className="space-y-6">
@@ -256,6 +256,19 @@ export default async function SheetDetailPage({
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="space-y-6">
+          {/*
+            La consigne au-dessus des contenus qu'elle commande. Elle vivait
+            seulement sur la carte « Semaine prochaine » du planning : une fois
+            la semaine lancée, la fiche ouverte ne disait plus ce qu'on voulait
+            raconter, et le sujet ne se corrigeait plus nulle part.
+          */}
+          <SheetTopic
+            sheetId={sheet.id}
+            initialTopic={sheet.topic}
+            state={sheetTopicEditState(sheet.status)}
+            alertWhenEmpty={bucket !== "past" && !isClientValidated(sheet.status) && preparation.percentage < 100}
+          />
+
           {sheetIsEditable ? (
             <div className="space-y-4">
               {editingRequiresRevalidation && (
