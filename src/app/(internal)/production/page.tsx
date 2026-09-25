@@ -15,6 +15,8 @@ import { ProductionRequests, type ProductionRequestRow } from "./ProductionReque
 import { TicketCorrections, type TicketCorrectionRow } from "./TicketCorrections";
 import { ProductionOverview, type OverviewRow } from "./ProductionOverview";
 import { ProductionTabs } from "./ProductionTabs";
+import { ProductionCalendar } from "./ProductionCalendar";
+import { taskFromCorrection, taskFromRequest, type CalendarTask } from "@/lib/domain/production-calendar";
 import { loadProductionAssignees } from "@/lib/internal/production-assignees";
 import { loadProductionRequestClients } from "@/lib/internal/production-clients";
 import { firstNameOf, PRODUCTION_ASSIGNEE_ROLES } from "@/lib/domain/production-requests";
@@ -164,6 +166,7 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
       canReopen: rights.canReopen,
       canDelete: rights.canDelete,
       canReassign: rights.canReassign,
+      canReschedule: rights.canReschedule,
       mediaUrl: resolved?.url ?? null,
       mediaFileName: media?.file_name ?? null,
       mediaKind: media?.kind ?? null,
@@ -212,6 +215,12 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
       category: (ticket.category === "video" ? "video" : "graphic") as "graphic" | "video",
       priorityLabel: ticket.priority !== "normal" ? ticketPriorityLabel(ticket.priority) : null,
       dueLabel: due?.label ?? null,
+      /*
+       * `due_at` est un instant ; le calendrier range par jour. La conversion
+       * passe par le même utilitaire que « aujourd'hui » — un `.slice(0, 10)`
+       * sur l'ISO rendrait la veille pour tout ce qui tombe avant 2 h du matin.
+       */
+      dueOn: ticket.due_at ? todayInParis(new Date(ticket.due_at as string)) : null,
       overdue: isActionableOverdue({
         dueAt: ticket.due_at as string | null,
         periodStart: period?.period_start,
@@ -219,6 +228,7 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
       }),
       hasItem: Boolean(ticket.weekly_sheet_item_id),
       assigneeName: contributor?.profiles?.full_name ?? null,
+      assigneeId: contributor?.profile_id ?? null,
       assignedToViewer: Boolean(contributor && contributor.profile_id === profile?.id),
     };
   });
@@ -226,6 +236,52 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
   // Ce qui a dépassé son échéance : le sous-menu l'affiche sans qu'il faille ouvrir l'onglet pour le découvrir.
   const overdueCount = requests.filter((request) => request.urgency === "overdue").length
     + corrections.filter((correction) => correction.overdue).length;
+
+  /*
+   * Le calendrier ne lit rien de plus : il repose sur leur échéance les deux
+   * moitiés du plan de charge déjà chargées ici — les commandes internes et
+   * les corrections graphiques ou vidéo.
+   *
+   * Sont volontairement absents : les shootings, dont la date vit sur la ligne
+   * de budget et ne se lit qu'avec la clé service, et les fiches à préparer,
+   * qui sont l'onglet « Vue d'ensemble » avec sa propre semaine — la même fiche
+   * à deux endroits avec deux sens est le plus court chemin pour qu'on ne
+   * croie plus ni l'un ni l'autre.
+   */
+  const calendarTasks: CalendarTask[] = [
+    ...requests.map((request) => taskFromRequest({
+      id: request.id,
+      clientId: request.clientId,
+      clientName: request.clientName,
+      kind: request.kind,
+      title: request.title,
+      dueOn: request.dueOn,
+      status: request.status,
+      assignedToId: request.assignedToId,
+      assigneeLabel: request.assigneeLabel,
+      isMine: request.isMine,
+      assignedToViewer: request.assignedToViewer,
+      // Droit calculé une seule fois côté serveur, comme les six autres.
+      canReschedule: request.canReschedule,
+    }, today)),
+    ...corrections.map((correction) => taskFromCorrection({
+      id: correction.id,
+      clientId: correction.clientId,
+      clientName: correction.clientName,
+      title: correction.title,
+      category: correction.category,
+      dueOn: correction.dueOn,
+      status: correction.status,
+      // Retard encore rattrapable : jamais recalculé par comparaison de dates.
+      overdue: correction.overdue,
+      assignedToId: correction.assigneeId,
+      // Même prénom que dans le menu « Confier à » : un seul nom par personne, des deux côtés.
+      assigneeLabel: correction.assigneeId
+        ? assigneeLabelById.get(correction.assigneeId) ?? firstNameOf(correction.assigneeName)
+        : firstNameOf(correction.assigneeName),
+      assignedToViewer: correction.assignedToViewer,
+    }, today)),
+  ];
 
   /*
    * Vue d'ensemble : un client sans fiche cette semaine a autant besoin d'être
@@ -345,6 +401,7 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
           canValidateVisuals={["super_admin", "production_manager", "community_manager"].includes(profile?.role ?? "")}
         />}
         detailAlertCount={overdueCount}
+        calendar={<ProductionCalendar tasks={calendarTasks} today={today}/>}
         detail={<div className="space-y-7">
       <ProductionRequests
         requests={requests}

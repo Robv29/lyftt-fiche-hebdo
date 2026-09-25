@@ -61,6 +61,8 @@ export interface ProductionRequestRow {
   canReopen: boolean;
   canDelete: boolean;
   canReassign: boolean;
+  /** Déplacer l'échéance depuis le calendrier : le même droit, décidé au même endroit. */
+  canReschedule: boolean;
   mediaUrl: string | null;
   mediaFileName: string | null;
   mediaKind: string | null;

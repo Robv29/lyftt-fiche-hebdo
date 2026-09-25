@@ -72,6 +72,8 @@ export interface ProductionRequestRights {
   canReopen: boolean;
   canDelete: boolean;
   canReassign: boolean;
+  /** Déplacer l'échéance : une décision sur la commande, pas sur sa production. */
+  canReschedule: boolean;
 }
 
 const NO_RIGHTS: ProductionRequestRights = {
@@ -85,6 +87,7 @@ const NO_RIGHTS: ProductionRequestRights = {
   canReopen: false,
   canDelete: false,
   canReassign: false,
+  canReschedule: false,
 };
 
 /**
@@ -120,6 +123,16 @@ export function productionRequestRights(
     // Tant que rien n'est livré : après, l'historique doit dire à qui la
     // commande était confiée quand elle a été rendue.
     canReassign: mayDecide && request.status === "a_faire",
+    /*
+     * Repousser une échéance, c'est renégocier ce qui a été convenu : cela
+     * revient au demandeur et à l'encadrement, comme l'affectation et le
+     * retrait. L'affectataire produit, il ne s'accorde pas un délai.
+     *
+     * Et seulement tant que rien n'est livré : `due_on` sert de référence aux
+     * verdicts de ponctualité de l'historique, qu'une commande close ne doit
+     * plus pouvoir réécrire.
+     */
+    canReschedule: mayDecide && request.status === "a_faire",
   };
 }
 
@@ -175,13 +188,23 @@ export interface BoardFilters {
 
 export const EMPTY_BOARD_FILTERS: BoardFilters = { query: "", clientId: "", person: "", status: "" };
 
+/**
+ * Ce qu'il faut d'une ligne pour la filtrer, et pour dire dans quelle vue elle
+ * entre. Volontairement plus étroit que `BoardRow` : le calendrier porte aussi
+ * des corrections, qui n'ont ni `createdAt` ni intitulé de commande, et doit
+ * pourtant s'accorder avec la file sur ce que « Pour vous » ou « En retard »
+ * désignent. Une seule définition de chaque vue, deux écrans.
+ */
+export type BoardFilterable = Pick<BoardRow, "clientId" | "clientName" | "title" | "assignedToId" | "status">;
+export type BoardScopable = Pick<BoardRow, "assignedToId" | "status" | "urgency" | "isMine" | "assignedToViewer">;
+
 /** Clé de la personne à qui la commande est confiée, pour le filtre. */
 export function assigneeKey(row: Pick<BoardRow, "assignedToId">): string {
   return row.assignedToId ?? UNKNOWN_PERSON_KEY;
 }
 
 /** La ligne entre-t-elle dans la vue choisie par les pastilles ? */
-export function inBoardScope(row: BoardRow, scope: BoardScope): boolean {
+export function inBoardScope(row: BoardScopable, scope: BoardScope): boolean {
   switch (scope) {
     case "toutes": return true;
     case "pour_vous": return row.assignedToViewer;
@@ -192,7 +215,7 @@ export function inBoardScope(row: BoardRow, scope: BoardScope): boolean {
 }
 
 /** La ligne passe-t-elle la barre de recherche et les trois menus ? */
-export function matchesBoardFilters(row: BoardRow, filters: BoardFilters): boolean {
+export function matchesBoardFilters(row: BoardFilterable, filters: BoardFilters): boolean {
   if (filters.clientId && row.clientId !== filters.clientId) return false;
   if (filters.person && assigneeKey(row) !== filters.person) return false;
   if (filters.status && row.status !== filters.status) return false;

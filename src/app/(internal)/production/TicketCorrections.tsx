@@ -23,11 +23,19 @@ export interface TicketCorrectionRow {
   clientId: string;
   priorityLabel: string | null;
   dueLabel: string | null;
+  /**
+   * Jour civil Europe/Paris de l'échéance, ou null — la colonne est nullable.
+   * La carte dit « dans deux jours » ; le calendrier, lui, a besoin du jour sur
+   * lequel poser la correction.
+   */
+  dueOn: string | null;
   overdue: boolean;
   /** Faux quand la demande ne vise aucune publication précise. */
   hasItem: boolean;
   /** Personne désignée pour produire la correction, s'il y en a une. */
   assigneeName: string | null;
+  /** Son identifiant : le filtre « par personne » du calendrier doit s'accorder avec celui de la file. */
+  assigneeId: string | null;
   assignedToViewer: boolean;
 }
 

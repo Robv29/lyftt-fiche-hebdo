@@ -6,6 +6,7 @@ import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/se
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { canAccessClient } from "@/lib/internal/authorization";
 import { productionRequestRights, type ProductionRequestRights } from "@/lib/domain/production-board";
+import { isCivilDate } from "@/lib/domain/production-calendar";
 import type { ProductionRequestStatus } from "@/lib/domain/production-requests";
 import type { AppRole } from "@/lib/domain/types";
 import { loadProductionAssignees, type ProductionAssignee } from "@/lib/internal/production-assignees";
@@ -481,6 +482,69 @@ export async function assignProductionRequest(requestId: string, assigneeId: str
   revalidatePath("/production");
   revalidatePath("/historique/production");
   return { ok: true, message: `Confiée à ${assignee.label}.` };
+}
+
+/**
+ * Déplacer une commande à une autre date, depuis le calendrier.
+ *
+ * Une échéance se renégocie — un tournage repoussé, une semaine qui déborde —
+ * et jusqu'ici la seule issue était de retirer la commande pour la repasser,
+ * ce qui perdait le brief, l'exemple joint et l'affectation.
+ *
+ * Trois gardes, dans cet ordre, et aucune clé service : la RLS suffit.
+ *   • `canReschedule` — le demandeur et l'encadrement, jamais l'affectataire,
+ *     et seulement tant que rien n'est livré ;
+ *   • le périmètre client, pour rendre un refus lisible plutôt qu'un UPDATE à
+ *     zéro ligne ;
+ *   • `production_requests_write`, qui a le dernier mot en base.
+ *
+ * L'affectataire n'est pas prévenu : la carte et la case du calendrier portent
+ * la nouvelle date, et la notification exigerait la clé service pour écrire
+ * chez quelqu'un d'autre. Confier reste le seul geste qui dérange.
+ */
+export async function rescheduleProductionRequest(requestId: string, dueOn: string): Promise<ProductionActionResult> {
+  const profile = await requireProfile();
+  if (!profile) return { ok: false, message: ACCESS_DENIED };
+
+  const parsed = z.object({
+    requestId: z.string().uuid(),
+    /*
+     * Même forme qu'à la commande, puis la même vérification que le calendrier :
+     * l'expression régulière laisse passer le 31 février, et PostgreSQL
+     * rendrait alors son propre message à l'écran.
+     */
+    dueOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(isCivilDate, "Cette date n’existe pas."),
+  }).safeParse({ requestId, dueOn });
+  if (!parsed.success) {
+    return { ok: false, message: parsed.error.issues[0]?.message ?? "Indiquez la nouvelle date limite." };
+  }
+
+  const { request, rights, inScope, error: denied } = await readRequestForAction(parsed.data.requestId, profile);
+  if (!request) return { ok: false, message: denied ?? ACCESS_DENIED };
+  if (!rights.mayDecide) {
+    return { ok: false, message: "Seuls le demandeur et l’encadrement déplacent une échéance." };
+  }
+  if (!rights.canReschedule) {
+    return { ok: false, message: "Commande déjà livrée : son échéance ne bouge plus." };
+  }
+  if (!inScope) return { ok: false, message: OUT_OF_SCOPE };
+
+  const supabase = await createSupabaseServerClient();
+  const { data: updated, error } = await supabase
+    .from("production_requests")
+    .update({ due_on: parsed.data.dueOn })
+    .eq("id", request.id)
+    // La commande ne doit pas s'être close entre la lecture et l'écriture :
+    // `due_on` sert de référence aux verdicts de ponctualité de l'historique.
+    .eq("status", "a_faire")
+    .select("id");
+
+  if (error) return { ok: false, message: `Déplacement impossible : ${error.message}` };
+  if (!updated?.length) return { ok: false, message: CHANGED };
+
+  revalidatePath("/production");
+  revalidatePath("/historique/production");
+  return { ok: true, message: `Échéance déplacée au ${formatDueDay(parsed.data.dueOn)}.` };
 }
 
 // ---------------------------------------------------------------------------
