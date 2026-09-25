@@ -1,11 +1,13 @@
 import {
   SHOOTING_PLAN_SERVICES,
+  awaitsShootingDecision,
   classifyShootings,
   findService,
   formatEuros,
   parseShootingPlan,
   type ShootingPlan,
 } from "./budget";
+import { isOnSettledInvoice, type InvoiceStatus } from "./invoicing";
 
 /**
  * Classement d'un shooting tourné : ce que devient sa ligne au budget.
@@ -163,4 +165,52 @@ export function shootingPlanFromNotes(notes: string | null | undefined): Shootin
   } catch {
     return null;
   }
+}
+
+/** Un shooting inscrit, vu par la règle du classement. */
+export interface ClassifiableShooting {
+  serviceKey: string;
+  performedOn: string;
+  /** Tri déjà fait : compris au forfait, vendu en plus, ou pas encore tranché. */
+  forfaitIncluded?: boolean | null;
+  /** Annulé : consigné sur la fiche, jamais déduit d'une date. */
+  cancelled?: boolean;
+}
+
+/** Ce que le dossier du client dit de la facturation de ses mois. */
+export interface ShootingBillingContext {
+  /** Dernier jour tourné. Une date calée d'avance n'a rien à trancher. */
+  today: string;
+  contractStartDate: string | null;
+  /** Statut de facture par mois de période, tel qu'il est stocké. */
+  invoiceStatuses: Record<string, InvoiceStatus>;
+}
+
+/**
+ * Shooting non classé : celui qui attend encore sa décision de facturation.
+ *
+ * C'est le seul endroit où cette question se tranche. Le point rouge de la
+ * liste, le compteur, l'encart « à classer » et la fiche du shooting lisent
+ * tous cette fonction : un écran qui refabriquerait la règle finirait par
+ * signaler un travail que l'action refuse, ou par taire celui qu'elle accepte.
+ *
+ * Trois conditions, dans l'ordre où elles coupent :
+ *   - annulé : le shooting n'a pas eu lieu, il n'y a rien à facturer ;
+ *   - tourné et non tranché : c'est la définition même, et une date à venir
+ *     n'a encore rien à dire ;
+ *   - facture non partie : une facture établie ou prélevée fige le tri, et
+ *     `classifyShooting` refuse de reclasser la ligne. La signaler promettrait
+ *     un geste impossible.
+ */
+export function isShootingUnclassified(
+  shooting: ClassifiableShooting,
+  context: ShootingBillingContext,
+): boolean {
+  if (shooting.cancelled) return false;
+  if (!awaitsShootingDecision(shooting, context.today)) return false;
+  return !isOnSettledInvoice(
+    { performedOn: shooting.performedOn },
+    context.contractStartDate,
+    context.invoiceStatuses,
+  );
 }

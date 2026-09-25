@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { requestShooting, type ShootingActionResult } from "./actions";
 import { ShootingDateEditor } from "./ShootingDateEditor";
+import { UnclassifiedDot } from "./UnclassifiedDot";
 import {
   SHOOTING_KIND_LABELS,
   SHOOTING_STATUS_LABELS,
@@ -32,6 +33,12 @@ export interface ShootingRow {
   deliveryDays: number | null;
   deliveredOn: string | null;
   assetsCount: number | null;
+  /*
+   * Shooting dont la facturation n'est pas tranchée. Calculé côté serveur par
+   * `isShootingUnclassified`, jamais ici : la liste se contente d'allumer le
+   * point. Toujours `false` hors direction, seule à pouvoir classer.
+   */
+  unclassified: boolean;
 }
 
 const STATUS_STYLE: Record<ShootingStatus, string> = {
@@ -68,6 +75,7 @@ export function ShootingsView({
   const [kind, setKind] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [onlyUnclassified, setOnlyUnclassified] = useState(false);
 
   const shown = useMemo(() => filterShootings(shootings, {
     clientId: clientId || null,
@@ -75,14 +83,22 @@ export function ShootingsView({
     kind: (kind || null) as ShootingKind | null,
     from: from || null,
     to: to || null,
-  }), [shootings, clientId, status, kind, from, to]);
+  }).filter((shooting) => !onlyUnclassified || shooting.unclassified),
+  [shootings, clientId, status, kind, from, to, onlyUnclassified]);
+
+  /*
+   * Combien restent à classer, sur ce que les filtres laissent voir : un
+   * compteur qui annoncerait trois shootings alors qu'un seul est à l'écran
+   * enverrait chercher les deux autres.
+   */
+  const toClassify = useMemo(() => shown.filter((shooting) => shooting.unclassified).length, [shown]);
 
   const stats = useMemo(() => shootingStats(shown), [shown]);
   const punctuality = useMemo(() => onTimeRate(stats), [stats]);
   const perMonth = useMemo(() => shootingsPerMonth(shown), [shown]);
   const byKind = useMemo(() => shootingsByKind(shown), [shown]);
   const peak = Math.max(1, ...perMonth.map((entry) => entry.count));
-  const filtered = Boolean(clientId || status || kind || from || to);
+  const filtered = Boolean(clientId || status || kind || from || to || onlyUnclassified);
 
   return (
     <div className="space-y-6">
@@ -202,11 +218,34 @@ export function ShootingsView({
           </Field>
           <Field label="Du"><input type="date" className="field bg-white" value={from} onChange={(e) => setFrom(e.target.value)}/></Field>
           <Field label="Au"><input type="date" className="field bg-white" value={to} onChange={(e) => setTo(e.target.value)}/></Field>
+          {/*
+            Le compteur du point rouge, là où l'on filtre déjà : il dit combien
+            de shootings attendent leur décision de facturation, et sert de
+            filtre. Il compte ce que les filtres laissent voir, et disparaît
+            quand il n'y a plus rien à classer à l'écran : « 0 à classer » sous
+            un encart qui en annonce trois se contredirait.
+          */}
+          {(toClassify > 0 || onlyUnclassified) && (
+            <button
+              type="button"
+              aria-pressed={onlyUnclassified}
+              title="N'afficher que les shootings dont la facturation n'est pas tranchée"
+              onClick={() => setOnlyUnclassified((value) => !value)}
+              className={`inline-flex min-h-11 items-center gap-2 rounded-xl border px-3.5 text-xs font-semibold transition-colors ${
+                onlyUnclassified
+                  ? "border-state-changes bg-state-changes/5 text-state-changes"
+                  : "border-line text-ink-soft hover:text-ink"
+              }`}
+            >
+              <span className="h-2 w-2 shrink-0 rounded-full bg-state-changes" aria-hidden="true" />
+              {toClassify} à classer
+            </button>
+          )}
           {filtered && (
             <button
               type="button"
               className="text-xs font-semibold text-accent hover:underline"
-              onClick={() => { setClientId(""); setStatus(""); setKind(""); setFrom(""); setTo(""); }}
+              onClick={() => { setClientId(""); setStatus(""); setKind(""); setFrom(""); setTo(""); setOnlyUnclassified(false); }}
             >
               Tout afficher
             </button>
@@ -221,6 +260,14 @@ export function ShootingsView({
           <ul className="divide-y divide-line">
             {shown.map((shooting) => (
               <li key={shooting.lineId} className="flex flex-wrap items-center gap-3 px-4 py-3">
+                {/*
+                  Une gouttière de largeur fixe : sans elle, les lignes marquées
+                  décaleraient leur badge et la colonne cesserait de se lire
+                  d'un trait — c'est justement ce qu'on cherchait à gagner.
+                */}
+                <span className="flex w-2 shrink-0 justify-center">
+                  {shooting.unclassified && <UnclassifiedDot />}
+                </span>
                 <span className={`badge shrink-0 ${STATUS_STYLE[shooting.status]}`}>
                   {SHOOTING_STATUS_LABELS[shooting.status]}
                 </span>

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isShootingUnclassified,
   planShootingDecision,
   shootingDecisionSuggestion,
   shootingPlanFromNotes,
@@ -69,5 +70,54 @@ describe("proposition de classement", () => {
     expect(shootingPlanFromNotes(JSON.stringify({ shootingPlan: plan }))).toEqual(plan);
     expect(shootingPlanFromNotes("pas du json")).toBeNull();
     expect(shootingPlanFromNotes(null)).toBeNull();
+  });
+});
+
+describe("shooting non classé : le point rouge", () => {
+  const today = "2026-09-25";
+  /* Gestion démarrée en juillet, aucune facture partie. */
+  const open = { today, contractStartDate: "2026-07-01", invoiceStatuses: {} };
+  const tourne = { serviceKey: "shooting_forfait", performedOn: "2026-09-14", forfaitIncluded: null };
+
+  it("tourné et sans décision : non classé", () => {
+    expect(isShootingUnclassified(tourne, open)).toBe(true);
+    /* Une ligne sans le champ du tout vaut une ligne non tranchée. */
+    expect(isShootingUnclassified({ serviceKey: "shooting_demi", performedOn: "2026-09-14" }, open)).toBe(true);
+  });
+
+  it("déjà tranché : classé, dans un sens comme dans l'autre", () => {
+    expect(isShootingUnclassified({ ...tourne, forfaitIncluded: true }, open)).toBe(false);
+    expect(isShootingUnclassified({ ...tourne, forfaitIncluded: false }, open)).toBe(false);
+  });
+
+  it("annulé : rien à facturer, donc rien à classer", () => {
+    expect(isShootingUnclassified({ ...tourne, cancelled: true }, open)).toBe(false);
+  });
+
+  it("calé pour plus tard : rien à trancher tant qu'il n'a pas été tourné", () => {
+    expect(isShootingUnclassified({ ...tourne, performedOn: "2026-10-12" }, open)).toBe(false);
+    /* Le jour même compte : il a eu lieu. */
+    expect(isShootingUnclassified({ ...tourne, performedOn: today }, open)).toBe(true);
+  });
+
+  it("facture partie : le tri est figé, l'action le refuse, la liste se tait", () => {
+    const facturee = { ...open, invoiceStatuses: { "2026-09-01": "faite" as const } };
+    const prelevee = { ...open, invoiceStatuses: { "2026-09-01": "prelevement_programme" as const } };
+    expect(isShootingUnclassified(tourne, facturee)).toBe(false);
+    expect(isShootingUnclassified(tourne, prelevee)).toBe(false);
+    /* Une facture encore à faire ne fige rien. */
+    expect(isShootingUnclassified(tourne, { ...open, invoiceStatuses: { "2026-09-01": "a_faire" } })).toBe(true);
+  });
+
+  it("tourné avant le début de gestion : c'est la facture du mois de démarrage qui fige", () => {
+    const avant = { ...tourne, performedOn: "2026-06-23" };
+    expect(isShootingUnclassified(avant, open)).toBe(true);
+    expect(isShootingUnclassified(avant, { ...open, invoiceStatuses: { "2026-07-01": "faite" } })).toBe(false);
+    /* Sa propre facture de juin, si elle est partie, fige aussi. */
+    expect(isShootingUnclassified(avant, { ...open, invoiceStatuses: { "2026-06-01": "faite" } })).toBe(false);
+  });
+
+  it("ne concerne que les shootings", () => {
+    expect(isShootingUnclassified({ serviceKey: "post_supplementaire", performedOn: "2026-09-14" }, open)).toBe(false);
   });
 });

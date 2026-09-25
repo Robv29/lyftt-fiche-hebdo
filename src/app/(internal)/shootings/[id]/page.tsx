@@ -4,9 +4,12 @@ import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/se
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { denyCommercial } from "@/lib/internal/authorization";
 import { todayInParis } from "@/lib/domain/client-lifecycle";
+import type { InvoiceStatus } from "@/lib/domain/invoicing";
+import { isShootingUnclassified } from "@/lib/domain/shooting-decision";
 import { deliveryDueOn } from "@/lib/domain/shootings";
 import { ShootingForm } from "./ShootingForm";
 import { ShootingDateEditor } from "../ShootingDateEditor";
+import { UnclassifiedDot } from "../UnclassifiedDot";
 
 export const dynamic = "force-dynamic";
 
@@ -35,7 +38,7 @@ export default async function ShootingPage({
    */
   const { data: line } = await createSupabaseAdminClient()
     .from("client_budget_lines")
-    .select("id, client_id, performed_on, label, service_key")
+    .select("id, client_id, performed_on, label, service_key, forfait_included")
     .eq("id", id)
     .maybeSingle();
   if (!line) notFound();
@@ -43,7 +46,7 @@ export default async function ShootingPage({
   const supabase = await createSupabaseServerClient();
   const { data: client } = await supabase
     .from("clients")
-    .select("id, name")
+    .select("id, name, contract_start_date")
     .eq("id", line.client_id as string)
     .maybeSingle();
   if (!client) notFound();
@@ -60,6 +63,37 @@ export default async function ShootingPage({
   const promised = typeof details?.delivery_days === "number"
     ? deliveryDueOn(date, details.delivery_days)
     : null;
+
+  /*
+   * Shooting non classé, marqué ici comme dans la liste — la même règle, pour
+   * que la fiche ouverte depuis un point rouge le porte aussi.
+   *
+   * Direction seule : classer est une décision de facturation, et les factures
+   * du client ne se lisent pas sans elle. Le lecteur n'apprend ici aucun
+   * montant, seulement qu'une décision reste à prendre.
+   */
+  let unclassified = false;
+  if (profile.role === "super_admin") {
+    const { data: invoices } = await supabase
+      .from("client_invoices")
+      .select("period_month, status")
+      .eq("client_id", client.id as string);
+    unclassified = isShootingUnclassified(
+      {
+        serviceKey: line.service_key as string,
+        performedOn: date,
+        forfaitIncluded: line.forfait_included as boolean | null,
+        cancelled: Boolean(details?.cancelled),
+      },
+      {
+        today,
+        contractStartDate: (client.contract_start_date as string | null) ?? null,
+        invoiceStatuses: Object.fromEntries(
+          (invoices ?? []).map((row) => [String(row.period_month).slice(0, 10), row.status as InvoiceStatus]),
+        ),
+      },
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -78,6 +112,17 @@ export default async function ShootingPage({
             weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC",
           }).format(new Date(`${date}T00:00:00Z`))}
         </p>
+        {unclassified && (
+          <p className="mt-3 flex flex-wrap items-center gap-2">
+            <UnclassifiedDot label />
+            <span className="text-xs text-ink-soft">
+              Compris au forfait, vendu en plus, ou pas eu lieu&nbsp;? La décision se prend sur la{" "}
+              <Link href="/shootings" className="font-semibold text-accent hover:underline">
+                liste des shootings
+              </Link>.
+            </span>
+          </p>
+        )}
         {/*
           Même composant et même action que la liste des shootings : une seule
           règle pour déplacer un shooting, qui refuse d'en déplacer un déjà facturé.

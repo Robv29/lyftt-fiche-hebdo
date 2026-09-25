@@ -1,10 +1,13 @@
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { denyCommercial } from "@/lib/internal/authorization";
-import { awaitsShootingDecision } from "@/lib/domain/budget";
 import { todayInParis } from "@/lib/domain/client-lifecycle";
-import { isOnSettledInvoice, type InvoiceStatus } from "@/lib/domain/invoicing";
-import { shootingDecisionSuggestion, shootingPlanFromNotes } from "@/lib/domain/shooting-decision";
+import type { InvoiceStatus } from "@/lib/domain/invoicing";
+import {
+  isShootingUnclassified,
+  shootingDecisionSuggestion,
+  shootingPlanFromNotes,
+} from "@/lib/domain/shooting-decision";
 import { accessibleShootingClients, readShootings } from "@/lib/shootings/query";
 import { ShootingReminders } from "../ShootingReminders";
 import { ShootingClassifier, type ShootingToClassify } from "./ShootingClassifier";
@@ -56,24 +59,35 @@ export default async function ShootingsPage() {
     }
     const startByClient = new Map(clients.map((client) => [client.id, client.contract_start_date]));
     const today = todayInParis();
-    toClassify = entries.filter((entry) =>
-      awaitsShootingDecision({
+    /*
+     * Une seule règle, celle du domaine : annulé, pas encore tourné, ou porté
+     * par une facture déjà partie, et le shooting n'est pas « à classer ».
+     * C'est elle qui allume aussi les points rouges de la liste, sans quoi
+     * l'encart et la liste finiraient par ne plus désigner les mêmes lignes.
+     */
+    toClassify = entries.filter((entry) => isShootingUnclassified(
+      {
         serviceKey: entry.serviceKey,
         performedOn: entry.date,
         forfaitIncluded: entry.forfaitIncluded,
-      }, today)
-      && entry.status !== "annule"
-      /*
-       * Une facture partie fige le tri : requalifier changerait un montant
-       * transmis. Celle où la ligne figure vraiment — la même règle que
-       * l'action, sans quoi la liste proposerait ce que l'action refuse.
-       */
-      && !isOnSettledInvoice(
-        { performedOn: entry.date },
-        startByClient.get(entry.clientId) ?? null,
-        statusesByClient.get(entry.clientId) ?? {},
-      ));
+        cancelled: entry.status === "annule",
+      },
+      {
+        today,
+        contractStartDate: startByClient.get(entry.clientId) ?? null,
+        invoiceStatuses: statusesByClient.get(entry.clientId) ?? {},
+      },
+    ));
   }
+
+  /*
+   * Les lignes à marquer d'un point rouge dans la liste. L'ensemble reste vide
+   * hors direction : le point appelle un geste — trancher la facturation —
+   * que seule la direction peut faire, et qu'elle seule voit dans l'encart
+   * ci-dessus. Une pastille rouge que la production ne peut jamais éteindre
+   * s'apprend à ignorer, et emporterait le reste des alertes avec elle.
+   */
+  const unclassified = new Set(toClassify.map((entry) => entry.lineId));
 
   /*
    * De quoi trancher sur place : le forfait du client, sa période, son mode de
@@ -160,6 +174,7 @@ export default async function ShootingsPage() {
           deliveryDays: entry.details?.deliveryDays ?? null,
           deliveredOn: entry.details?.deliveredOn ?? null,
           assetsCount: entry.details?.assetsCount ?? null,
+          unclassified: unclassified.has(entry.lineId),
         }))}
         clients={clients.map((client) => ({ id: client.id, name: client.name }))}
         canEditDates={["super_admin", "production_manager", "community_manager"].includes(profile.role)}
