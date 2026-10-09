@@ -16,7 +16,7 @@ import { satisfactionPercentage, satisfactionSummary } from "@/lib/domain/planni
 import { productionPunctuality } from "@/lib/domain/production-requests";
 import { ticketSlaSummary, TICKET_SLA_HOURS } from "@/lib/domain/ticket-sla";
 import { resolveClientLogoUrl } from "@/lib/media/client-logo";
-import type { TicketType } from "@/lib/domain/ticket-types";
+import { isServiceRequest, type TicketType } from "@/lib/domain/ticket-types";
 
 /**
  * Lecture des indicateurs de l'agence, pour l'écran Indicateurs comme pour le
@@ -248,7 +248,7 @@ export async function readAgencyMetrics(
        * pour renvoyer la correction.
        */
       supabase.from("client_tickets")
-        .select("id, submitted_at, resolved_at")
+        .select("id, ticket_type, submitted_at, resolved_at")
         .not("status", "in", OPEN_TICKET_STATUSES),
       supabase.from("weekly_sheets")
         .select("id", { count: "exact", head: true })
@@ -272,9 +272,20 @@ export async function readAgencyMetrics(
   const sheetList = [...new Map(
     [...(sentSheets ?? []), ...(approvedSheets ?? [])].map((sheet) => [sheet.id as string, sheet]),
   ).values()];
+  /*
+   * Les demandes hors publication sortent de la mesure.
+   *
+   * Un devis, une date de shooting, une envie pour la semaine suivante ne
+   * corrigent aucun contenu : les compter abîmait trois indicateurs à la fois.
+   * Elles faisaient baisser le taux de fiches validées sans correction, elles
+   * entraient dans la répartition « Retours clients » par type et par client,
+   * et elles héritaient d'un délai de dix heures ouvrées qu'elles ne doivent
+   * pas porter — si bien qu'un client qui partage une envie faisait mécaniquement
+   * baisser le score de santé de l'agence.
+   */
   const ticketList = [...new Map(
     [...(receivedTickets ?? []), ...(resolvedTickets ?? [])].map((ticket) => [ticket.id as string, ticket]),
-  ).values()];
+  ).values()].filter((ticket) => !isServiceRequest(ticket.ticket_type));
   const sent = sheetList.filter((sheet) => inWindow(sheet.sent_to_client_at));
   const viewed = sent.filter((sheet) => sheet.first_viewed_at);
   const approved = sheetList.filter((sheet) =>
@@ -384,7 +395,9 @@ export async function readAgencyMetrics(
   });
   const slaTickets = [
     ...ticketList.filter((ticket) => inWindow(ticket.submitted_at)).map(slaInput),
-    ...(openTickets ?? []).filter((ticket) => !inWindow(ticket.submitted_at)).map(slaInput),
+    ...(openTickets ?? [])
+      .filter((ticket) => !inWindow(ticket.submitted_at) && !isServiceRequest(ticket.ticket_type))
+      .map(slaInput),
   ];
   const sla = ticketSlaSummary(slaTickets);
   const health = healthScore({

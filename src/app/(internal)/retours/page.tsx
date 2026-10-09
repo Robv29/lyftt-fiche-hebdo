@@ -1,8 +1,13 @@
 import Link from "next/link";
 import { denyCommercial } from "@/lib/internal/authorization";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { isServiceRequest, isServiceRequestOverdue, serviceRequestAgeInDays } from "@/lib/domain/ticket-types";
-import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
+import {
+  getTicketTypeDefinition,
+  isServiceRequest,
+  isServiceRequestOverdue,
+  serviceRequestAgeInDays,
+  type TicketType,
+} from "@/lib/domain/ticket-types";
 import { isActionableOverdue } from "@/lib/domain/planning";
 import { deadlineState } from "@/lib/domain/deadline";
 import { ticketDeadline, ticketSlaState } from "@/lib/domain/ticket-sla";
@@ -33,6 +38,19 @@ const STATUS_FILTERS: { value: string; label: string }[] = [
   { value: "all", label: "Tous" },
 ];
 
+/**
+ * Natures de demande qu'on isole d'un clic.
+ *
+ * `?type=` existait déjà côté requête : seul le raccourci manquait. Les envies
+ * s'ouvrent sur « Tous » — une envie prise en compte est close, et la liste
+ * « Ouverts » l'aurait masquée alors que c'est précisément celle qu'on relit
+ * en préparant la fiche suivante.
+ */
+const TYPE_FILTERS: { value?: TicketType; label: string; statut?: string }[] = [
+  { label: "Toutes natures" },
+  { value: "weekly_wish", label: "Envies des clients", statut: "all" },
+];
+
 export default async function TicketsPage({
   searchParams,
 }: {
@@ -41,6 +59,17 @@ export default async function TicketsPage({
   await denyCommercial();
   const filters = await searchParams;
   const statusFilter = filters.statut ?? "open";
+  const typeFilter = filters.type;
+  /*
+   * Le filtre par nature voyage avec le filtre par statut : sans quoi cliquer
+   * « Ouverts » depuis la liste des envies renvoyait sur tous les tickets, et
+   * la lecture « les envies de ce client » se perdait en un clic.
+   */
+  const keepParams = (params: Record<string, string | undefined>) =>
+    `/retours?${Object.entries({ client: filters.client, ...params })
+      .filter(([, value]) => value)
+      .map(([key, value]) => `${key}=${encodeURIComponent(value as string)}`)
+      .join("&")}`;
 
   const supabase = await createSupabaseServerClient();
 
@@ -127,9 +156,31 @@ export default async function TicketsPage({
         {STATUS_FILTERS.map((filter) => (
           <Link
             key={filter.value}
-            href={`/retours?statut=${filter.value}`}
+            href={keepParams({ statut: filter.value, type: typeFilter })}
             className={`btn min-h-9 rounded-xl px-3 py-1.5 text-xs shadow-none ${
               statusFilter === filter.value
+                ? "border border-[#1176d3] bg-[#1176d3] text-white"
+                : "border border-transparent bg-transparent text-ink-soft hover:bg-canvas hover:text-ink"
+            }`}
+          >
+            {filter.label}
+          </Link>
+        ))}
+      </nav>
+
+      {/*
+        Les envies des clients se lisent d'un bloc, toutes semaines confondues
+        et de la plus ancienne à la plus récente — un écran dédié n'apporterait
+        rien de plus. Ajoutez `&client=<id>` pour n'en lire qu'un, ou passez
+        par l'historique du client pour la lecture semaine par semaine.
+      */}
+      <nav className="filter-bar" aria-label="Filtrer les tickets par nature">
+        {TYPE_FILTERS.map((filter) => (
+          <Link
+            key={filter.label}
+            href={keepParams({ statut: filter.statut ?? statusFilter, type: filter.value })}
+            className={`btn min-h-9 rounded-xl px-3 py-1.5 text-xs shadow-none ${
+              (typeFilter ?? "") === (filter.value ?? "")
                 ? "border border-[#1176d3] bg-[#1176d3] text-white"
                 : "border border-transparent bg-transparent text-ink-soft hover:bg-canvas hover:text-ink"
             }`}
@@ -153,7 +204,15 @@ export default async function TicketsPage({
             // Tant que la correction n'est pas partie, c'est la promesse des
             // vingt heures qui court ; ensuite l'échéance n'apprend plus rien.
             const answered = answeredAt.get(ticket.id) ?? ticket.resolved_at;
-            const deadlineAt = answered ? null : ticketDeadline(ticket.submitted_at);
+            /*
+             * Les dix heures ouvrées promettent le renvoi d'une correction :
+             * une demande hors publication n'en a aucune à renvoyer, et
+             * affichait donc « en retard de … » dès le lendemain. Elle a sa
+             * propre alerte, à droite.
+             */
+            const serviceRequest = isServiceRequest(ticket.ticket_type);
+            const wish = ticket.ticket_type === "weekly_wish";
+            const deadlineAt = answered || serviceRequest ? null : ticketDeadline(ticket.submitted_at);
             const due = deadlineAt ? deadlineState(deadlineAt) : null;
             // Même règle que les fiches en attente : seule la semaine en cours
             // porte l'alerte, une correction attendue sur une semaine publiée
@@ -176,12 +235,14 @@ export default async function TicketsPage({
                       {/*
                         Une demande hors publication ne suit pas le circuit de
                         correction : elle doit se repérer d'un coup d'œil, et
-                        alerter dès qu'elle traîne au-delà de trois jours.
+                        alerter quand elle traîne — trois jours pour une
+                        réponse due, une semaine pour une envie, dont
+                        l'échéance est la fiche à venir.
                       */}
-                      {isServiceRequest(ticket.ticket_type) && (
-                        isServiceRequestOverdue({ submittedAt: ticket.submitted_at, resolvedAt: ticket.resolved_at })
-                          ? <span className="badge bg-state-changes text-white">Sans réponse depuis {Math.floor(serviceRequestAgeInDays(ticket.submitted_at))} j</span>
-                          : <span className="badge bg-[#e8f2ff] text-[#0b5e9f]">Hors publication</span>
+                      {serviceRequest && (
+                        isServiceRequestOverdue({ type: ticket.ticket_type, submittedAt: ticket.submitted_at, resolvedAt: ticket.resolved_at })
+                          ? <span className="badge bg-state-changes text-white">{wish ? "Envie en attente" : "Sans réponse"} depuis {Math.floor(serviceRequestAgeInDays(ticket.submitted_at))} j</span>
+                          : <span className={`badge ${wish ? "bg-[#f1f8e4] text-[#4d7c0f]" : "bg-[#e8f2ff] text-[#0b5e9f]"}`}>{wish ? "Envie du client" : "Hors publication"}</span>
                       )}
                       {ticket.priority !== "normal" && (
                         <span className="badge bg-state-progress/10 text-state-progress">

@@ -2,14 +2,14 @@
 
 import { useRef, useState, useTransition } from "react";
 import { addTicketComment, correctAndValidateWithoutClient, prepareCorrectionForClient, resolveServiceRequest, sendCorrectionToClient, transitionTicket, validateWithoutClient, type InternalActionResult } from "@/lib/internal/actions";
-import { isServiceRequestOverdue, serviceRequestAgeInDays, SERVICE_REQUEST_ALERT_DAYS } from "@/lib/domain/ticket-types";
+import { isServiceRequestOverdue, serviceRequestAgeInDays, serviceRequestAlertDays, type TicketType } from "@/lib/domain/ticket-types";
 import { Icon } from "@/components/Icon";
 import { deliverTicketMedia } from "../../production/actions";
 import { uploadMediaDirect } from "@/lib/media/direct-upload";
 
 interface Transition { to:string; label:string; requiresReason:boolean }
 
-export function TicketActions({ ticketId, ticketNumber, sheetId, clientId, item, category, status, clientName, transitions, serviceRequest, submittedAt, resolvedAt, staffValidation }: {
+export function TicketActions({ ticketId, ticketNumber, sheetId, clientId, item, category, status, clientName, transitions, serviceRequest, ticketType, submittedAt, resolvedAt, staffValidation }: {
   ticketId:string; ticketNumber:string; sheetId:string; clientId:string; category:string; status:string; clientName:string;
   /** Correction validée par l'agence, sans renvoi au client : qui et quand. */
   staffValidation:{ byName:string; at:string } | null;
@@ -21,6 +21,8 @@ export function TicketActions({ ticketId, ticketNumber, sheetId, clientId, item,
   transitions:Transition[];
   /** Demande hors publication : ni correction, ni renvoi pour revalidation. */
   serviceRequest:boolean;
+  /** Le délai d'alerte et les mots employés dépendent de la nature exacte. */
+  ticketType:TicketType;
   submittedAt:string;
   resolvedAt:string|null;
 }) {
@@ -84,23 +86,41 @@ export function TicketActions({ ticketId, ticketNumber, sheetId, clientId, item,
    */
   if (serviceRequest) {
     const done = Boolean(resolvedAt) || status === "closed";
-    const overdue = isServiceRequestOverdue({ submittedAt, resolvedAt });
+    const overdue = isServiceRequestOverdue({ type: ticketType, submittedAt, resolvedAt });
     const days = Math.floor(serviceRequestAgeInDays(submittedAt));
+    /*
+     * Une envie ne se « traite » pas : elle se prend en compte en écrivant la
+     * fiche de la semaine suivante. Même geste, mêmes écrans — d'autres mots,
+     * et un délai d'alerte qui est celui de la fiche à venir, pas celui d'une
+     * réponse due.
+     */
+    const wish = ticketType === "weekly_wish";
+    const alertDays = serviceRequestAlertDays(ticketType);
 
     return <div className="space-y-5">
       {feedback?.message && <p className={`rounded-xl border px-4 py-3 text-sm ${feedback.ok ? "border-state-approved/30 bg-state-approved/5 text-state-approved" : "border-state-changes/30 bg-state-changes/5 text-state-changes"}`}>{feedback.message}</p>}
 
       <section className={`card p-5 ${overdue ? "border-2 border-state-changes bg-state-changes/5" : done ? "border-state-approved/40 bg-[#f6fdf9]" : ""}`}>
-        <p className="eyebrow">Demande hors publication</p>
+        <p className="eyebrow">{wish ? "Envie pour la semaine suivante" : "Demande hors publication"}</p>
         <h2 className="mt-1 font-semibold">
-          {done ? "Demande traitée" : overdue ? `Sans réponse depuis ${days} jours` : "À traiter"}
+          {done
+            ? wish ? "Envie prise en compte" : "Demande traitée"
+            : overdue
+              ? wish ? `En attente depuis ${days} jours` : `Sans réponse depuis ${days} jours`
+              : wish ? "À prendre en compte" : "À traiter"}
         </h2>
         <p className="mt-2 text-sm leading-relaxed text-ink-soft">
           {done
-            ? "Rien de plus à faire : le client a eu sa réponse."
+            ? wish
+              ? "Rien de plus à faire : l’envie est prise en compte."
+              : "Rien de plus à faire : le client a eu sa réponse."
             : overdue
-              ? `Passé ${SERVICE_REQUEST_ALERT_DAYS} jours sans réponse, une demande client se transforme en reproche. Répondez à ${clientName}, puis marquez-la traitée.`
-              : `Répondez à ${clientName} par le canal habituel, puis marquez la demande comme traitée.`}
+              ? wish
+                ? `Passé ${alertDays} jours, l’envie de ${clientName} porte sur une semaine déjà commencée. Intégrez-la à la fiche à venir ou dites-lui pourquoi ce ne sera pas possible, puis marquez-la prise en compte.`
+                : `Passé ${alertDays} jours sans réponse, une demande client se transforme en reproche. Répondez à ${clientName}, puis marquez-la traitée.`
+              : wish
+                ? `Tenez-en compte en préparant la fiche de ${clientName}, puis marquez l’envie prise en compte.`
+                : `Répondez à ${clientName} par le canal habituel, puis marquez la demande comme traitée.`}
         </p>
 
         {!done && (
@@ -111,7 +131,7 @@ export function TicketActions({ ticketId, ticketNumber, sheetId, clientId, item,
             onClick={() => run(() => resolveServiceRequest(ticketId))}
           >
             <Icon name="check" className="h-4 w-4"/>
-            {pending ? "Enregistrement…" : "C’est fait"}
+            {pending ? "Enregistrement…" : wish ? "C’est noté" : "C’est fait"}
           </button>
         )}
       </section>

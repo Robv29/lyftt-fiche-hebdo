@@ -26,6 +26,12 @@ export const TICKET_TYPES = [
   "quote_request",
   "shooting_request",
   "side_service",
+  /*
+   * Envie du client pour la semaine suivante. Elle ne corrige rien : elle
+   * oriente la fiche à venir. Recueillie à côté de la validation finale, elle
+   * emprunte le même circuit que les demandes hors publication.
+   */
+  "weekly_wish",
 ] as const;
 
 export type TicketType = (typeof TICKET_TYPES)[number];
@@ -223,6 +229,28 @@ export const TICKET_TYPE_DEFINITIONS: Record<TicketType, TicketTypeDefinition> =
     category: "scope",
     form: "generic",
   },
+  /*
+   * `scope` et non `editorial` : l'envie parle du périmètre de la semaine
+   * suivante, pas d'un contenu à retoucher. Le routage n'en retient alors que
+   * la règle « le community manager reste responsable » — ni graphiste, ni
+   * monteur.
+   *
+   * `sheetLevel` est obligatoire : l'envie ne vise aucune publication, et
+   * c'est aussi ce qui la range dans la chronologie de la semaine.
+   *
+   * `mayAffectScope` est volontairement absent : il déclencherait une escalade
+   * vers le responsable de production à *chaque* envie, y compris la plus
+   * anodine. Le filet de sécurité, en l'absence de community manager, est le
+   * repli d'affectation (`fallbackRolesFor`), pas une escalade systématique.
+   */
+  weekly_wish: {
+    type: "weekly_wish",
+    label: "Envies pour la semaine prochaine",
+    group: "Vos envies",
+    category: "scope",
+    form: "generic",
+    sheetLevel: true,
+  },
 };
 
 /**
@@ -236,6 +264,13 @@ export const SERVICE_REQUEST_TYPES = [
   "quote_request",
   "shooting_request",
   "side_service",
+  /*
+   * L'envie rejoint cette famille : rien à corriger, rien à renvoyer pour
+   * revalidation. Un seul geste suffit côté agence — dire qu'elle est prise en
+   * compte — et c'est exactement ce que `TicketActions` et
+   * `resolveServiceRequest` savent déjà faire.
+   */
+  "weekly_wish",
 ] as const;
 
 export function isServiceRequest(type: TicketType): boolean {
@@ -244,6 +279,21 @@ export function isServiceRequest(type: TicketType): boolean {
 
 /** Délai au-delà duquel une demande non traitée devient alarmante. */
 export const SERVICE_REQUEST_ALERT_DAYS = 3;
+
+/**
+ * Une envie n'attend pas une réponse sous trois jours.
+ *
+ * Son échéance réelle est la fiche de la semaine suivante : tant qu'elle n'est
+ * pas construite, l'envie est encore utile. Lui appliquer l'alerte des devis
+ * aurait peint en rouge une vingtaine de lignes par semaine, et l'alerte
+ * aurait cessé de vouloir dire quoi que ce soit.
+ */
+export const WEEKLY_WISH_ALERT_DAYS = 7;
+
+/** Délai d'alerte propre à chaque demande hors publication. */
+export function serviceRequestAlertDays(type: TicketType): number {
+  return type === "weekly_wish" ? WEEKLY_WISH_ALERT_DAYS : SERVICE_REQUEST_ALERT_DAYS;
+}
 
 /** Jours écoulés depuis la demande, pour signaler celles qui traînent. */
 export function serviceRequestAgeInDays(submittedAt: string, now: Date = new Date()): number {
@@ -254,11 +304,11 @@ export function serviceRequestAgeInDays(submittedAt: string, now: Date = new Dat
 
 /** Une demande non résolue au-delà du délai passe en alerte rouge. */
 export function isServiceRequestOverdue(
-  input: { submittedAt: string; resolvedAt: string | null },
+  input: { type: TicketType; submittedAt: string; resolvedAt: string | null },
   now: Date = new Date(),
 ): boolean {
   if (input.resolvedAt) return false;
-  return serviceRequestAgeInDays(input.submittedAt, now) >= SERVICE_REQUEST_ALERT_DAYS;
+  return serviceRequestAgeInDays(input.submittedAt, now) >= serviceRequestAlertDays(input.type);
 }
 
 export function getTicketTypeDefinition(type: TicketType): TicketTypeDefinition {
@@ -269,10 +319,33 @@ export function isTicketType(value: string): value is TicketType {
   return (TICKET_TYPES as readonly string[]).includes(value);
 }
 
-/** Sélecteur du portail client, regroupé par famille et dans l'ordre de la spec. */
+/**
+ * Motifs qu'un client peut soumettre par un formulaire de demande.
+ *
+ * L'envie de la semaine en est exclue : elle a son propre point d'entrée — le
+ * bloc « Vos envies », à côté de la validation — qui seul connaît son plafond
+ * d'une par fiche, sa longueur et son titre de semaine. Acceptée ailleurs,
+ * elle consommerait ce plafond sans être confiée à personne, et une requête
+ * forgée pourrait figer une publication en « modification demandée ».
+ */
+export function isClientRequestableType(value: string): value is TicketType {
+  return isTicketType(value) && value !== "weekly_wish";
+}
+
+/**
+ * Sélecteur du portail client, regroupé par famille et dans l'ordre de la spec.
+ *
+ * Il ne propose que les demandes qui portent sur le contenu de la semaine. Les
+ * demandes hors publication en sont exclues : chacune a son propre point
+ * d'entrée — la page « Autres demandes » pour les devis, les shootings et les
+ * services annexes, le bloc « Vos envies » pour l'envie de la semaine
+ * suivante. Les voir réapparaître sous « Demander une modification » faisait
+ * naître un ticket rattaché à une publication qui n'avait rien à corriger.
+ */
 export function groupedTicketTypes(): { group: string; types: TicketTypeDefinition[] }[] {
   const groups: { group: string; types: TicketTypeDefinition[] }[] = [];
   for (const type of TICKET_TYPES) {
+    if (isServiceRequest(type)) continue;
     const def = TICKET_TYPE_DEFINITIONS[type];
     let bucket = groups.find((g) => g.group === def.group);
     if (!bucket) {

@@ -1,9 +1,17 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { approveAll, approveItem, createTicket, rateSheet, type ActionResult } from "./actions";
+import {
+  approveAll,
+  approveItem,
+  createTicket,
+  rateSheet,
+  submitWeeklyWish,
+  type ActionResult,
+} from "./actions";
 import { SATISFACTION_LABELS } from "@/lib/domain/planning";
 import { TicketForm } from "./TicketForm";
+import { WishBox } from "./WishBox";
 import type { ReviewItem, ReviewSheet } from "@/lib/review/access";
 import { canApproveAll } from "@/lib/domain/sheet-status";
 import {
@@ -15,11 +23,25 @@ import {
 import { Portal } from "@/components/Portal";
 
 /** §5 — Consultation de la fiche, validation et demandes de modification. */
-export function ReviewBoard({ token, sheet }: { token: string; sheet: ReviewSheet }) {
+export function ReviewBoard({
+  token,
+  sheet,
+  existingWish,
+}: {
+  token: string;
+  sheet: ReviewSheet;
+  /** Envie déjà déposée pour cette fiche : une seule par semaine. */
+  existingWish: { ticketNumber: string; isOpen: boolean } | null;
+}) {
   const [pending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<ActionResult | null>(null);
   const [openForm, setOpenForm] = useState<string | null>(null);
   const [duplicateItemId, setDuplicateItemId] = useState<string | null>(null);
+  /*
+   * L'envie envoyée dans cette session. La page n'est pas rechargée après
+   * l'envoi : sans cet état, le bloc proposerait d'en écrire une seconde.
+   */
+  const [wishSent, setWishSent] = useState<{ ticketNumber: string; isOpen: boolean } | null>(null);
   /*
    * La note se demande une fois la fiche validée, pas avant : le client vient
    * de tout regarder, et c'est le seul instant où répondre ne lui coûte rien.
@@ -43,13 +65,13 @@ export function ReviewBoard({ token, sheet }: { token: string; sheet: ReviewShee
   const run = (
     action: () => Promise<ActionResult>,
     itemId?: string,
-    onSuccess?: () => void,
+    onSuccess?: (result: ActionResult) => void,
   ) => {
     startTransition(async () => {
       const result = await action();
       setFeedback(result);
       if (result.ok) {
-        onSuccess?.();
+        onSuccess?.(result);
         setOpenForm(null);
         setDuplicateItemId(null);
       } else if (result.duplicateOf && itemId) {
@@ -102,7 +124,7 @@ export function ReviewBoard({ token, sheet }: { token: string; sheet: ReviewShee
         ))}
       </ul>
 
-      <div className="sticky bottom-3 z-10 mt-8 flex flex-col gap-3 rounded-2xl border border-white/80 bg-white/90 p-3 shadow-[0_16px_45px_rgba(32,72,108,.16)] backdrop-blur-xl sm:flex-row sm:items-center sm:p-4">
+      <div className="sticky bottom-3 z-10 mt-8 flex flex-col gap-3 rounded-2xl border border-white/80 bg-white/90 p-3 shadow-[0_16px_45px_rgba(32,72,108,.16)] backdrop-blur-xl sm:flex-row sm:flex-wrap sm:items-center sm:p-4">
         {showApproveAll && (
           <button
             type="button"
@@ -129,6 +151,23 @@ export function ReviewBoard({ token, sheet }: { token: string; sheet: ReviewShee
         >
           J&apos;ai une modification à demander
         </button>
+
+        {/*
+          Troisième geste, facultatif, et volontairement hors du verrou de
+          « Tout valider » : il reste proposé après la validation — c'est le
+          moment où le client a fini et où l'envie vient naturellement — comme
+          il l'est avant, pour qui ne valide pas tout de suite.
+        */}
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={() => {
+            setOpenForm(openForm === "wish" ? null : "wish");
+            setFeedback(null);
+          }}
+        >
+          {openForm === "wish" ? "Fermer" : "Mes envies pour la semaine prochaine"}
+        </button>
       </div>
 
       {openForm === "sheet" && (
@@ -136,6 +175,21 @@ export function ReviewBoard({ token, sheet }: { token: string; sheet: ReviewShee
           item={null}
           pending={pending}
           onSubmit={(formData) => run(() => createTicket(token, formData))}
+          onCancel={() => setOpenForm(null)}
+        />
+      )}
+
+      {openForm === "wish" && (
+        <WishBox
+          pending={pending}
+          existingWish={wishSent ?? existingWish}
+          onSubmit={(formData) =>
+            run(() => submitWeeklyWish(token, formData), undefined, (result) => {
+              if (result.reference) {
+                setWishSent({ ticketNumber: result.reference, isOpen: true });
+              }
+            })
+          }
           onCancel={() => setOpenForm(null)}
         />
       )}

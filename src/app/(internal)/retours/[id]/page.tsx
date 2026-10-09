@@ -292,6 +292,7 @@ export default async function TicketDetailPage({
 
           <TicketActions
             serviceRequest={isServiceRequest(ticket.ticket_type)}
+            ticketType={ticket.ticket_type}
             submittedAt={ticket.submitted_at}
             resolvedAt={ticket.resolved_at}
             ticketId={ticket.id}

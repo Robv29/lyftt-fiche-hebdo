@@ -5,7 +5,7 @@ import { denyCommercial } from "@/lib/internal/authorization";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { deadlineState } from "@/lib/domain/deadline";
 import { sheetStatusLabel, ticketStatusLabel, ticketPriorityLabel } from "@/lib/domain/types";
-import { getTicketTypeDefinition } from "@/lib/domain/ticket-types";
+import { getTicketTypeDefinition, isServiceRequest } from "@/lib/domain/ticket-types";
 import { requiresProduction } from "@/lib/domain/routing";
 import { Icon } from "@/components/Icon";
 import { isActionableOverdue, planningBucketForPeriod, planningWeekRange, sheetCompletion } from "@/lib/domain/planning";
@@ -210,7 +210,25 @@ export default async function DashboardPage() {
   const sheets = sheetsResult.data ?? [];
   const publications = publicationsResult.data ?? [];
   const published = publications.filter((item) => item.published_at).length;
-  const newTickets = tickets.filter((ticket) => ticket.status === "new");
+  /*
+   * « Nouveaux retours » compte ce qui porte sur un contenu de la semaine. Une
+   * envie pour la semaine suivante, un devis, une date de shooting ne
+   * corrigent rien : les y mêler aurait fait dire au compteur l'inverse de son
+   * libellé, avec un volume d'envies supérieur à celui des retours.
+   */
+  const newTickets = tickets.filter(
+    (ticket) => ticket.status === "new" && !isServiceRequest(ticket.ticket_type),
+  );
+  /*
+   * La file garde tout, mais dans l'ordre de l'urgence réelle : une correction
+   * attend aujourd'hui, une envie attend la fiche suivante. Sans ce tri, une
+   * semaine riche en envies aurait repoussé les corrections hors des quatre
+   * lignes affichées. Le tri est stable : à nature égale, l'ordre d'arrivée
+   * est conservé.
+   */
+  const ticketQueue = [...tickets].sort(
+    (a, b) => Number(isServiceRequest(a.ticket_type)) - Number(isServiceRequest(b.ticket_type)),
+  );
   const urgent = tickets.filter((ticket) => ticket.priority === "urgent" || ticket.priority === "high");
   const production = tickets.filter((ticket) => requiresProduction(ticket.ticket_type));
   const toResend = sheets.filter((sheet) => sheet.status === "new_version_to_send");
@@ -405,7 +423,7 @@ export default async function DashboardPage() {
             <div className="flex flex-col items-center justify-center px-5 py-5 text-center"><span className="empty-state-icon"><Icon name="check" className="h-5 w-5"/></span><strong className="mt-2 text-sm">Tout est à jour</strong><p className="mt-1 text-xs text-ink-faint">Aucun retour client ne demande votre attention.</p></div>
           ) : (
             <ul className="divide-y divide-line">
-              {tickets.slice(0, 4).map((ticket) => {
+              {ticketQueue.slice(0, 4).map((ticket) => {
                 const client = ticket.clients as unknown as { name: string } | null;
                 return <li key={ticket.id}><Link href={`/retours/${ticket.id}`} className="group grid gap-2 px-5 py-3 transition-colors hover:bg-[#f7fafe] sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
                   <div className="flex min-w-0 items-center gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#e8f2ff] text-xs font-bold text-[#0b4f88]">{(client?.name ?? "CL").slice(0,2).toUpperCase()}</span><div className="min-w-0"><strong className="block truncate text-sm">{client?.name ?? "Client"}</strong><p className="mt-0.5 truncate text-xs text-ink-faint">{getTicketTypeDefinition(ticket.ticket_type).label} · {ticket.ticket_number}</p></div></div>

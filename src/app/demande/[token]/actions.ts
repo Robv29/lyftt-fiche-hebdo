@@ -3,7 +3,7 @@
 import { z } from "zod";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { resolveRequestLink } from "@/lib/review/request-link";
-import { getTicketTypeDefinition, isTicketType } from "@/lib/domain/ticket-types";
+import { getTicketTypeDefinition, isClientRequestableType } from "@/lib/domain/ticket-types";
 import { isMeaningful, sanitizeText } from "@/lib/security/sanitize";
 import { rateLimit } from "@/lib/security/rate-limit";
 
@@ -15,7 +15,7 @@ export interface RequestResult {
 }
 
 const schema = z.object({
-  requestType: z.string().refine(isTicketType, "Choisissez le motif de votre demande."),
+  requestType: z.string().refine(isClientRequestableType, "Choisissez le motif de votre demande."),
   description: z.string().trim().min(10, "Décrivez votre demande en quelques mots."),
   contactName: z.string().trim().max(120).optional(),
   contactEmail: z.string().trim().email("E-mail invalide.").optional().or(z.literal("")),

@@ -213,6 +213,46 @@ export async function touchReviewLink(linkId: string): Promise<void> {
     .eq("id", linkId);
 }
 
+/*
+ * Statuts terminaux d'un ticket : l'agence n'a plus rien à en faire.
+ */
+const WISH_CLOSED_STATUSES = ["closed", "cancelled", "rejected", "approved_by_client"];
+
+/**
+ * Envie déjà déposée sur cette fiche, s'il y en a une.
+ *
+ * Lecture à part, et non dans `loadReviewSheet` : celui-ci est rappelé à
+ * chaque action du client, alors que l'envie ne se relit qu'à l'affichage du
+ * portail et au moment de son enregistrement. C'est aussi la seule lecture qui
+ * doit voir une envie **close** — une envie prise en compte compte toujours
+ * pour la semaine.
+ */
+export async function loadWeeklyWish(
+  context: ReviewLinkContext,
+): Promise<{ ticketNumber: string; isOpen: boolean } | null> {
+  const supabase = createSupabaseAdminClient();
+
+  /*
+   * Tolérance de déploiement : tant que la valeur d'énumération `weekly_wish`
+   * n'est pas en base, la comparaison est refusée par Postgres. On traite ce
+   * refus comme « aucune envie » plutôt que de faire tomber le portail.
+   */
+  const { data, error } = await supabase
+    .from("client_tickets")
+    .select("ticket_number, status")
+    .eq("weekly_sheet_id", context.sheetId)
+    .eq("ticket_type", "weekly_wish")
+    .order("created_at", { ascending: true })
+    .limit(1);
+
+  if (error || !data?.[0]) return null;
+
+  return {
+    ticketNumber: data[0].ticket_number as string,
+    isOpen: !WISH_CLOSED_STATUSES.includes(data[0].status as string),
+  };
+}
+
 const MEDIA_URL_TTL_SECONDS = 60 * 60;
 
 /**

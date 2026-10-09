@@ -61,25 +61,47 @@ function hook(input: TicketEmailInput): string {
       return "veut retirer une publication";
     case "publication_add":
       return "demande une publication en plus";
+    case "weekly_wish":
+      return "une envie pour la semaine prochaine";
     default:
       return category === "editorial" ? "un texte à retoucher" : "une demande à traiter";
   }
 }
 
+/**
+ * Une envie ne demande aucune correction.
+ *
+ * L'annoncer comme telle — « a demandé une modification » — serait faux, et
+ * banaliserait les vraies demandes, qui, elles, ont une échéance.
+ */
+function isWish(input: TicketEmailInput): boolean {
+  return input.ticketType === "weekly_wish";
+}
+
+/** Première ligne du corps, selon la nature de la demande. */
+function opening(input: TicketEmailInput): string {
+  return isWish(input)
+    ? `${input.clientName} nous dit ce qu'il aimerait pour la semaine prochaine.`
+    : `${input.clientName} vient de demander une modification.`;
+}
+
 /** Objet de l'e-mail : accrocheur, mais toujours informatif. */
 export function buildSubject(input: TicketEmailInput): string {
+  const category = getTicketTypeDefinition(input.ticketType).category;
   const marker =
     input.priority === "urgent"
       ? "🚨 URGENT — "
       : input.afterDeadline
         ? "⏰ Hors délai — "
-        : getTicketTypeDefinition(input.ticketType).category === "editorial"
-          ? "✏️ "
-          : getTicketTypeDefinition(input.ticketType).category === "video"
-            ? "🎬 "
-            : getTicketTypeDefinition(input.ticketType).category === "graphic"
-              ? "🖼️ "
-              : "📅 ";
+        : isWish(input)
+          ? "💡 "
+          : category === "editorial"
+            ? "✏️ "
+            : category === "video"
+              ? "🎬 "
+              : category === "graphic"
+                ? "🖼️ "
+                : "📅 ";
 
   const where = input.itemLabel ? ` (${input.itemLabel})` : "";
   return `${marker}${input.clientName} : ${hook(input)}${where}`;
@@ -88,17 +110,23 @@ export function buildSubject(input: TicketEmailInput): string {
 /** Version texte — certains clients de messagerie n'affichent que celle-ci. */
 export function buildTextBody(input: TicketEmailInput): string {
   const lines = [
-    `${input.clientName} vient de demander une modification.`,
+    opening(input),
     "",
     `Demande : ${getTicketTypeDefinition(input.ticketType).label}`,
   ];
 
-  if (input.itemLabel) lines.push(`Publication : ${input.itemLabel}`);
+  if (input.itemLabel) {
+    lines.push(`${isWish(input) ? "Concerne" : "Publication"} : ${input.itemLabel}`);
+  }
   if (input.authorName) lines.push(`Envoyée par : ${input.authorName}`);
   lines.push(`Référence : ${input.ticketNumber}`);
   if (input.deadlineLabel) lines.push(`Échéance de validation : ${input.deadlineLabel}`);
 
-  lines.push("", "Ce que dit le client :", input.description);
+  lines.push(
+    "",
+    isWish(input) ? "Ce qu'il aimerait :" : "Ce que dit le client :",
+    input.description,
+  );
 
   if (input.clientSuggestion) {
     lines.push("", "Sa proposition :", input.clientSuggestion);
@@ -108,7 +136,12 @@ export function buildTextBody(input: TicketEmailInput): string {
     lines.push("", `À arbitrer : ${input.escalationReasons.join(" · ")}`);
   }
 
-  lines.push("", `Traiter la demande : ${input.ticketUrl}`, "", "— LYFTT");
+  lines.push(
+    "",
+    `${isWish(input) ? "Voir l'envie" : "Traiter la demande"} : ${input.ticketUrl}`,
+    "",
+    "— LYFTT",
+  );
   return lines.join("\n");
 }
 
@@ -117,7 +150,9 @@ export function buildHtmlBody(input: TicketEmailInput): string {
 
   const rows: string[] = [
     row("Demande", definition.label),
-    input.itemLabel ? row("Publication", input.itemLabel) : "",
+    input.itemLabel
+      ? row(isWish(input) ? "Concerne" : "Publication", input.itemLabel)
+      : "",
     input.authorName ? row("Envoyée par", input.authorName) : "",
     row("Référence", input.ticketNumber),
     input.deadlineLabel ? row("Échéance", input.deadlineLabel) : "",
@@ -142,13 +177,21 @@ export function buildHtmlBody(input: TicketEmailInput): string {
     <p style="margin:0 0 20px;font-size:20px;font-weight:700;letter-spacing:-0.02em;">lyftt.</p>
 
     <h1 style="margin:0 0 6px;font-size:18px;line-height:1.4;">
-      ${escape(input.clientName)} a demandé une modification
+      ${escape(isWish(input)
+        ? `${input.clientName} a une envie pour la semaine prochaine`
+        : `${input.clientName} a demandé une modification`)}
     </h1>
-    <p style="margin:0 0 20px;font-size:14px;color:#8a8a8a;">${escape(hook(input))}</p>
+    ${isWish(input)
+      // Le titre dit déjà « une envie pour la semaine prochaine » : l'accroche
+      // ferait doublon, là où elle complète utilement une correction.
+      ? ""
+      : `<p style="margin:0 0 20px;font-size:14px;color:#8a8a8a;">${escape(hook(input))}</p>`}
 
     <table style="width:100%;border-collapse:collapse;font-size:14px;">${rows.join("")}</table>
 
-    <p style="margin:20px 0 0;font-size:13px;color:#8a8a8a;">Ce que dit le client</p>
+    <p style="margin:20px 0 0;font-size:13px;color:#8a8a8a;">${
+      isWish(input) ? "Ce qu&rsquo;il aimerait" : "Ce que dit le client"
+    }</p>
     <p style="margin:4px 0 0;padding:12px 14px;background:#fafaf9;border-radius:6px;
        font-size:15px;line-height:1.6;white-space:pre-wrap;">${escape(input.description)}</p>
 
@@ -158,7 +201,7 @@ export function buildHtmlBody(input: TicketEmailInput): string {
     <p style="margin:24px 0 0;">
       <a href="${escape(input.ticketUrl)}" style="display:inline-block;background:#111;color:#fff;
          text-decoration:none;padding:11px 20px;border-radius:6px;font-size:14px;font-weight:500;">
-        Traiter la demande
+        ${isWish(input) ? "Voir l&rsquo;envie" : "Traiter la demande"}
       </a>
     </p>
 

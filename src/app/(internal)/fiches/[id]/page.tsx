@@ -12,6 +12,7 @@ import {
   messageTemplateTypeLabel,
   type MessageTemplateType
 } from "@/lib/domain/types";
+import { isServiceRequest } from "@/lib/domain/ticket-types";
 import { DEFAULT_TEMPLATES } from "@/lib/domain/templates";
 import { SendPanel } from "./SendPanel";
 import { SheetContentEditor } from "./SheetContentEditor";
@@ -127,12 +128,19 @@ export default async function SheetDetailPage({
 
   const { data: tickets } = await supabase
     .from("client_tickets")
-    .select("id, ticket_number, title, status")
+    .select("id, ticket_number, title, status, ticket_type")
     .eq("weekly_sheet_id", id)
     .order("submitted_at", { ascending: false });
 
+  /*
+   * Seules les demandes portant sur un contenu comptent comme « modification
+   * demandée ». Une demande hors publication — un devis, une envie pour la
+   * semaine suivante — ne corrige rien : l'annoncer ainsi aurait affirmé
+   * qu'une fiche entièrement validée restait à reprendre.
+   */
   const openTickets = (tickets ?? []).filter(
-    (t) => !["closed", "cancelled", "rejected", "approved_by_client"].includes(t.status),
+    (t) => !["closed", "cancelled", "rejected", "approved_by_client"].includes(t.status)
+      && !isServiceRequest(t.ticket_type),
   );
 
   const deadline = sheet.validation_deadline_at

@@ -21,6 +21,8 @@ const EVENT_TONES: Record<HistoryEventKind, { dot: string; chip: string }> = {
   client_feedback: { dot: "#f5a524", chip: "bg-[#fff4e0] text-[#a15c00]" },
   feedback_resolved: { dot: "#14b8a6", chip: "bg-[#e0f7fa] text-[#0e7490]" },
   special_request: { dot: "#ec4899", chip: "bg-[#ffe4ef] text-[#be185d]" },
+  // Une envie n'est pas un reproche : couleur à part, ni rouge ni rose.
+  client_wish: { dot: "#65a30d", chip: "bg-[#f1f8e4] text-[#4d7c0f]" },
   production_requested: { dot: "#8b5cf6", chip: "bg-[#f1eaff] text-[#6d28d9]" },
   production_delivered: { dot: "#0e7490", chip: "bg-[#e0f7fa] text-[#0e7490]" },
   approved: { dot: "#128359", chip: "bg-[#e8f8f1] text-[#128359]" },

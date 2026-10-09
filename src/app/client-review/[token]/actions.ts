@@ -5,12 +5,19 @@ import { z } from "zod";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   loadReviewSheet,
+  loadWeeklyWish,
   logReviewEvent,
   resolveReviewLink,
   type ReviewLinkContext,
 } from "@/lib/review/access";
-import { getTicketTypeDefinition, isTicketType } from "@/lib/domain/ticket-types";
-import { routeTicket } from "@/lib/domain/routing";
+import { getTicketTypeDefinition, isClientRequestableType } from "@/lib/domain/ticket-types";
+import { fallbackRolesFor, routeTicket } from "@/lib/domain/routing";
+import {
+  canSubmitWish,
+  WISH_MAX_LENGTH,
+  WISH_MIN_LENGTH,
+  wishTicketTitle,
+} from "@/lib/domain/weekly-wish";
 import { canApproveAll } from "@/lib/domain/sheet-status";
 import {
   detectDuplicateTicket,
@@ -46,6 +53,8 @@ export interface ActionResult {
   message?: string;
   /** Renseigné quand une demande très proche existe déjà (§24). */
   duplicateOf?: string;
+  /** Référence du ticket créé, quand l'écran doit la réafficher. */
+  reference?: string;
 }
 
 const DENIAL_MESSAGES: Record<string, string> = {
@@ -272,7 +281,7 @@ async function recordApproval(
 
 const createTicketSchema = z.object({
   itemId: z.string().uuid().nullable(),
-  ticketType: z.string().refine(isTicketType, "Type de demande inconnu"),
+  ticketType: z.string().refine(isClientRequestableType, "Type de demande inconnu"),
   description: z.string().trim().min(3, "Merci de préciser votre demande."),
   suggestion: z.string().trim().max(5000).optional(),
   selection: z.string().trim().max(1000).optional(),
@@ -550,7 +559,35 @@ async function assignAndNotify(
       email = fallback?.[0]?.email;
     }
 
-    if (!profileId) continue;
+    /*
+     * Dernier repli, pour le responsable seulement.
+     *
+     * Aucun profil ne porte aujourd'hui le rôle `community_manager` : il
+     * n'existe que comme rôle d'affectation sur un client. Un client sans
+     * cette ligne d'affectation produisait donc un ticket orphelin — aucune
+     * affectation, aucune notification, aucun e-mail, et aucune trace de
+     * l'échec. Une envie perdue en silence est précisément le défaut que cette
+     * fonctionnalité doit supprimer.
+     */
+    for (const role of fallbackRolesFor(target)) {
+      if (profileId) break;
+      const { data: lead } = await supabase
+        .from("profiles")
+        .select("id, email")
+        .eq("role", role)
+        .eq("is_active", true)
+        .limit(1);
+      profileId = lead?.[0]?.id;
+      email = lead?.[0]?.email;
+    }
+
+    if (!profileId) {
+      console.error(
+        "[affectation ticket] aucun profil pour le rôle demandé",
+        { ticketId, role: target.role, assignmentRole: target.assignmentRole },
+      );
+      continue;
+    }
     if (email) recipients.push(email);
 
     await supabase.from("client_ticket_assignments").upsert(
@@ -767,6 +804,161 @@ export async function createServiceRequest(
   return {
     ok: true,
     message: `Demande ${ticket.ticket_number} enregistrée. Nous revenons vers vous rapidement.`,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Vos envies pour la semaine prochaine
+// ---------------------------------------------------------------------------
+
+const weeklyWishSchema = z.object({
+  wish: z
+    .string()
+    .trim()
+    .min(WISH_MIN_LENGTH, "Dites-nous en une phrase ce qui vous ferait plaisir.")
+    .max(WISH_MAX_LENGTH),
+  clientName: z.string().trim().max(120).optional(),
+  clientEmail: z.string().trim().email().max(200).optional().or(z.literal("")),
+});
+
+/**
+ * Envie du client pour la semaine suivante.
+ *
+ * Action à part entière, et non un champ de plus sur « Tout valider », pour
+ * deux raisons :
+ *
+ *  1. On doit pouvoir dire une envie **sans** valider. Or `approveAll` est
+ *     verrouillé par `canApproveAll` — fiche déjà validée, ou demande de
+ *     modification en cours — et refuse tout en bloc. L'envie serait perdue
+ *     exactement quand le client a des choses à dire.
+ *  2. Valider sans envie doit rester un clic. Dans le même envoi, la
+ *     validation aurait dû gérer un échec partiel qu'elle ne connaît pas
+ *     aujourd'hui.
+ *
+ * Elle ne touche donc **ni** le statut de la fiche (pas de
+ * `ensureSheetIsWithClient`), **ni** le statut d'une publication : une envie ne
+ * prouve rien sur la validation et ne doit rien y changer. Un ticket de niveau
+ * fiche n'entre dans aucun compteur du portail (`access.ts`, le ticket sans
+ * publication est ignoré) : « Tout valider » reste donc proposé après l'envoi.
+ */
+export async function submitWeeklyWish(
+  token: string,
+  formData: FormData,
+): Promise<ActionResult> {
+  const link = await requireLink(token);
+  if (!link.ok) return link.result;
+
+  if (!(await rateLimit("ticketCreation", link.context.linkId)).allowed) {
+    return { ok: false, message: "Trop de demandes successives. Réessayez dans un instant." };
+  }
+
+  const parsed = weeklyWishSchema.safeParse({
+    wish: formData.get("wish"),
+    clientName: formData.get("clientName") ?? undefined,
+    clientEmail: formData.get("clientEmail") ?? undefined,
+  });
+  if (!parsed.success) {
+    return { ok: false, message: parsed.error.issues[0]?.message ?? "Envie incomplète." };
+  }
+
+  const wish = sanitizeText(parsed.data.wish, WISH_MAX_LENGTH);
+  if (!isMeaningful(wish)) {
+    return { ok: false, message: "Dites-nous en une phrase ce qui vous ferait plaisir." };
+  }
+
+  // Une envie par fiche : le plafond est vérifié ici, et garanti par un index
+  // unique en base — deux clics simultanés ne peuvent pas le contourner.
+  const guard = canSubmitWish(await loadWeeklyWish(link.context));
+  if (!guard.allowed) return { ok: false, message: guard.message };
+
+  const sheet = await loadReviewSheet(link.context);
+  if (!sheet) return { ok: false, message: "Fiche introuvable." };
+
+  const definition = getTicketTypeDefinition("weekly_wish");
+  const title = wishTicketTitle(sheet.periodEnd);
+  const supabase = createSupabaseAdminClient();
+
+  const { data: ticket, error } = await supabase
+    .from("client_tickets")
+    .insert({
+      client_id: link.context.clientId,
+      /*
+       * Rattachée à la fiche du lien — c'est elle qui situe l'envie dans
+       * l'historique, semaine par semaine — mais à aucune publication : elle
+       * ne porte sur aucun contenu déjà écrit.
+       */
+      weekly_sheet_id: link.context.sheetId,
+      weekly_sheet_item_id: null,
+      sheet_version_id: sheet.currentVersionId,
+      review_link_id: link.context.linkId,
+      ticket_type: "weekly_wish",
+      category: definition.category,
+      title,
+      description: wish,
+      priority: "normal",
+      status: "new",
+      /*
+       * Aucune échéance : celle de la fiche en cours ne veut rien dire pour
+       * une envie qui parle de la semaine suivante.
+       */
+      due_at: null,
+      created_by_type: "client",
+      created_by_name: parsed.data.clientName
+        ? sanitizeText(parsed.data.clientName, 120)
+        : null,
+      created_by_email: parsed.data.clientEmail || null,
+    })
+    .select("id, ticket_number")
+    .single();
+
+  if (error || !ticket) {
+    // Course entre deux envois : l'index unique a tranché, on le dit avec les
+    // mots du plafond plutôt qu'avec une erreur technique.
+    if (error?.code === "23505") {
+      const existing = canSubmitWish(await loadWeeklyWish(link.context));
+      if (!existing.allowed) return { ok: false, message: existing.message };
+    }
+    return { ok: false, message: "Votre envie n'a pas pu être enregistrée. Réessayez." };
+  }
+
+  const recipients = await assignAndNotify(
+    ticket.id,
+    link.context.clientId,
+    routeTicket("weekly_wish", { priority: "normal" }),
+    `${definition.label} — ${title}`,
+  );
+
+  await sendTicketAlert({
+    recipients,
+    email: {
+      ticketNumber: ticket.ticket_number,
+      clientName: sheet.clientName,
+      ticketType: "weekly_wish",
+      priority: "normal",
+      description: wish,
+      clientSuggestion: null,
+      itemLabel: title,
+      authorName: parsed.data.clientName
+        ? sanitizeText(parsed.data.clientName, 120)
+        : null,
+      ticketUrl: `${env.appUrl}/retours/${ticket.id}`,
+      deadlineLabel: null,
+      escalationReasons: [],
+      afterDeadline: false,
+    },
+  });
+
+  await logReviewEvent(link.context.linkId, "ticket_created", {
+    ticketId: ticket.id,
+    ticketType: "weekly_wish",
+    wish: true,
+  });
+
+  revalidatePath(`/client-review/${token}`);
+  return {
+    ok: true,
+    reference: ticket.ticket_number,
+    message: `C'est noté (${ticket.ticket_number}). Nous en tenons compte pour la semaine prochaine.`,
   };
 }
 

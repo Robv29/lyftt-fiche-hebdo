@@ -91,6 +91,43 @@ describe("historique d'une semaine", () => {
     expect(week.events[0]!.dueAt).toBe("2026-08-26T10:00:00Z");
   });
 
+  /*
+   * Une envie se dépose en semaine N et parle de la semaine N+1 : rangée en
+   * « Demande spéciale », elle se lisait comme une réclamation sur le planning
+   * que le client venait de valider.
+   */
+  it("nomme une envie pour la semaine suivante au lieu d'une demande spéciale", () => {
+    const week = buildWeekHistory({
+      ...base,
+      tickets: [{
+        id: "t1", title: "Semaine du 31 août au 6 septembre", ticket_type: "weekly_wish",
+        typeLabel: "Envies pour la semaine prochaine",
+        submitted_at: "2026-08-26T09:00:00Z", created_at: "2026-08-26T09:00:00Z",
+        resolved_at: null, due_at: null, weekly_sheet_item_id: null, category: "scope",
+      }],
+    });
+
+    expect(week.events.map((e) => e.kind)).toEqual(["client_wish"]);
+    expect(week.events[0]!.label).toBe("Envie pour la semaine suivante");
+    // Le titre nomme déjà la semaine visée : pas de libellé de type devant.
+    expect(week.events[0]!.detail).toBe("Semaine du 31 août au 6 septembre");
+  });
+
+  it("ne compte pas une envie comme une faute de notre côté", () => {
+    const week = buildWeekHistory({
+      ...base,
+      tickets: [{
+        id: "t1", title: "Semaine suivante", ticket_type: "weekly_wish",
+        typeLabel: "Envies pour la semaine prochaine",
+        submitted_at: "2026-08-26T09:00:00Z", created_at: "2026-08-26T09:00:00Z",
+        resolved_at: null, due_at: null, weekly_sheet_item_id: null, category: "scope",
+      }],
+    }, new Date("2026-08-28T09:00:00Z"));
+
+    expect(week.assessment.lyftt).toEqual([]);
+    expect(week.assessment.clean).toBe(true);
+  });
+
   it("ajoute la résolution d'un retour comme événement distinct", () => {
     const week = buildWeekHistory({
       ...base,
@@ -336,6 +373,7 @@ describe("familles d'événements", () => {
     expect(familyForKind("reminder")).toBe("envois");
     expect(familyForKind("client_feedback")).toBe("retours");
     expect(familyForKind("special_request")).toBe("retours");
+    expect(familyForKind("client_wish")).toBe("retours");
     expect(familyForKind("production_delivered")).toBe("production");
     expect(familyForKind("approved")).toBe("validations");
     expect(familyForKind("published")).toBe("publications");

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import {
   loadReviewSheet,
+  loadWeeklyWish,
   logReviewEvent,
   resolveReviewLink,
   touchReviewLink,
@@ -35,6 +36,10 @@ export default async function ClientReviewPage({
 
   const sheet = await loadReviewSheet(resolved.context);
   if (!sheet) return <AccessDenied reason="not_found" />;
+
+  // Une envie par fiche : si elle est déjà là, le bloc le dit au lieu de la
+  // redemander.
+  const existingWish = await loadWeeklyWish(resolved.context);
 
   await touchReviewLink(resolved.context.linkId);
   await logReviewEvent(resolved.context.linkId, "link_opened", {});
@@ -119,7 +124,7 @@ export default async function ClientReviewPage({
           </p>
         )}
       <div className="mt-6">
-      <ReviewBoard token={token} sheet={sheet} />
+      <ReviewBoard token={token} sheet={sheet} existingWish={existingWish} />
       </div>
 
       <PrivacyNotice />

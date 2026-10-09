@@ -1,0 +1,16 @@
+-- « Vos envies » — ce que le client aimerait pour la semaine suivante.
+--
+-- Recueillie sur le portail client, à côté de la validation finale, elle
+-- emprunte le circuit des tickets, qui sait déjà router, affecter, alerter et
+-- clore. Elle s'en distingue par son type : ni correction d'un contenu, ni
+-- devis, ni date de shooting — une orientation pour la fiche à venir.
+--
+-- Un type à part, et non `side_service` : réutiliser ce dernier aurait mélangé
+-- deux intentions dans `/retours?type=side_service` comme dans l'historique.
+--
+-- Cette migration ne contient **que** l'ajout de valeur. `alter type … add
+-- value` ne peut pas cohabiter, dans la même transaction, avec un usage de la
+-- valeur ajoutée : l'index unique et le recalcul de statut qui s'en servent
+-- sont dans la migration suivante. Même découpage que
+-- `20260813120000_service_requests.sql`.
+alter type ticket_type add value if not exists 'weekly_wish';

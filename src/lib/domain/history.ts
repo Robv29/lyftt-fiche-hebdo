@@ -19,6 +19,7 @@ export type HistoryEventKind =
   | "client_feedback"
   | "feedback_resolved"
   | "special_request"
+  | "client_wish"
   | "production_requested"
   | "production_delivered"
   | "approved"
@@ -74,6 +75,13 @@ export const HISTORY_EVENT_LABELS: Record<HistoryEventKind, string> = {
   client_feedback: "Retour client",
   feedback_resolved: "Retour traité",
   special_request: "Demande spéciale",
+  /*
+   * Une envie se dépose en semaine N et parle de la semaine N+1. Sans ce
+   * libellé, elle se lisait « Demande spéciale » au milieu de la semaine
+   * qu'elle ne concerne pas, comme si le client avait réclamé quelque chose
+   * sur le planning qu'il venait de valider.
+   */
+  client_wish: "Envie pour la semaine suivante",
   production_requested: "Commande en production",
   production_delivered: "Production livrée",
   approved: "Validation du client",
@@ -227,7 +235,8 @@ export function buildWeekHistory(input: SheetHistoryInput, now: Date = new Date(
   }
 
   for (const ticket of input.tickets) {
-    const special = ticket.weekly_sheet_item_id === null;
+    const wish = ticket.ticket_type === "weekly_wish";
+    const special = !wish && ticket.weekly_sheet_item_id === null;
     /*
      * Un retour qui demande un visuel ou un montage part en production ; les
      * autres se traitent au bureau. La distinction change qui doit agir, elle
@@ -235,11 +244,24 @@ export function buildWeekHistory(input: SheetHistoryInput, now: Date = new Date(
      */
     const production = ticket.category === "graphic" || ticket.category === "video";
     const base = ticket.title?.trim() ? `${ticket.typeLabel} — ${ticket.title.trim()}` : ticket.typeLabel;
+    const kind: HistoryEventKind = wish
+      ? "client_wish"
+      : special
+        ? "special_request"
+        : "client_feedback";
     events.push({
       at: ticket.submitted_at ?? ticket.created_at,
-      kind: special ? "special_request" : "client_feedback",
-      label: HISTORY_EVENT_LABELS[special ? "special_request" : "client_feedback"],
-      detail: production ? `${base} · part en production` : base,
+      kind,
+      label: HISTORY_EVENT_LABELS[kind],
+      /*
+       * Pour une envie, le titre nomme déjà la semaine visée : répéter le
+       * libellé du type devant n'ajouterait rien.
+       */
+      detail: wish
+        ? ticket.title?.trim() || null
+        : production
+          ? `${base} · part en production`
+          : base,
       dueAt: ticket.due_at,
     });
     if (ticket.resolved_at) {
@@ -399,7 +421,7 @@ export type HistoryFamily = "envois" | "retours" | "production" | "validations" 
 
 export const HISTORY_FAMILIES: ReadonlyArray<{ key: HistoryFamily; label: string; kinds: HistoryEventKind[] }> = [
   { key: "envois", label: "Envois et relances", kinds: ["sheet_sent", "sheet_resent", "reminder"] },
-  { key: "retours", label: "Retours clients", kinds: ["client_feedback", "feedback_resolved", "special_request"] },
+  { key: "retours", label: "Retours clients", kinds: ["client_feedback", "feedback_resolved", "special_request", "client_wish"] },
   { key: "production", label: "Production", kinds: ["production_requested", "production_delivered"] },
   { key: "validations", label: "Validations", kinds: ["approved", "staff_validated"] },
   { key: "publications", label: "Publications", kinds: ["published"] },

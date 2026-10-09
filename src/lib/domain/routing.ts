@@ -132,6 +132,36 @@ export function routeTicket(
 }
 
 /**
+ * Rôles d'encadrement, dans l'ordre où l'on se rabat sur eux.
+ *
+ * Ils ne sont *pas* une cible de routage : ils ne servent qu'à ne perdre
+ * personne quand le rôle visé n'existe dans aucun profil.
+ */
+export const LEAD_FALLBACK_ROLES: readonly AppRole[] = ["super_admin", "production_manager"];
+
+/**
+ * Repli d'affectation quand aucun profil ne porte le rôle visé.
+ *
+ * Constat en base : le rôle `community_manager` n'est porté par aucun profil —
+ * il n'existe que comme rôle d'affectation sur un client. Tant que chaque
+ * client a bien sa ligne d'affectation, la recherche principale aboutit ; mais
+ * un client créé sans elle produisait un ticket sans responsable, sans
+ * notification et sans e-mail, et personne n'en savait rien.
+ *
+ * Le repli ne vaut que pour le responsable (`owner`). Un ticket sans
+ * contributeur reste visible par son responsable, qui peut l'affecter ; un
+ * ticket sans responsable, lui, n'est vu de personne. Désigner d'office un
+ * dirigeant comme contributeur d'un visuel aurait au contraire faussé la
+ * charge de chacun.
+ */
+export function fallbackRolesFor(
+  target: Pick<RoutingTarget, "role" | "assignmentRole">,
+): AppRole[] {
+  if (target.assignmentRole !== "owner") return [];
+  return LEAD_FALLBACK_ROLES.filter((role) => role !== target.role);
+}
+
+/**
  * Une correction purement rédactionnelle ne doit jamais partir en production
  * (scénarios 9 et 10 de la spec).
  */
