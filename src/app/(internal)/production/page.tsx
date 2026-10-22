@@ -16,7 +16,8 @@ import { TicketCorrections, type TicketCorrectionRow } from "./TicketCorrections
 import { ProductionOverview, type OverviewRow } from "./ProductionOverview";
 import { ProductionTabs } from "./ProductionTabs";
 import { ProductionCalendar } from "./ProductionCalendar";
-import { taskFromCorrection, taskFromRequest, type CalendarTask } from "@/lib/domain/production-calendar";
+import { taskFromCorrection, taskFromRequest, taskFromTrackingReport, type CalendarTask } from "@/lib/domain/production-calendar";
+import { findTrackingProduct, trackingMonthLabel } from "@/lib/domain/monthly-tracking";
 import { loadProductionAssignees } from "@/lib/internal/production-assignees";
 import { loadProductionRequestClients } from "@/lib/internal/production-clients";
 import { firstNameOf, PRODUCTION_ASSIGNEE_ROLES } from "@/lib/domain/production-requests";
@@ -75,7 +76,7 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
   const weekRange = planningWeekRange(viewedNow);
   const currentIso = isoWeekIdentity(viewedNow);
 
-  const [{ data: rawRequests }, { data: overviewClients }, { data: rawCurrentSheets }, { assignees }, { names: requestClientNames, error: clientNamesError }] = await Promise.all([
+  const [{ data: rawRequests }, { data: overviewClients }, { data: rawCurrentSheets }, { assignees }, { names: requestClientNames, error: clientNamesError }, { data: rawTrackingReports }] = await Promise.all([
     supabase
       .from("production_requests")
       .select(`id, client_id, kind, title, brief, due_on, status, created_at, delivered_at,
@@ -101,6 +102,17 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
     loadProductionAssignees(),
     // Noms des clients de la file — et rien d'autre de leur fiche.
     loadProductionRequestClients(),
+    /*
+     * Comptes rendus de suivi mensuel restant à remplir. Leur table ne porte
+     * aucun montant : les poser sur le calendrier n'élargit donc rien de ce que
+     * la direction seule doit voir, et la RLS borne la lecture au périmètre du
+     * lecteur comme pour le reste.
+     */
+    supabase
+      .from("client_tracking_reports")
+      .select("id, client_id, service_key, period_month, due_on, assigned_to, clients ( name ), assignee:assigned_to ( full_name )")
+      .eq("status", "a_faire")
+      .order("due_on", { ascending: true }),
   ]);
   // La panne ne doit pas passer inaperçue : les noms retombent sur la jointure, mais on veut le savoir.
   if (clientNamesError) console.error("[production] noms des clients indisponibles", clientNamesError);
@@ -242,6 +254,11 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
    * moitiés du plan de charge déjà chargées ici — les commandes internes et
    * les corrections graphiques ou vidéo.
    *
+   * S'y ajoutent les comptes rendus de suivi mensuel : ils ont un client, un
+   * jour et un responsable, et leur table ne porte aucun montant — c'est ce qui
+   * les distingue des shootings. Ils ne se déplacent pas : leur échéance est
+   * celle de la campagne, et elle ne se négocie pas ici.
+   *
    * Sont volontairement absents : les shootings, dont la date vit sur la ligne
    * de budget et ne se lit qu'avec la clé service, et les fiches à préparer,
    * qui sont l'onglet « Vue d'ensemble » avec sa propre semaine — la même fiche
@@ -263,6 +280,20 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
       assignedToViewer: request.assignedToViewer,
       // Droit calculé une seule fois côté serveur, comme les six autres.
       canReschedule: request.canReschedule,
+    }, today)),
+    ...(rawTrackingReports ?? []).map((row) => taskFromTrackingReport({
+      id: row.id as string,
+      clientId: row.client_id as string,
+      clientName: (row.clients as unknown as { name: string } | null)?.name ?? "Client",
+      title: `${findTrackingProduct(row.service_key as string)?.label ?? "Suivi mensuel"}`
+        + ` — ${trackingMonthLabel(String(row.period_month).slice(0, 10))}`,
+      dueOn: String(row.due_on).slice(0, 10),
+      assignedToId: (row.assigned_to as string | null) ?? null,
+      assigneeLabel: row.assigned_to
+        ? assigneeLabelById.get(row.assigned_to as string)
+          ?? firstNameOf((row.assignee as unknown as { full_name: string } | null)?.full_name ?? null)
+        : null,
+      assignedToViewer: Boolean(row.assigned_to) && row.assigned_to === profile?.id,
     }, today)),
     ...corrections.map((correction) => taskFromCorrection({
       id: correction.id,

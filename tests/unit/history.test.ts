@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  HISTORY_EVENT_LABELS,
+  HISTORY_FAMILIES,
   buildWeekHistory,
   familyForKind,
   groupEventsByDay,
   validationDelayHours,
+  type HistoryEventKind,
   type SheetHistoryInput,
 } from "@/lib/domain/history";
 
@@ -377,6 +380,38 @@ describe("familles d'événements", () => {
     expect(familyForKind("production_delivered")).toBe("production");
     expect(familyForKind("approved")).toBe("validations");
     expect(familyForKind("published")).toBe("publications");
+    expect(familyForKind("tracking_report")).toBe("suivi");
+  });
+
+  /*
+   * Le seul échec muet de cet écran : `HISTORY_FAMILIES` est un tableau, pas un
+   * `Record` exhaustif. Une nature oubliée ferait rendre `undefined` à
+   * `familyForKind`, et l'événement disparaîtrait de tous les filtres sans
+   * qu'une erreur ne soit levée nulle part.
+   */
+  it("ne laisse aucune nature sans famille ni sans libellé", () => {
+    const kinds = Object.keys(HISTORY_EVENT_LABELS) as HistoryEventKind[];
+    const families = HISTORY_FAMILIES.map((family) => family.key);
+    for (const kind of kinds) {
+      expect(HISTORY_EVENT_LABELS[kind], kind).toBeTruthy();
+      expect(families, kind).toContain(familyForKind(kind));
+    }
+    // Et aucune famille ne range une nature qui n'existe pas.
+    for (const family of HISTORY_FAMILIES) {
+      for (const kind of family.kinds) expect(kinds, kind).toContain(kind);
+    }
+  });
+
+  it("mentionne le compte rendu de suivi dans la semaine où il a été rempli", () => {
+    const week = buildWeekHistory({
+      ...base,
+      trackingReports: [
+        { filledAt: "2026-08-26T10:00:00Z", label: "Gestion du budget publicitaire — juillet 2026" },
+      ],
+    });
+    const event = week.events.find((item) => item.kind === "tracking_report");
+    expect(event?.label).toBe("Compte rendu mensuel rempli");
+    expect(event?.detail).toBe("Gestion du budget publicitaire — juillet 2026");
   });
 });
 

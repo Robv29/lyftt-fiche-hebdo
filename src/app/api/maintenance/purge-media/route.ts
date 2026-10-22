@@ -6,6 +6,12 @@ import { logRibAccess } from "@/lib/internal/rib-audit";
 import { syncClientLocation } from "@/lib/geo/client-location";
 import { decideMediaRetention, formatBytes } from "@/lib/domain/media-retention";
 import { syncManagementMonths } from "@/lib/budget/management-months";
+import {
+  TRACKING_CYCLE_CLIENT_COLUMNS,
+  openTrackingReports,
+  syncTrackingLines,
+  trackingCycleClient,
+} from "@/lib/tracking/monthly-cycle";
 
 /**
  * Entretien planifié : validations tacites, puis purge des médias.
@@ -73,6 +79,46 @@ async function handle(request: NextRequest) {
     } catch (error) {
       // Un budget en échec ne doit pas empêcher la purge des médias.
       console.error("[entretien] mois de gestion impossibles", client.id, error);
+    }
+  }
+
+  /*
+   * Cycle mensuel des produits de suivi — gestion du budget publicitaire,
+   * accompagnement marketing externalisé.
+   *
+   * Deux opérations, rejouables : inscrire à l'addition les mois dus, puis
+   * ouvrir les comptes rendus des mois clos. Une boucle à part de celle des
+   * mois de gestion, car ces produits se vendent aussi à un client en
+   * prestation ponctuelle, sans date de début de gestion.
+   *
+   * Seuls les clients qui ont une prestation de suivi sont lus : la liste est
+   * presque toujours vide ou minuscule, et une table vide ne coûte rien.
+   */
+  let trackingMonths = 0;
+  let trackingReports = 0;
+  const { data: trackedRows } = await admin.from("client_tracking_services").select("client_id");
+  const trackedIds = [...new Set((trackedRows ?? []).map((row) => row.client_id as string))];
+
+  if (trackedIds.length > 0) {
+    const { data: trackedClients } = await admin
+      .from("clients")
+      .select(TRACKING_CYCLE_CLIENT_COLUMNS)
+      .in("id", trackedIds)
+      .eq("is_active", true);
+
+    for (const row of trackedClients ?? []) {
+      const client = trackingCycleClient(row as Record<string, unknown>);
+      try {
+        trackingMonths += await syncTrackingLines(admin, client);
+      } catch (error) {
+        // Un dossier en échec ne doit pas empêcher les suivants ni la purge.
+        console.error("[entretien] suivi mensuel impossible", client.id, error);
+      }
+      try {
+        trackingReports += await openTrackingReports(admin, client);
+      } catch (error) {
+        console.error("[entretien] compte rendu de suivi impossible", client.id, error);
+      }
     }
   }
 
@@ -325,6 +371,8 @@ async function handle(request: NextRequest) {
     fichesValideesTacitement: Array.isArray(tacit) ? tacit.length : 0,
     clientsLocalises: located,
     moisDeGestionInscrits: managementMonths,
+    moisDeSuiviInscrits: trackingMonths,
+    comptesRendusOuverts: trackingReports,
     originauxPurges: purgedIds.length,
     apercusPurges: previewPurgedIds.length,
     fichesSupprimees: deletedSheets,

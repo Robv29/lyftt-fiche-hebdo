@@ -13,6 +13,7 @@ import {
   shiftMonth,
   taskFromCorrection,
   taskFromRequest,
+  taskFromTrackingReport,
   type CalendarTask,
 } from "@/lib/domain/production-calendar";
 import { EMPTY_BOARD_FILTERS, matchesBoardFilters } from "@/lib/domain/production-board";
@@ -330,5 +331,58 @@ describe("matchesBoardFilters — la barre de la file appliquée aux tâches", (
     expect(matchesBoardFilters(tache, { ...EMPTY_BOARD_FILTERS, query: "piscine" })).toBe(true);
     expect(matchesBoardFilters(tache, { ...EMPTY_BOARD_FILTERS, person: VIDEASTE })).toBe(true);
     expect(matchesBoardFilters(tache, { ...EMPTY_BOARD_FILTERS, person: UNKNOWN_PERSON_KEY })).toBe(false);
+  });
+});
+
+
+describe("comptes rendus de suivi mensuel sur la grille", () => {
+  const compteRendu = (over: Partial<Parameters<typeof taskFromTrackingReport>[0]> = {}) =>
+    taskFromTrackingReport({
+      id: "rapport-1",
+      clientId: "client-1",
+      clientName: "Muratet",
+      title: "Gestion du budget publicitaire — août 2026",
+      dueOn: "2026-09-08",
+      assignedToId: GRAPHISTE,
+      assigneeLabel: "Léa",
+      assignedToViewer: false,
+      ...over,
+    }, AUJOURD_HUI);
+
+  it("se pose sur son échéance, toujours à faire", () => {
+    const task = compteRendu({ dueOn: "2026-09-30" });
+    expect(task.source).toBe("compte_rendu");
+    expect(task.kindLabel).toBe("Compte rendu");
+    expect(task.status).toBe("a_faire");
+    expect(task.dueOn).toBe("2026-09-30");
+    expect(calendarState(task)).toBe("a_faire");
+  });
+
+  it("se peint en retard passée son échéance, et « demain » la veille", () => {
+    expect(calendarState(compteRendu({ dueOn: "2026-09-08" }))).toBe("en_retard");
+    expect(calendarState(compteRendu({ dueOn: "2026-09-25" }))).toBe("demain");
+  });
+
+  /*
+   * Sans ce faux, « Déplacer » aurait envoyé l'identifiant d'un compte rendu à
+   * l'action des commandes de production : son échéance est celle de la
+   * campagne, elle ne se négocie pas depuis cette grille.
+   */
+  it("ne se déplace jamais", () => {
+    expect(compteRendu().canReschedule).toBe(false);
+  });
+
+  it("n'entre pas dans « À confier » : il est routé à son ouverture", () => {
+    expect(inCalendarScope(compteRendu({ assignedToId: null, assigneeLabel: null }), "a_confier"))
+      .toBe(false);
+    expect(inCalendarScope(compteRendu({ assignedToViewer: true }), "pour_vous")).toBe(true);
+    expect(inCalendarScope(compteRendu({ dueOn: "2026-09-01" }), "en_retard")).toBe(true);
+    // Personne ici ne l'a demandé : il ne figure pas dans « Mes demandes ».
+    expect(inCalendarScope(compteRendu(), "mes_demandes")).toBe(false);
+  });
+
+  it("se range dans sa journée avec le reste du plan de charge", () => {
+    const placement = placeTasks([commande(), compteRendu({ dueOn: "2026-09-30" })]);
+    expect(placement.byDay.get("2026-09-30")?.map((task) => task.source)).toContain("compte_rendu");
   });
 });

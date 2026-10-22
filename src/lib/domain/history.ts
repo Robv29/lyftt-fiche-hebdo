@@ -24,7 +24,8 @@ export type HistoryEventKind =
   | "production_delivered"
   | "approved"
   | "staff_validated"
-  | "published";
+  | "published"
+  | "tracking_report";
 
 export interface HistoryEvent {
   /** Horodatage ISO. C'est lui qui ordonne la chronologie. */
@@ -87,6 +88,13 @@ export const HISTORY_EVENT_LABELS: Record<HistoryEventKind, string> = {
   approved: "Validation du client",
   staff_validated: "Validée par l’agence, sans renvoi au client",
   published: "Publication",
+  /*
+   * Mention seulement : les chiffres et les améliorations du mois se lisent
+   * dans leur propre bloc, au-dessus des semaines. Une ligne de chronologie ne
+   * porte qu'un `detail`, et un bilan mensuel n'y tiendrait pas — mais il doit
+   * se voir quand on remonte le fil d'un client.
+   */
+  tracking_report: "Compte rendu mensuel rempli",
 };
 
 /**
@@ -171,6 +179,20 @@ export interface PublicationRow {
   formatLabel: string;
 }
 
+/**
+ * Compte rendu de suivi mensuel rempli dans la semaine.
+ *
+ * Rattaché par sa date de remplissage, comme les commandes en production. Le
+ * contenu, lui, n'est pas ici : il vit dans son propre bloc mensuel, qui ne
+ * dépend d'aucune fiche hebdomadaire — celles-ci sont purgées quatorze jours
+ * après leur fin, et l'historique doit se relire mois après mois.
+ */
+export interface TrackingReportEvent {
+  filledAt: string;
+  /** « Gestion du budget publicitaire — septembre 2026 ». */
+  label: string;
+}
+
 export interface SheetHistoryInput {
   sheetId: string;
   isoWeek: number;
@@ -185,6 +207,8 @@ export interface SheetHistoryInput {
   publications: PublicationRow[];
   /** Commandes en production tombant dans la semaine, rattachées par leur date. */
   productionRequests?: ProductionRequestRow[];
+  /** Comptes rendus de suivi remplis dans la semaine, rattachés par leur date. */
+  trackingReports?: TrackingReportEvent[];
   /** Corrections validées par l'agence, sans renvoi au client. */
   staffValidations?: StaffValidationRow[];
 }
@@ -292,6 +316,15 @@ export function buildWeekHistory(input: SheetHistoryInput, now: Date = new Date(
         detail: titre,
       });
     }
+  }
+
+  for (const report of input.trackingReports ?? []) {
+    events.push({
+      at: report.filledAt,
+      kind: "tracking_report",
+      label: HISTORY_EVENT_LABELS.tracking_report,
+      detail: report.label,
+    });
   }
 
   for (const validation of input.staffValidations ?? []) {
@@ -417,7 +450,7 @@ export function validationDelayHours(week: WeekHistory): number | null {
  * de lui, ou ce qui est sorti. Les familles suivent cette lecture, pas la
  * mécanique interne des tables.
  */
-export type HistoryFamily = "envois" | "retours" | "production" | "validations" | "publications";
+export type HistoryFamily = "envois" | "retours" | "production" | "validations" | "publications" | "suivi";
 
 export const HISTORY_FAMILIES: ReadonlyArray<{ key: HistoryFamily; label: string; kinds: HistoryEventKind[] }> = [
   { key: "envois", label: "Envois et relances", kinds: ["sheet_sent", "sheet_resent", "reminder"] },
@@ -425,6 +458,14 @@ export const HISTORY_FAMILIES: ReadonlyArray<{ key: HistoryFamily; label: string
   { key: "production", label: "Production", kinds: ["production_requested", "production_delivered"] },
   { key: "validations", label: "Validations", kinds: ["approved", "staff_validated"] },
   { key: "publications", label: "Publications", kinds: ["published"] },
+  /*
+   * Famille à part, et non repliée dans « Production » : les pastilles sont le
+   * vocabulaire qu'on lit à l'écran, et un compte rendu de budget publicitaire
+   * n'est pas une commande de visuel. Oublier d'y ranger une nature serait le
+   * seul échec muet de cet écran — `familyForKind` rendrait `undefined`, et
+   * l'événement disparaîtrait de tous les filtres sans erreur.
+   */
+  { key: "suivi", label: "Suivi mensuel", kinds: ["tracking_report"] },
 ];
 
 const FAMILY_BY_KIND = HISTORY_FAMILIES.reduce<Record<HistoryEventKind, HistoryFamily>>((map, family) => {

@@ -8,10 +8,11 @@ import {
   CATEGORY_LABELS,
   SERVICE_CATALOGUE,
   awaitsShootingDecision,
+  hasTypedPrice,
   isCustomService,
+  isRecurringMonthly,
   classifyShootings,
   formatEuros,
-  isManagementMonth,
   isShootingLine,
   lineTotalCents,
   shootingMonthlyCostCents,
@@ -35,7 +36,27 @@ import {
   pendingInvoiceCount,
   type InvoiceMonth,
 } from "@/lib/domain/invoicing";
-import { addBudgetLine, deleteMonthInvoice, removeBudgetLine, removeClientRib, saveBudgetSettings, saveContractDates, setClientWithoutSocialManagement, setInvoiceStatus, setShootingBilling, uploadClientRib, type BudgetActionResult } from "../actions";
+import {
+  TRACKING_MAX_FREQUENCY,
+  TRACKING_MIN_FREQUENCY,
+  findTrackingProduct,
+  isTrackingService,
+} from "@/lib/domain/monthly-tracking";
+import { addBudgetLine, deleteMonthInvoice, endTrackingService, removeBudgetLine, removeClientRib, saveBudgetSettings, saveContractDates, setClientWithoutSocialManagement, setInvoiceStatus, setShootingBilling, updateTrackingService, uploadClientRib, type BudgetActionResult } from "../actions";
+
+/** Une prestation de suivi en cours, telle que l'écran la relit. */
+export interface TrackingServiceRow {
+  id: string;
+  serviceKey: string;
+  /** Nom du produit au catalogue. */
+  productLabel: string;
+  /** Libellé saisi à la vente, celui qui figure sur l'addition. */
+  label: string;
+  /** Prix d'un rendez-vous de suivi. */
+  unitPriceCents: number;
+  frequency: number;
+  startedOn: string;
+}
 
 type EditorLine = BudgetLine & { note: string | null; forfaitIncluded: boolean | null };
 
@@ -66,6 +87,7 @@ export function BudgetEditor({
   lines,
   months,
   summary,
+  trackingServices,
 }: {
   clientId: string;
   clientName: string;
@@ -90,6 +112,8 @@ export function BudgetEditor({
   lines: EditorLine[];
   months: InvoiceMonth[];
   summary: BudgetSummary;
+  /** Prestations de suivi mensuel en cours : elles se modifient, elles ne se « retirent » pas. */
+  trackingServices: TrackingServiceRow[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -98,19 +122,34 @@ export function BudgetEditor({
   const [serviceKey, setServiceKey] = useState<string>(SERVICE_CATALOGUE[0]!.key);
 
   const service = SERVICE_CATALOGUE.find((item) => item.key === serviceKey)!;
-  const custom = isCustomService(serviceKey);
+  /*
+   * Prix et libellé saisis : la prestation libre, et les produits de suivi
+   * mensuel. Le choix « ponctuelle / récurrente » et le bouton « Client sans
+   * gestion RS », eux, restent attachés à la seule prestation libre.
+   */
+  const custom = hasTypedPrice(serviceKey);
+  const freeForm = isCustomService(serviceKey);
+  const tracking = isTrackingService(serviceKey);
+  const trackingProduct = findTrackingProduct(serviceKey);
   // Une enveloppe existe dès qu'une part est financée.
   const financed = mode !== "comptant";
   const hybrid = mode === "hybride";
   // Refus de prise en charge : la prestation part en facturation directe.
   const [billedDirectly, setBilledDirectly] = useState(false);
   /*
+   * Un produit de suivi mensuel suit l'enveloppe, comme les mois de gestion :
+   * ses mois sont générés, pas ajoutés à la main, et il n'y a pas de ligne à
+   * facturer à part. Le choix n'est donc pas offert — et il est neutralisé ici
+   * même si la case avait été cochée avant de changer de prestation.
+   */
+  const directBilling = billedDirectly && !tracking;
+  /*
    * Prestation sur mesure : ponctuelle — une fois, à sa date — ou récurrente,
    * avec une fréquence sur l'année. Un client sans gestion n'a que du ponctuel.
    */
   const [customKind, setCustomKind] = useState<"ponctuelle" | "recurrente">(managed ? "recurrente" : "ponctuelle");
   const [withoutManagement, setWithoutManagement] = useState(false);
-  const oneOff = custom && customKind === "ponctuelle";
+  const oneOff = freeForm && customKind === "ponctuelle";
   /*
    * Date proposée : le début de gestion tant qu'il est à venir, aujourd'hui
    * sinon.
@@ -404,6 +443,15 @@ export function BudgetEditor({
         <SummaryPanel summary={summary} cadence={cadence} shooting={shooting} contractStartDate={contractStartDate} contractEndDate={contractEndDate}/>
       )}
 
+      {/* Les prestations de suivi en cours : elles se règlent, elles ne se retirent pas ligne à ligne. */}
+      <TrackingPanel
+        clientId={clientId}
+        services={trackingServices}
+        pending={pending}
+        onSave={(formData) => run(() => updateTrackingService(formData))}
+        onEnd={(serviceId) => run(() => endTrackingService(serviceId, clientId))}
+      />
+
       {(
         <>
           <form
@@ -436,7 +484,7 @@ export function BudgetEditor({
                       {SERVICE_CATALOGUE.filter((item) => item.category === category).map((item) => (
                         <option key={item.key} value={item.key}>
                           {/* La prestation libre n'a pas de tarif : afficher « 0 € » ferait croire qu'elle est offerte. */}
-                          {isCustomService(item.key)
+                          {hasTypedPrice(item.key)
                             ? `${item.label} — prix libre`
                             : `${item.label} — ${formatEuros(item.unitPriceCents)} ${item.unitLabel}`}
                         </option>
@@ -455,14 +503,18 @@ export function BudgetEditor({
               {custom && (
                 <>
                   <div className="sm:col-span-2">
-                    <label className="label" htmlFor="customLabel">Description de la prestation</label>
+                    <label className="label" htmlFor="customLabel">
+                      {tracking ? "Libellé sur l’addition" : "Description de la prestation"}
+                    </label>
                     <input
                       id="customLabel"
                       name="customLabel"
                       maxLength={120}
                       required
                       className="field"
-                      placeholder="Captation d’un événement, refonte d’un visuel…"
+                      placeholder={tracking
+                        ? `${trackingProduct?.label ?? ""} — Meta et Google Ads`
+                        : "Captation d’un événement, refonte d’un visuel…"}
                     />
                     <p className="mt-1 text-xs text-ink-faint">
                       C’est ce libellé qui figurera sur l’addition du client : écrivez-le pour être
@@ -471,7 +523,9 @@ export function BudgetEditor({
                   </div>
 
                   <div>
-                    <label className="label" htmlFor="customPriceEuros">Prix unitaire (€ HT)</label>
+                    <label className="label" htmlFor="customPriceEuros">
+                      {tracking ? "Prix d’un rendez-vous de suivi (€ HT)" : "Prix unitaire (€ HT)"}
+                    </label>
                     {/* Pas de 0,01 : un pas entier refusait 249,90 €. */}
                     <input
                       id="customPriceEuros"
@@ -483,26 +537,40 @@ export function BudgetEditor({
                       className="field"
                       placeholder="249,90"
                     />
+                    {tracking && (
+                      <p className="mt-1 text-xs text-ink-faint">
+                        Le mois est facturé <strong>ce prix × le nombre de rendez-vous</strong>.
+                      </p>
+                    )}
                   </div>
                 </>
               )}
 
               <div>
                 <label className="label" htmlFor="quantity">
-                  {custom && !oneOff ? "Fréquence sur l’année" : "Quantité"}{" "}
+                  {tracking
+                    ? "Rendez-vous de suivi par mois"
+                    : freeForm && !oneOff ? "Fréquence sur l’année" : "Quantité"}{" "}
                   {!oneOff && <span className="font-normal text-ink-faint">({service.unitLabel})</span>}
                 </label>
                 <input
                   id="quantity"
                   name="quantity"
                   type="number"
-                  min={custom ? 1 : 0.5}
+                  min={tracking ? TRACKING_MIN_FREQUENCY : custom ? 1 : 0.5}
+                  max={tracking ? TRACKING_MAX_FREQUENCY : undefined}
                   step={custom ? 1 : 0.5}
                   defaultValue="1"
                   required
                   className="field"
                 />
-                {custom && !oneOff && (
+                {tracking ? (
+                  <p className="mt-1 text-xs text-ink-faint">
+                    De {TRACKING_MIN_FREQUENCY} à {TRACKING_MAX_FREQUENCY}, répartis dans le mois.
+                    C’est aussi le nombre d’invitations envoyées au client. Les mois suivent
+                    l’enveloppe, comme les mois de gestion : rien à facturer à part.
+                  </p>
+                ) : freeForm && !oneOff && (
                   <p className="mt-1 text-xs text-ink-faint">
                     Nombre de fois dans l’année. Le total de la ligne est le prix multiplié par
                     cette fréquence.
@@ -510,7 +578,18 @@ export function BudgetEditor({
                 )}
               </div>
 
-              {custom ? (
+              {tracking ? (
+                <div>
+                  <label className="label" htmlFor="trackingKind">Type</label>
+                  <input
+                    id="trackingKind"
+                    className="field bg-canvas"
+                    value="Prestation mensuelle reconduite"
+                    readOnly
+                    tabIndex={-1}
+                  />
+                </div>
+              ) : freeForm ? (
                 <div>
                   <label className="label" htmlFor="customKind">Type</label>
                   <select
@@ -540,7 +619,9 @@ export function BudgetEditor({
 
               <div>
                 <label className="label" htmlFor="performedOn">
-                  Date {service.key.startsWith("shooting") ? "du shooting" : oneOff ? "de la prestation" : "de mise à jour de la formule"}
+                  {tracking
+                    ? "Mois de départ"
+                    : `Date ${service.key.startsWith("shooting") ? "du shooting" : oneOff ? "de la prestation" : "de mise à jour de la formule"}`}
                 </label>
                 <input id="performedOn" name="performedOn" type="date" required className="field" value={performedOn} onChange={(event) => setPerformedOn(event.target.value)}/>
               </div>
@@ -604,8 +685,8 @@ export function BudgetEditor({
               </fieldset>
             )}
 
-            {financed && (
-              <div className={`rounded-2xl border p-4 transition-colors ${billedDirectly ? "border-[#f0c36d] bg-[#fff8ec]" : "border-line bg-canvas"}`}>
+            {financed && !tracking && (
+              <div className={`rounded-2xl border p-4 transition-colors ${directBilling ? "border-[#f0c36d] bg-[#fff8ec]" : "border-line bg-canvas"}`}>
                 <label className="flex items-start gap-3">
                   <input
                     type="checkbox"
@@ -630,7 +711,7 @@ export function BudgetEditor({
             <button type="submit" className="btn-primary" disabled={pending}>
               {pending
                 ? "Ajout…"
-                : billedDirectly ? "Ajouter et facturer" : "Ajouter à l’addition"}
+                : directBilling ? "Ajouter et facturer" : "Ajouter à l’addition"}
             </button>
           </form>
 
@@ -664,7 +745,8 @@ export function BudgetEditor({
             ) : (
               <ul className="divide-y">
                 {lines.map((line) => {
-                  const automatic = isManagementMonth(line);
+                  // Mois réinscrits automatiquement : gestion, et produits de suivi.
+                  const automatic = isRecurringMonthly(line);
                   return (
                   <li key={line.id} className={`flex flex-wrap items-center justify-between gap-3 p-4 ${automatic ? "bg-canvas/60" : ""}`}>
                     <div className="min-w-0">
@@ -703,6 +785,102 @@ export function BudgetEditor({
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * Prestations de suivi mensuel en cours.
+ *
+ * Elles ne se lisent pas dans l'addition : ce qui s'y empile, ce sont leurs
+ * mois, réinscrits automatiquement. Le prix et la fréquence, eux, se règlent
+ * ici — une seule fois, pour tous les mois à venir. Les mois déjà facturés ne
+ * bougent pas : la réconciliation les épargne.
+ */
+function TrackingPanel({
+  clientId,
+  services,
+  pending,
+  onSave,
+  onEnd,
+}: {
+  clientId: string;
+  services: TrackingServiceRow[];
+  pending: boolean;
+  onSave: (formData: FormData) => void;
+  onEnd: (serviceId: string) => void;
+}) {
+  if (services.length === 0) return null;
+
+  return (
+    <section className="card overflow-hidden">
+      <header className="border-b p-5">
+        <h2 className="font-semibold">Suivi mensuel en cours</h2>
+        <p className="mt-1 text-xs text-ink-faint">
+          Chaque mois : une ligne à l&apos;addition, un compte rendu à remplir, et autant
+          d&apos;invitations au client que de rendez-vous vendus.
+        </p>
+      </header>
+      <ul className="divide-y">
+        {services.map((service) => (
+          <li key={service.id} className="p-4">
+            <p className="text-sm font-medium">{service.label}</p>
+            <p className="mt-0.5 text-xs text-ink-faint">
+              {service.productLabel} · depuis le {service.startedOn} ·{" "}
+              {formatEuros(service.unitPriceCents * service.frequency)} par mois
+            </p>
+            <form
+              className="mt-3 flex flex-wrap items-end gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                onSave(new FormData(event.currentTarget));
+              }}
+            >
+              <input type="hidden" name="serviceId" value={service.id}/>
+              <input type="hidden" name="clientId" value={clientId}/>
+              <div>
+                <label className="label" htmlFor={`price-${service.id}`}>Prix du rendez-vous (€ HT)</label>
+                <input
+                  id={`price-${service.id}`}
+                  name="priceEuros"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  required
+                  className="field min-h-9 w-32 py-1 text-sm"
+                  defaultValue={(service.unitPriceCents / 100).toFixed(2)}
+                />
+              </div>
+              <div>
+                <label className="label" htmlFor={`frequency-${service.id}`}>Rendez-vous / mois</label>
+                <input
+                  id={`frequency-${service.id}`}
+                  name="frequency"
+                  type="number"
+                  min={TRACKING_MIN_FREQUENCY}
+                  max={TRACKING_MAX_FREQUENCY}
+                  step="1"
+                  required
+                  className="field min-h-9 w-24 py-1 text-sm"
+                  defaultValue={service.frequency}
+                />
+              </div>
+              <button type="submit" className="btn-primary min-h-9 px-3 text-xs" disabled={pending}>
+                Enregistrer
+              </button>
+              {/* Arrêter, et non supprimer : les mois déjà servis restent dus. */}
+              <button
+                type="button"
+                className="text-xs text-state-changes hover:underline"
+                disabled={pending}
+                onClick={() => onEnd(service.id)}
+              >
+                Arrêter après ce mois
+              </button>
+            </form>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -1240,7 +1418,7 @@ function SummaryPanel({
         <div className="mt-5 grid gap-2 rounded-2xl bg-canvas p-4 text-xs sm:grid-cols-2">
           <p className="flex items-center justify-between gap-3">
             <span className="text-ink-faint">
-              Mois de gestion inscrits{contractStartDate ? ` depuis le ${contractStartDate}` : ""}
+              Mois récurrents inscrits{contractStartDate ? ` depuis le ${contractStartDate}` : ""}
             </span>
             <strong>{formatEuros(summary.recurringConsumedCents)}</strong>
           </p>

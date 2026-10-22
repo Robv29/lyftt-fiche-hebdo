@@ -4,8 +4,10 @@ import { notFound, redirect } from "next/navigation";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { billableLines, budgetSummary, type BillingMode, type BudgetLine } from "@/lib/domain/budget";
 import { todayInParis } from "@/lib/domain/client-lifecycle";
-import { BudgetEditor } from "./BudgetEditor";
+import { BudgetEditor, type TrackingServiceRow } from "./BudgetEditor";
 import { syncManagementMonths } from "@/lib/budget/management-months";
+import { syncTrackingLines, trackingCycleClient } from "@/lib/tracking/monthly-cycle";
+import { findTrackingProduct } from "@/lib/domain/monthly-tracking";
 import { invoiceMonths, type InvoiceStatus } from "@/lib/domain/invoicing";
 import { resolveMediaUrl } from "@/lib/media/signed-url";
 import { logRibAccess } from "@/lib/internal/rib-audit";
@@ -30,7 +32,7 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
   const [{ data: client }, { data: budget }] = await Promise.all([
     supabase
       .from("clients")
-      .select("id, name, client_kind, notes, contract_start_date, contract_end_date, pause_start_date, pause_end_date")
+      .select("id, name, is_active, client_kind, notes, contract_start_date, contract_end_date, pause_start_date, pause_end_date")
       .eq("id", clientId)
       .maybeSingle(),
     supabase
@@ -49,7 +51,32 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
    */
   {
     await syncManagementMonths(supabase, { id: client.id, ...clientFormula(client) });
+    /*
+     * Même rattrapage pour les produits de suivi mensuel. La réconciliation est
+     * rejouable et se corrige d'elle-même : prix ou fréquence modifiés, mois
+     * devenus caducs, prestation arrêtée. Les mois déjà facturés sont épargnés.
+     */
+    await syncTrackingLines(supabase, trackingCycleClient(client as unknown as Record<string, unknown>));
   }
+
+  const { data: trackingRows } = await supabase
+    .from("client_tracking_services")
+    .select("id, service_key, label, unit_price_cents, frequency, started_on, ended_on")
+    .eq("client_id", clientId)
+    .is("ended_on", null)
+    .order("started_on", { ascending: true });
+
+  const trackingServices: TrackingServiceRow[] = (trackingRows ?? [])
+    .filter((row) => findTrackingProduct(row.service_key as string) !== undefined)
+    .map((row) => ({
+      id: row.id as string,
+      serviceKey: row.service_key as string,
+      productLabel: findTrackingProduct(row.service_key as string)!.label,
+      label: row.label as string,
+      unitPriceCents: row.unit_price_cents as number,
+      frequency: Number(row.frequency),
+      startedOn: String(row.started_on).slice(0, 10),
+    }));
 
   const { data: invoices } = await supabase
     .from("client_invoices")
@@ -206,6 +233,7 @@ export default async function ClientBudgetPage({ params }: { params: Promise<{ c
         lines={lines}
         months={months}
         summary={summary}
+        trackingServices={trackingServices}
       />
     </div>
   );

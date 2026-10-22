@@ -21,6 +21,8 @@ import { defaultMetricsSince, readAgencyMetrics, type AgencyMetrics } from "@/li
 import { ScoreRing } from "@/components/ScoreRing";
 import { sheetShownForWeek, sheetsToCreate } from "@/lib/domain/week-expectation";
 import { ShootingReminders } from "./ShootingReminders";
+import { TrackingReportReminders, type TrackingReportReminderRow } from "./TrackingReportReminders";
+import { findTrackingProduct, trackingMonthLabel } from "@/lib/domain/monthly-tracking";
 
 function todayInParis(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -142,6 +144,29 @@ export default async function DashboardPage() {
    * réponses à la même question dès la première divergence.
    */
   const { due: shootingRows } = await readShootings(producible);
+
+  /*
+   * Comptes rendus de suivi mensuel à remplir.
+   *
+   * Lecture soumise à la RLS : chacun ne voit que les clients qu'il suit, et
+   * l'encadrement voit tout. La table ne porte aucun montant, l'encart n'est
+   * donc pas réservé à la direction — à la différence des budgets ci-dessous.
+   */
+  const { data: trackingTodo } = await supabase
+    .from("client_tracking_reports")
+    .select("id, service_key, period_month, due_on, clients ( name )")
+    .eq("status", "a_faire")
+    .order("due_on", { ascending: true })
+    .limit(8);
+
+  const trackingReportRows: TrackingReportReminderRow[] = (trackingTodo ?? []).map((row) => ({
+    id: row.id as string,
+    clientName: (row.clients as unknown as { name: string } | null)?.name ?? "Client",
+    productLabel: findTrackingProduct(row.service_key as string)?.label ?? "Suivi mensuel",
+    monthLabel: trackingMonthLabel(String(row.period_month).slice(0, 10)),
+    dueOn: String(row.due_on).slice(0, 10),
+    overdue: String(row.due_on).slice(0, 10) < today,
+  }));
 
   /*
    * Budgets à régulariser, pour la direction seule : dates de gestion
@@ -452,6 +477,8 @@ export default async function DashboardPage() {
         */}
         <div className="grid min-w-0 content-start gap-4 xl:gap-3">
           <AgencyHealth metrics={metrics}/>
+          {/* Rien à afficher tant qu'aucun compte rendu n'est ouvert. */}
+          <TrackingReportReminders rows={trackingReportRows}/>
           {/* Rien à afficher tant qu'aucun shooting n'arrive à échéance. */}
           <ShootingReminders rows={shootingRows}/>
         </div>

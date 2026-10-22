@@ -131,8 +131,17 @@ export function monthGrid(month: string, today: string = todayInParis()): Calend
 // Les tâches
 // ---------------------------------------------------------------------------
 
-/** D'où vient la tâche : une commande interne, ou une correction demandée par un client. */
-export type CalendarSource = "commande" | "correction";
+/**
+ * D'où vient la tâche : une commande interne, une correction demandée par un
+ * client, ou un compte rendu de suivi mensuel à remplir.
+ *
+ * Le compte rendu entre ici parce qu'il a tout ce que la grille demande — un
+ * client, un jour, un responsable — et parce que sa table ne porte aucun
+ * montant : l'ouvrir au calendrier n'élargit donc rien de ce que la direction
+ * seule doit voir. Les shootings, eux, restent dehors : leur date vit sur la
+ * ligne de budget, réservée à la direction.
+ */
+export type CalendarSource = "commande" | "correction" | "compte_rendu";
 
 /**
  * Les quatre états que la grille sait peindre, dans l'ordre où ils appellent un
@@ -239,6 +248,54 @@ const CORRECTION_PRODUCED = [
   "sent_back_to_client",
 ];
 
+export interface TrackingReportTaskInput {
+  id: string;
+  clientId: string;
+  clientName: string;
+  /** « Gestion du budget publicitaire — septembre 2026 ». */
+  title: string;
+  dueOn: string;
+  assignedToId: string | null;
+  assigneeLabel: string | null;
+  assignedToViewer: boolean;
+}
+
+/**
+ * Compte rendu de suivi posé sur son échéance.
+ *
+ * `canReschedule: false`, et ce n'est pas un oubli : l'échéance est celle de la
+ * campagne — le compte rendu doit être prêt avant le premier rendez-vous
+ * proposé au client — et elle ne se négocie pas depuis cette grille. Sans ce
+ * faux, le bouton « Déplacer » aurait envoyé l'identifiant d'un compte rendu à
+ * l'action des commandes de production.
+ *
+ * Il n'a pas d'état « livrée » : un compte rendu rempli n'est plus une tâche et
+ * n'est pas chargé. Il est donc toujours « à faire », et sa couleur ne dit que
+ * son retard.
+ */
+export function taskFromTrackingReport(
+  input: TrackingReportTaskInput,
+  today: string = todayInParis(),
+): CalendarTask {
+  return {
+    id: input.id,
+    source: "compte_rendu",
+    clientId: input.clientId,
+    clientName: input.clientName,
+    title: input.title,
+    kindLabel: "Compte rendu",
+    dueOn: input.dueOn,
+    status: "a_faire",
+    urgency: productionUrgency({ dueOn: input.dueOn, status: "a_faire" }, today),
+    assignedToId: input.assignedToId,
+    assigneeLabel: input.assigneeLabel,
+    // Personne ici ne l'a « demandé » : il s'ouvre tout seul chaque mois.
+    isMine: false,
+    assignedToViewer: input.assignedToViewer,
+    canReschedule: false,
+  };
+}
+
 export interface CorrectionTaskInput {
   id: string;
   clientId: string;
@@ -300,6 +357,12 @@ export function taskFromCorrection(input: CorrectionTaskInput, today: string = t
  * figurer parmi ce qui reste à confier serait un mensonge.
  */
 export function inCalendarScope(task: CalendarTask, scope: BoardScope): boolean {
+  /*
+   * « À confier » ne parle que des commandes. Une correction comme un compte
+   * rendu sont affectés à leur arrivée — par la jointure pour l'une, par le
+   * routage par rôle pour l'autre : les faire figurer parmi ce qui reste à
+   * confier serait un mensonge.
+   */
   if (scope === "a_confier" && task.source !== "commande") return false;
   return inBoardScope(task, scope);
 }

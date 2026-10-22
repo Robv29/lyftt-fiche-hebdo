@@ -141,6 +141,18 @@ export default async function InternalLayout({
     .eq("due_on", nextDay(todayInParis()));
   const { count: dueTomorrow } = await (scopeToMe ? dueTomorrowQuery.or(mineOrAssigned) : dueTomorrowQuery);
 
+  /*
+   * Pastille des comptes rendus de suivi mensuel.
+   *
+   * Le périmètre est tenu par la RLS : chacun ne compte que les clients qu'il
+   * suit, l'encadrement les compte tous. La table ne porte aucun montant, la
+   * pastille n'est donc pas réservée à la direction.
+   */
+  const { count: trackingReports } = await supabase
+    .from("client_tracking_reports")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "a_faire");
+
   const productionAlert = (dueTomorrow ?? 0) > 0
     ? {
         label: `${dueTomorrow} commande${dueTomorrow! > 1 ? "s" : ""} de production à rendre demain`,
@@ -175,6 +187,7 @@ export default async function InternalLayout({
           : []),
         { href: "/retours", label: "Tickets clients", icon: "message", badge: openTickets ?? 0 },
         { href: "/production", label: "Production", icon: "layers", badge: productionBadge, alert: productionAlert },
+        { href: "/comptes-rendus", label: "Comptes rendus", icon: "chart", badge: trackingReports ?? 0 },
         { href: "/shootings", label: "Shootings", icon: "camera", badge: null },
         { href: "/indicateurs", label: "Indicateurs", icon: "chart", badge: null },
         { href: "/historique", label: "Historique", icon: "clock", badge: null },

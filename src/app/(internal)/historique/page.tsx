@@ -9,7 +9,13 @@ import {
   validationDelayHours,
   type WeekHistory,
 } from "@/lib/domain/history";
+import {
+  buildTrackingReportHistory,
+  findTrackingProduct,
+  trackingMonthLabel,
+} from "@/lib/domain/monthly-tracking";
 import { HistoryToolbar } from "./HistoryToolbar";
+import { TrackingReports } from "./TrackingReports";
 import { HistoryView } from "./HistoryView";
 import { HistoriqueTabs } from "./HistoriqueTabs";
 
@@ -54,7 +60,7 @@ export default async function HistoriquePage({ searchParams }: { searchParams: P
    */
   const range = planningWeekRange();
 
-  const [sheetsResult, ticketsResult, requestsResult] = await Promise.all([
+  const [sheetsResult, ticketsResult, requestsResult, trackingResult] = await Promise.all([
     supabase
       .from("weekly_sheets")
       /*
@@ -81,6 +87,20 @@ export default async function HistoriquePage({ searchParams }: { searchParams: P
       .from("production_requests")
       .select("title, kind, created_at, due_on, delivered_at, validated_at")
       .eq("client_id", selected.id),
+    /*
+     * Comptes rendus de suivi mensuel, relus dans leur propre table.
+     *
+     * C'est ce qui les fait survivre : les fiches hebdomadaires sont purgées
+     * quatorze jours après leur fin, et un bilan accroché à une semaine aurait
+     * disparu avec elle. Ils sont rendus dans leur propre bloc, par mois.
+     */
+    supabase
+      .from("client_tracking_reports")
+      .select("id, service_key, period_month, improvements, stats, filled_at, filled:filled_by ( full_name )")
+      .eq("client_id", selected.id)
+      .eq("status", "rempli")
+      .order("period_month", { ascending: false })
+      .limit(36),
   ]);
 
   /*
@@ -88,7 +108,7 @@ export default async function HistoriquePage({ searchParams }: { searchParams: P
    * écran vide laisse croire qu'il n'y a rien à montrer, et le défaut passe
    * inaperçu. On le dit.
    */
-  const failure = sheetsResult.error ?? ticketsResult.error ?? requestsResult.error;
+  const failure = sheetsResult.error ?? ticketsResult.error ?? requestsResult.error ?? trackingResult.error;
   if (failure) {
     console.error("[historique] chargement impossible", failure.message);
     return (
@@ -105,6 +125,35 @@ export default async function HistoriquePage({ searchParams }: { searchParams: P
   const sheets = sheetsResult.data;
   const tickets = ticketsResult.data;
   const productionRequests = requestsResult.data;
+
+  const trackingReports = buildTrackingReportHistory((trackingResult.data ?? []).map((row) => ({
+    id: row.id as string,
+    serviceKey: row.service_key as string,
+    periodMonth: String(row.period_month).slice(0, 10),
+    improvements: (row.improvements as string | null) ?? null,
+    stats: row.stats,
+    filledAt: (row.filled_at as string | null) ?? null,
+    filledByName: (row.filled as unknown as { full_name: string } | null)?.full_name ?? null,
+  })));
+
+  /*
+   * Mention dans la chronologie de la semaine où le compte rendu a été rempli —
+   * rattachée par sa date, comme les commandes en production. Le contenu reste
+   * dans le bloc mensuel : une ligne de chronologie ne porte qu'un `detail`.
+   */
+  const trackingForWeek = (start: string, end: string) =>
+    (trackingResult.data ?? [])
+      .filter((row) => {
+        const filledAt = row.filled_at as string | null;
+        if (!filledAt) return false;
+        const day = filledAt.slice(0, 10);
+        return day >= start && day <= end;
+      })
+      .map((row) => ({
+        filledAt: row.filled_at as string,
+        label: `${findTrackingProduct(row.service_key as string)?.label ?? "Suivi mensuel"}`
+          + ` — ${trackingMonthLabel(String(row.period_month).slice(0, 10))}`,
+      }));
 
   const ticketsBySheet = new Map<string, NonNullable<typeof tickets>>();
   for (const ticket of tickets ?? []) {
@@ -161,6 +210,7 @@ export default async function HistoriquePage({ searchParams }: { searchParams: P
         formatLabel: MEDIA_FORMAT_LABELS[item.format],
       })),
     productionRequests: requestsForWeek(sheet.period_start as string, sheet.period_end as string),
+    trackingReports: trackingForWeek(sheet.period_start as string, sheet.period_end as string),
     // Corrections validées par l'agence : la chronologie les distingue des validations du client.
     staffValidations: ((sheet.weekly_sheet_staff_validations ?? []) as unknown as { created_at: string; validated_by_name: string | null }[])
       .map((validation) => ({ at: validation.created_at, byName: validation.validated_by_name })),
@@ -207,6 +257,9 @@ export default async function HistoriquePage({ searchParams }: { searchParams: P
           libelle="délai moyen de validation"
         />
       </section>
+
+      {/* Les mois d'abord : ils ne dépendent d'aucune fiche, et survivent à leur purge. */}
+      <TrackingReports reports={trackingReports}/>
 
       <HistoryView weeks={weeks} clientName={selected.name}/>
     </div>

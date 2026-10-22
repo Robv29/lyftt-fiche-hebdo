@@ -29,6 +29,8 @@ const EVENT_TONES: Record<HistoryEventKind, { dot: string; chip: string }> = {
   // Couleur à part : une validation faite à la place du client doit sauter aux yeux.
   staff_validated: { dot: "#b45309", chip: "bg-[#fff4e0] text-[#8a5700]" },
   published: { dot: "#64748b", chip: "bg-[#eef1f6] text-[#475569]" },
+  // Le suivi mensuel a sa propre teinte : ce n'est ni un envoi, ni une production.
+  tracking_report: { dot: "#0f766e", chip: "bg-[#e6f6f3] text-[#0f766e]" },
 };
 
 const time = new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Paris" });

@@ -12,6 +12,7 @@
  */
 
 import type { MonthlyCadence } from "./planning";
+import { isTrackingService, trackingServiceDefinitions } from "./monthly-tracking";
 
 /**
  * Qui paie quoi.
@@ -63,6 +64,22 @@ export const CUSTOM_SERVICE_KEY = "sur_mesure";
 
 export function isCustomService(serviceKey: string): boolean {
   return serviceKey === CUSTOM_SERVICE_KEY;
+}
+
+/**
+ * Prestations dont le libellé et le prix viennent de la saisie, non du
+ * catalogue : la ligne libre, et les produits de suivi mensuel.
+ *
+ * Prédicat distinct de `isCustomService`, et non son élargissement. Trois
+ * comportements sont attachés à la *seule* ligne libre et doivent y rester :
+ * le bouton « Client sans gestion RS », le choix « ponctuelle / récurrente »,
+ * et la fréquence lue comme un nombre de fois dans l'année. Les élargir aurait
+ * notamment rendu atteignable, depuis un produit de suivi, le passage en
+ * prestation ponctuelle — qui retire de l'addition les mois de gestion d'un
+ * client pourtant suivi.
+ */
+export function hasTypedPrice(serviceKey: string): boolean {
+  return isCustomService(serviceKey) || isTrackingService(serviceKey);
 }
 
 export const SERVICE_CATALOGUE: readonly ServiceDefinition[] = [
@@ -204,6 +221,13 @@ export const SERVICE_CATALOGUE: readonly ServiceDefinition[] = [
     description: "Articles, photos, réponses aux avis.",
   },
   /*
+   * Produits de suivi mensuel, déclarés une fois pour toutes dans
+   * `monthly-tracking` : catalogue, plafond de fréquence, tâche, historique et
+   * invitations en découlent. Un troisième produit de la famille ne coûte
+   * qu'une déclaration là-bas, et apparaît ici sans un mot de plus.
+   */
+  ...trackingServiceDefinitions(),
+  /*
    * Ligne libre : tout ce que la carte ne prévoit pas.
    *
    * Contrairement aux autres entrées, son libellé et son prix ne sont pas
@@ -280,12 +304,29 @@ export function isManagementMonth(line: BudgetLine): boolean {
   return line.serviceKey === MANAGEMENT_MONTH_KEY;
 }
 
+/**
+ * Prestation récurrente, réglée mois après mois.
+ *
+ * Les mois de gestion, et les mois des produits de suivi mensuel. C'est la
+ * ligne de partage de l'hybride : le récurrent se facture au client, le
+ * ponctuel part sur l'enveloppe. Un produit de suivi vendu 300 € par mois est
+ * un abonnement, pas une prestation prise sur une enveloppe annuelle — et sans
+ * cette lecture il aurait consommé l'enveloppe *sans* être facturé, ce qui
+ * revenait à l'offrir.
+ *
+ * Aucune ligne existante ne porte ces clés : le comportement des dossiers en
+ * cours est inchangé.
+ */
+export function isRecurringMonthly(line: BudgetLine): boolean {
+  return isManagementMonth(line) || isTrackingService(line.serviceKey);
+}
+
 /** Lignes imputées sur l'enveloppe de financement. */
 export function envelopeLines(lines: BudgetLine[], mode: BillingMode): BudgetLine[] {
   if (mode === "comptant") return [];
   const charged = lines.filter((line) => !line.billedDirectly);
-  // En hybride, la gestion mensuelle est facturée : elle ne touche pas l'enveloppe.
-  return mode === "hybride" ? charged.filter((line) => !isManagementMonth(line)) : charged;
+  // En hybride, le récurrent est facturé : il ne touche pas l'enveloppe.
+  return mode === "hybride" ? charged.filter((line) => !isRecurringMonthly(line)) : charged;
 }
 
 /**
@@ -313,7 +354,7 @@ export function billableLines(lines: BudgetLine[], mode: BillingMode): BudgetLin
   if (mode === "comptant") return invoiceable;
   // En hybride, le récurrent se facture et le ponctuel part sur l'enveloppe.
   if (mode === "hybride") {
-    return invoiceable.filter((line) => isManagementMonth(line) || line.billedDirectly);
+    return invoiceable.filter((line) => isRecurringMonthly(line) || line.billedDirectly);
   }
   return invoiceable.filter((line) => line.billedDirectly);
 }
@@ -1046,7 +1087,14 @@ export function budgetSummary(input: BudgetInput): BudgetSummary {
    * par-dessus, sans quoi la production serait comptée deux fois.
    */
   const recurringConsumedCents = charged
-    .filter(isManagementMonth)
+    /*
+     * Tout le récurrent, mois de gestion et produits de suivi mensuel. Ne
+     * compter que la gestion aurait rangé un abonnement mensuel dans les
+     * « prestations ponctuelles » du panneau de synthèse, qui se déduit de ce
+     * total. Aucune ligne existante ne porte les clés de suivi : le chiffre
+     * affiché aux dossiers en cours est inchangé.
+     */
+    .filter(isRecurringMonthly)
     .reduce((total, line) => total + lineTotalCents(line), 0);
   const consumedCents = lineCents;
 

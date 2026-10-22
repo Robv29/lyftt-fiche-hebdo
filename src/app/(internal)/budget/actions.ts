@@ -19,6 +19,7 @@ import { clientFormula } from "@/lib/domain/client-formula";
 import { syncManagementMonths } from "@/lib/budget/management-months";
 import {
   findService,
+  hasTypedPrice,
   isCustomService,
   isShootingLine,
   MANAGEMENT_MONTH_KEY,
@@ -26,6 +27,20 @@ import {
   billableLines,
   type BudgetLine,
 } from "@/lib/domain/budget";
+import {
+  TRACKING_MAX_FREQUENCY,
+  TRACKING_MIN_FREQUENCY,
+  TRACKING_SERVICE_KEYS,
+  findTrackingProduct,
+  isTrackingService,
+  parseTrackingFrequency,
+  trackingMonthStart,
+} from "@/lib/domain/monthly-tracking";
+import {
+  TRACKING_CYCLE_CLIENT_COLUMNS,
+  syncTrackingLines,
+  trackingCycleClient,
+} from "@/lib/tracking/monthly-cycle";
 
 /**
  * Un mois pas encore commencé ne se facture pas.
@@ -293,7 +308,7 @@ export async function addBudgetLine(formData: FormData): Promise<BudgetActionRes
    * remplace. Une ligne sans description arriverait sur l'addition du client
    * sous le nom générique du catalogue, illisible dans six mois.
    */
-  const custom = isCustomService(service.key);
+  const custom = hasTypedPrice(service.key);
   const customLabel = parsed.data.customLabel ? sanitizeText(parsed.data.customLabel, 120) : "";
   if (custom && !customLabel) {
     return { ok: false, message: "Décrivez la prestation sur mesure." };
@@ -303,9 +318,36 @@ export async function addBudgetLine(formData: FormData): Promise<BudgetActionRes
   }
   const customPriceCents = Math.round((parsed.data.customPriceEuros ?? 0) * 100);
 
-  // Seule une prestation sur mesure ponctuelle ouvre ce choix à l'écran.
-  if (parsed.data.withoutManagement && !custom) {
+  /*
+   * Seule la prestation *libre* ouvre ce choix à l'écran, et le prédicat doit
+   * le rester. Élargi aux produits de suivi, le bouton « Client sans gestion
+   * RS » serait devenu atteignable depuis eux et aurait retiré de l'addition
+   * les mois de gestion d'un client pourtant suivi.
+   */
+  if (parsed.data.withoutManagement && !isCustomService(service.key)) {
     return { ok: false, message: "Seule une prestation sur mesure peut passer un client en prestation ponctuelle." };
+  }
+
+  /*
+   * Produit de suivi mensuel : ce n'est pas une ligne qu'on ajoute, c'est une
+   * prestation qu'on vend. La souscription est écrite, et les lignes mensuelles
+   * en découlent — une par mois, recalculées à chaque passage.
+   */
+  if (isTrackingService(service.key)) {
+    // Même raison que pour les mois de gestion : ces mois suivent l'enveloppe.
+    if (parsed.data.billedDirectly) {
+      return { ok: false, message: "Un produit de suivi mensuel suit l’enveloppe comme les mois de gestion : il ne se facture pas à part." };
+    }
+    return sellTrackingService({
+      profileId: profile.id,
+      clientId: parsed.data.clientId,
+      serviceKey: service.key,
+      label: customLabel,
+      unitPriceCents: customPriceCents,
+      frequency: parsed.data.quantity,
+      startedOn: parsed.data.performedOn,
+      note: parsed.data.note,
+    });
   }
 
   /*
@@ -377,6 +419,197 @@ export async function addBudgetLine(formData: FormData): Promise<BudgetActionRes
         ? `${custom ? customLabel : service.label} ajouté et à facturer au client.`
         : `${custom ? customLabel : service.label} ajouté à l’enveloppe.`) + conversion,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Produits de suivi mensuel
+// ---------------------------------------------------------------------------
+
+const FREQUENCY_REFUSAL =
+  `La fréquence doit être de ${TRACKING_MIN_FREQUENCY} à ${TRACKING_MAX_FREQUENCY} rendez-vous par mois.`;
+
+/**
+ * Recalcule les lignes mensuelles d'un client après un changement de vente.
+ *
+ * Avec le client de l'utilisateur, jamais la clé service : la RLS `super_admin`
+ * de `client_budget_lines` reste le dernier mot, comme pour tout cet écran.
+ */
+async function syncTracking(supabase: ServerSupabase, clientId: string): Promise<string | null> {
+  const { data: row } = await supabase
+    .from("clients")
+    .select(TRACKING_CYCLE_CLIENT_COLUMNS)
+    .eq("id", clientId)
+    .maybeSingle();
+  if (!row) return "Client introuvable.";
+
+  try {
+    await syncTrackingLines(supabase, trackingCycleClient(row as Record<string, unknown>));
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : "Mise à jour de l’addition impossible.";
+  }
+}
+
+/**
+ * Vente d'un produit de suivi mensuel.
+ *
+ * On enregistre la **prestation**, pas une ligne : prix d'un rendez-vous,
+ * fréquence mensuelle, mois de départ. Les lignes de l'addition en sont
+ * déduites, une par mois, et se recalculent à chaque passage — c'est le motif
+ * des mois de gestion, et c'est ce qui permet d'arrêter la prestation sans
+ * qu'elle se réinscrive la nuit suivante.
+ */
+async function sellTrackingService(input: {
+  profileId: string;
+  clientId: string;
+  serviceKey: string;
+  label: string;
+  unitPriceCents: number;
+  frequency: number;
+  startedOn: string;
+  note?: string;
+}): Promise<BudgetActionResult> {
+  const product = findTrackingProduct(input.serviceKey);
+  if (!product) return { ok: false, message: "Prestation inconnue." };
+
+  const frequency = parseTrackingFrequency(input.frequency);
+  if (frequency === null) return { ok: false, message: FREQUENCY_REFUSAL };
+
+  // Le mois est l'unité de vente : une prestation vendue le 22 démarre ce mois-ci.
+  const startedOn = trackingMonthStart(input.startedOn);
+  const supabase = await createSupabaseServerClient();
+
+  const { error } = await supabase.from("client_tracking_services").insert({
+    client_id: input.clientId,
+    service_key: input.serviceKey,
+    label: input.label,
+    unit_price_cents: input.unitPriceCents,
+    frequency,
+    started_on: startedOn,
+    note: input.note ? sanitizeText(input.note, 300) : null,
+    created_by: input.profileId,
+  });
+  if (error) {
+    return {
+      ok: false,
+      message: error.code === "23505"
+        ? `${product.label} est déjà en cours pour ce client : modifiez le prix ou la fréquence, ou arrêtez la prestation.`
+        : `Vente impossible : ${error.message}`,
+    };
+  }
+
+  const failure = await syncTracking(supabase, input.clientId);
+  revalidatePath("/budget");
+  revalidatePath(`/budget/${input.clientId}`);
+  if (failure) {
+    return { ok: false, message: `${product.label} enregistré, mais l’addition n’a pas pu être mise à jour : ${failure}` };
+  }
+
+  return {
+    ok: true,
+    message: `${product.label} vendu : ${frequency} rendez-vous de suivi par mois, inscrit à l’addition chaque mois.`,
+  };
+}
+
+const trackingUpdateSchema = z.object({
+  serviceId: z.string().uuid(),
+  clientId: z.string().uuid(),
+  priceEuros: z.coerce.number().min(0, "Le prix ne peut pas être négatif.").max(1_000_000),
+  frequency: z.coerce.number(),
+});
+
+/**
+ * Nouveau prix ou nouvelle fréquence d'une prestation de suivi en cours.
+ *
+ * Les mois déjà facturés ne bougent pas — la réconciliation les épargne —, les
+ * autres suivent. Sans ce geste, corriger un prix mal saisi aurait demandé
+ * d'arrêter la prestation et de la revendre le mois suivant.
+ */
+export async function updateTrackingService(formData: FormData): Promise<BudgetActionResult> {
+  const profile = await requireAdmin();
+  if (!profile) return { ok: false, message: ACCESS_DENIED };
+
+  const parsed = trackingUpdateSchema.safeParse({
+    serviceId: formData.get("serviceId"),
+    clientId: formData.get("clientId"),
+    priceEuros: formData.get("priceEuros"),
+    frequency: formData.get("frequency"),
+  });
+  if (!parsed.success) {
+    return { ok: false, message: parsed.error.issues[0]?.message ?? "Formulaire invalide." };
+  }
+
+  const frequency = parseTrackingFrequency(parsed.data.frequency);
+  if (frequency === null) return { ok: false, message: FREQUENCY_REFUSAL };
+
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase
+    .from("client_tracking_services")
+    .update({
+      unit_price_cents: Math.round(parsed.data.priceEuros * 100),
+      frequency,
+    })
+    .eq("id", parsed.data.serviceId)
+    .eq("client_id", parsed.data.clientId);
+  if (error) return { ok: false, message: `Modification impossible : ${error.message}` };
+
+  const failure = await syncTracking(supabase, parsed.data.clientId);
+  revalidatePath("/budget");
+  revalidatePath(`/budget/${parsed.data.clientId}`);
+  return failure
+    ? { ok: false, message: `Prestation modifiée, mais l’addition n’a pas pu être mise à jour : ${failure}` }
+    : { ok: true, message: "Prestation de suivi mise à jour." };
+}
+
+/**
+ * Arrêt d'une prestation de suivi.
+ *
+ * Le mois en cours est le dernier dû : il est vendu et déjà servi. Les mois
+ * suivants ne s'inscriront plus, et ceux qui auraient été posés d'avance sans
+ * être facturés sont retirés par la réconciliation.
+ */
+export async function endTrackingService(
+  serviceId: string,
+  clientId: string,
+): Promise<BudgetActionResult> {
+  const profile = await requireAdmin();
+  if (!profile) return { ok: false, message: ACCESS_DENIED };
+
+  const ids = z.object({ serviceId: z.string().uuid(), clientId: z.string().uuid() })
+    .safeParse({ serviceId, clientId });
+  if (!ids.success) return { ok: false, message: "Prestation invalide." };
+
+  const supabase = await createSupabaseServerClient();
+  const { data: service } = await supabase
+    .from("client_tracking_services")
+    .select("started_on")
+    .eq("id", ids.data.serviceId)
+    .eq("client_id", ids.data.clientId)
+    .is("ended_on", null)
+    .maybeSingle();
+  if (!service) return { ok: false, message: "Prestation introuvable ou déjà arrêtée." };
+
+  /*
+   * Le mois en cours est le dernier dû — sauf pour une prestation qui démarre
+   * plus tard : son dernier mois est alors son premier. La contrainte en base
+   * refuse une fin antérieure au début, et un refus technique n'explique rien.
+   */
+  const currentMonth = trackingMonthStart(todayInParis());
+  const startedOn = String(service.started_on).slice(0, 10);
+  const { error } = await supabase
+    .from("client_tracking_services")
+    .update({ ended_on: currentMonth > startedOn ? currentMonth : startedOn })
+    .eq("id", ids.data.serviceId)
+    .eq("client_id", ids.data.clientId)
+    .is("ended_on", null);
+  if (error) return { ok: false, message: `Arrêt impossible : ${error.message}` };
+
+  const failure = await syncTracking(supabase, ids.data.clientId);
+  revalidatePath("/budget");
+  revalidatePath(`/budget/${ids.data.clientId}`);
+  return failure
+    ? { ok: false, message: `Prestation arrêtée, mais l’addition n’a pas pu être mise à jour : ${failure}` }
+    : { ok: true, message: "Prestation arrêtée : le mois en cours est le dernier facturé." };
 }
 
 export async function removeBudgetLine(lineId: string, clientId: string): Promise<BudgetActionResult> {
@@ -562,7 +795,15 @@ export async function deleteMonthInvoice(
       .from("client_budget_lines")
       .select("id, service_key, label, billing, unit_price_cents, quantity, months, performed_on, billed_directly")
       .eq("client_id", parsed.data.clientId)
-      .not("service_key", "in", `(${MANAGEMENT_MONTH_KEY},${SHOOTING_FORFAIT_KEY})`),
+      /*
+       * Les lignes réinscrites automatiquement sont écartées de la suppression.
+       * Les retirer les verrait revenir au prochain passage de la
+       * réconciliation, et la facture « supprimée » se reformerait à
+       * l'identique au rechargement — exactement la boucle décrite plus haut.
+       * Les mois de gestion, le forfait shooting, et les mois des produits de
+       * suivi mensuel sont dans ce cas.
+       */
+      .not("service_key", "in", `(${[MANAGEMENT_MONTH_KEY, SHOOTING_FORFAIT_KEY, ...TRACKING_SERVICE_KEYS].join(",")})`),
     supabase
       .from("clients")
       .select("contract_start_date")

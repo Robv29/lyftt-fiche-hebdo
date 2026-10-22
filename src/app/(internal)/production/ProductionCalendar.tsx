@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import {
@@ -69,7 +70,9 @@ const PILLS_PER_CELL = 3;
 
 /** Abréviation tenant dans une pastille de case. */
 function shortKind(task: CalendarTask): string {
-  return task.source === "correction" ? "Corr." : task.kindLabel.slice(0, 3);
+  if (task.source === "correction") return "Corr.";
+  if (task.source === "compte_rendu") return "C.R.";
+  return task.kindLabel.slice(0, 3);
 }
 
 /** Marqueur lisible sans la couleur : « en retard » et « demain » ne peuvent pas n'être qu'une teinte. */
@@ -189,6 +192,12 @@ function TaskRow({ task, onMoved }: { task: CalendarTask; onMoved: (date: string
             : task.source === "commande" ? "À confier" : "Sans affectataire"}
         {task.isMine && " · votre demande"}
       </p>
+      {/* Un compte rendu ne se déplace pas : il s'ouvre là où il se remplit. */}
+      {task.source === "compte_rendu" && (
+        <Link href="/comptes-rendus" className="mt-2 inline-block text-xs font-semibold text-accent hover:underline">
+          Remplir →
+        </Link>
+      )}
       <TaskMove task={task} onMoved={onMoved}/>
     </li>
   );
