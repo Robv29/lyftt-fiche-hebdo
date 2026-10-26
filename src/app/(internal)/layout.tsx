@@ -170,9 +170,23 @@ export default async function InternalLayout({
    * Lancée avec la requête précédente : la navigation s'affiche sur chaque
    * écran, elle ne doit pas y ajouter un aller-retour de plus en file.
    */
+  /*
+   * Une pastille ne doit jamais emporter l'application : la navigation est
+   * rendue par toutes les pages internes, donc une lecture qui lève ici les
+   * met toutes en erreur. Un compteur muet est un désagrément, un écran blanc
+   * est une panne.
+   */
   const [{ count: trackingReports }, unclassifiedShootings] = await Promise.all([
-    trackingReportsQuery,
-    profile.role === "super_admin" ? countUnclassifiedShootings(supabase) : Promise.resolve(0),
+    trackingReportsQuery.then((result) => result, (error) => {
+      console.error("[pastille comptes rendus] lecture impossible", error);
+      return { count: 0 } as { count: number | null };
+    }),
+    profile.role === "super_admin"
+      ? countUnclassifiedShootings(supabase).catch((error) => {
+          console.error("[pastille shootings] lecture impossible", error);
+          return 0;
+        })
+      : Promise.resolve(0),
   ]);
 
   const productionAlert = (dueTomorrow ?? 0) > 0
