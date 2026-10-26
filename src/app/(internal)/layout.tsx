@@ -5,6 +5,7 @@ import { nextDay, todayInParis } from "@/lib/domain/client-lifecycle";
 import { InternalShell } from "@/components/InternalShell";
 import { EDITORIAL_ROLES } from "@/lib/internal/authorization";
 import { PRODUCTION_LEAD_ROLES } from "@/lib/domain/production-board";
+import { countUnclassifiedShootings } from "@/lib/shootings/query";
 
 /** §8 — La navigation porte la pastille des retours clients à traiter. */
 export default async function InternalLayout({
@@ -148,14 +149,50 @@ export default async function InternalLayout({
    * suit, l'encadrement les compte tous. La table ne porte aucun montant, la
    * pastille n'est donc pas réservée à la direction.
    */
-  const { count: trackingReports } = await supabase
+  const trackingReportsQuery = supabase
     .from("client_tracking_reports")
     .select("id", { count: "exact", head: true })
     .eq("status", "a_faire");
 
+  /*
+   * Pastille des shootings non classés.
+   *
+   * Un shooting tourné sans décision de facturation n'est ni facturé ni
+   * écarté : c'est le trou par lequel une prestation part sans facture. Il ne
+   * se voyait qu'en ouvrant l'onglet ; le point rouge le dit depuis n'importe
+   * quel écran.
+   *
+   * Réservée à la direction, comme l'encart « à classer » de l'onglet :
+   * trancher est une décision de facturation, et une pastille que la personne
+   * qui la voit ne peut jamais éteindre s'apprend à ignorer — elle emporterait
+   * les autres avec elle.
+   *
+   * Lancée avec la requête précédente : la navigation s'affiche sur chaque
+   * écran, elle ne doit pas y ajouter un aller-retour de plus en file.
+   */
+  const [{ count: trackingReports }, unclassifiedShootings] = await Promise.all([
+    trackingReportsQuery,
+    profile.role === "super_admin" ? countUnclassifiedShootings(supabase) : Promise.resolve(0),
+  ]);
+
   const productionAlert = (dueTomorrow ?? 0) > 0
     ? {
         label: `${dueTomorrow} commande${dueTomorrow! > 1 ? "s" : ""} de production à rendre demain`,
+      }
+    : null;
+
+  /*
+   * Le point, pas le compteur : le geste est le même qu'il y en ait un ou six
+   * — ouvrir l'onglet et trancher —, et un troisième nombre dans la barre se
+   * lirait comme une charge de travail à abattre. Le compte est dans le
+   * libellé, lu au survol et par le lecteur d'écran : une pastille muette se
+   * lit « problème » sans dire lequel.
+   */
+  const shootingAlert = unclassifiedShootings > 0
+    ? {
+        label: `${unclassifiedShootings} shooting${unclassifiedShootings > 1 ? "s" : ""} sans décision de facturation`,
+        // Rouge : une décision attendue, pas une échéance qui approche.
+        tone: "decision" as const,
       }
     : null;
 
@@ -188,7 +225,7 @@ export default async function InternalLayout({
         { href: "/retours", label: "Tickets clients", icon: "message", badge: openTickets ?? 0 },
         { href: "/production", label: "Production", icon: "layers", badge: productionBadge, alert: productionAlert },
         { href: "/comptes-rendus", label: "Comptes rendus", icon: "chart", badge: trackingReports ?? 0 },
-        { href: "/shootings", label: "Shootings", icon: "camera", badge: null },
+        { href: "/shootings", label: "Shootings", icon: "camera", badge: null, alert: shootingAlert },
         { href: "/indicateurs", label: "Indicateurs", icon: "chart", badge: null },
         { href: "/historique", label: "Historique", icon: "clock", badge: null },
         { href: "/implantations", label: "Nos implantations", icon: "map", badge: null },

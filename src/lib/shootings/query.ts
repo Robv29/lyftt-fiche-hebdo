@@ -11,6 +11,8 @@ import {
   type ShootingPlan,
 } from "@/lib/domain/budget";
 import { todayInParis } from "@/lib/domain/client-lifecycle";
+import type { InvoiceStatus } from "@/lib/domain/invoicing";
+import { filterUnclassifiedShootings } from "@/lib/domain/shooting-decision";
 
 /**
  * Lecture des shootings, pour le tableau de bord comme pour l'onglet.
@@ -221,4 +223,103 @@ export async function accessibleShootingClients(
     .eq("is_active", true)
     .order("name");
   return (data ?? []) as unknown as ShootingClient[];
+}
+
+/**
+ * Combien de shootings attendent encore une décision de facturation.
+ *
+ * Lu par la navigation, donc à chaque affichage d'un écran interne : la base
+ * trie d'abord. Les seules clés de shooting, la décision non prise
+ * (`forfait_included is null`), une date déjà passée — il ne revient que les
+ * candidats, soit l'ordre de grandeur de l'encart « à classer » : quelques
+ * lignes, aucune la plupart du temps, et alors un seul aller-retour. Lire
+ * toutes les lignes de budget pour les filtrer ensuite coûterait des milliers
+ * de lignes à chaque page.
+ *
+ * Rien n'est tranché ici : le tri final est celui du domaine, le même que
+ * l'écran. Une seconde règle écrite à la main finirait par allumer la pastille
+ * sur un travail que l'écran ne montre pas — ou par la taire quand il y en a.
+ *
+ * Même périmètre que l'onglet : les clients actifs, et rien d'autre. La
+ * lecture passe par le client de la personne connectée, pas par le client
+ * d'administration : le budget est fermé par RLS à la seule direction, donc un
+ * autre rôle n'en lirait rien même si l'appel lui échappait.
+ */
+export async function countUnclassifiedShootings(
+  supabase: SupabaseClient,
+  today: string = todayInParis(),
+): Promise<number> {
+  const { data: candidates, error: candidatesError } = await supabase
+    .from("client_budget_lines")
+    .select("id, client_id, service_key, performed_on")
+    .in("service_key", SHOOTING_LINE_KEYS)
+    .is("forfait_included", null)
+    .lte("performed_on", today);
+
+  if (candidatesError) {
+    console.error("[pastille shootings] lignes de budget illisibles", candidatesError.message);
+    return 0;
+  }
+  if (!candidates?.length) return 0;
+
+  const lineIds = candidates.map((row) => row.id as string);
+  const clientIds = [...new Set(candidates.map((row) => row.client_id as string))];
+
+  /*
+   * Ce que la ligne de budget ne dit pas : l'annulation, consignée sur la
+   * fiche du shooting ; le début de gestion, qui situe la ligne dans les
+   * factures ; les factures déjà parties, qui figent le tri. Seuls les deux
+   * statuts qui figent sont demandés — les autres sont lus comme « à faire »,
+   * ce qu'ils sont.
+   */
+  const [cancelledRead, clientsRead, invoicesRead] = await Promise.all([
+    supabase.from("shootings").select("budget_line_id").eq("cancelled", true).in("budget_line_id", lineIds),
+    supabase.from("clients").select("id, contract_start_date").eq("is_active", true).in("id", clientIds),
+    supabase
+      .from("client_invoices")
+      .select("client_id, period_month, status")
+      .in("client_id", clientIds)
+      .in("status", ["faite", "prelevement_programme"]),
+  ]);
+
+  /*
+   * Une lecture manquante ne doit pas gonfler le compte : sans les factures,
+   * aucune ligne ne paraîtrait figée et celles déjà facturées repasseraient
+   * « à classer ». Une alerte fausse coûte plus cher qu'une alerte manquée le
+   * temps d'un affichage — la pastille se tait.
+   */
+  const unreadable = cancelledRead.error ?? clientsRead.error ?? invoicesRead.error;
+  if (unreadable) {
+    console.error("[pastille shootings] dossier incomplet, pastille éteinte", unreadable.message);
+    return 0;
+  }
+  const { data: cancelled } = cancelledRead;
+  const { data: clients } = clientsRead;
+  const { data: invoices } = invoicesRead;
+
+  const cancelledLines = new Set((cancelled ?? []).map((row) => row.budget_line_id as string));
+  // Un client désactivé ne figure plus à l'onglet : sa ligne ne doit pas allumer la pastille.
+  const contractStartByClient = new Map<string, string | null>(
+    (clients ?? []).map((row) => [row.id as string, (row.contract_start_date as string | null) ?? null]),
+  );
+  const invoiceStatusesByClient = new Map<string, Record<string, InvoiceStatus>>();
+  for (const row of invoices ?? []) {
+    const forClient = invoiceStatusesByClient.get(row.client_id as string) ?? {};
+    forClient[String(row.period_month).slice(0, 10)] = row.status as InvoiceStatus;
+    invoiceStatusesByClient.set(row.client_id as string, forClient);
+  }
+
+  return filterUnclassifiedShootings(
+    candidates
+      .filter((row) => contractStartByClient.has(row.client_id as string))
+      .map((row) => ({
+        clientId: row.client_id as string,
+        serviceKey: row.service_key as string,
+        performedOn: row.performed_on as string,
+        // La requête ne ramène que les lignes non tranchées : le champ est null par construction.
+        forfaitIncluded: null,
+        cancelled: cancelledLines.has(row.id as string),
+      })),
+    { today, contractStartByClient, invoiceStatusesByClient },
+  ).length;
 }

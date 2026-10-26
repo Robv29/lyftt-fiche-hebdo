@@ -4,7 +4,7 @@ import { denyCommercial } from "@/lib/internal/authorization";
 import { todayInParis } from "@/lib/domain/client-lifecycle";
 import type { InvoiceStatus } from "@/lib/domain/invoicing";
 import {
-  isShootingUnclassified,
+  filterUnclassifiedShootings,
   shootingDecisionSuggestion,
   shootingPlanFromNotes,
 } from "@/lib/domain/shooting-decision";
@@ -51,33 +51,31 @@ export default async function ShootingsPage() {
     const { data: invoices } = await supabase
       .from("client_invoices")
       .select("client_id, period_month, status");
-    const statusesByClient = new Map<string, Record<string, InvoiceStatus>>();
+    const invoiceStatusesByClient = new Map<string, Record<string, InvoiceStatus>>();
     for (const row of invoices ?? []) {
-      const forClient = statusesByClient.get(row.client_id as string) ?? {};
+      const forClient = invoiceStatusesByClient.get(row.client_id as string) ?? {};
       forClient[String(row.period_month).slice(0, 10)] = row.status as InvoiceStatus;
-      statusesByClient.set(row.client_id as string, forClient);
+      invoiceStatusesByClient.set(row.client_id as string, forClient);
     }
-    const startByClient = new Map(clients.map((client) => [client.id, client.contract_start_date]));
-    const today = todayInParis();
+    const contractStartByClient = new Map(clients.map((client) => [client.id, client.contract_start_date]));
     /*
      * Une seule règle, celle du domaine : annulé, pas encore tourné, ou porté
      * par une facture déjà partie, et le shooting n'est pas « à classer ».
-     * C'est elle qui allume aussi les points rouges de la liste, sans quoi
-     * l'encart et la liste finiraient par ne plus désigner les mêmes lignes.
+     * C'est elle qui allume aussi les points rouges de la liste et la pastille
+     * de l'onglet Shootings dans la navigation — sans quoi l'encart, la liste
+     * et la pastille finiraient par ne plus désigner les mêmes lignes.
      */
-    toClassify = entries.filter((entry) => isShootingUnclassified(
-      {
+    toClassify = filterUnclassifiedShootings(
+      entries.map((entry) => ({
+        entry,
+        clientId: entry.clientId,
         serviceKey: entry.serviceKey,
         performedOn: entry.date,
         forfaitIncluded: entry.forfaitIncluded,
         cancelled: entry.status === "annule",
-      },
-      {
-        today,
-        contractStartDate: startByClient.get(entry.clientId) ?? null,
-        invoiceStatuses: statusesByClient.get(entry.clientId) ?? {},
-      },
-    ));
+      })),
+      { today: todayInParis(), contractStartByClient, invoiceStatusesByClient },
+    ).map((candidate) => candidate.entry);
   }
 
   /*

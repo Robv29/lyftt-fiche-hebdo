@@ -214,3 +214,37 @@ export function isShootingUnclassified(
     context.invoiceStatuses,
   );
 }
+
+/** Ce que les dossiers d'un lot de clients disent, vu par la règle du classement. */
+export interface ShootingBillingBooks {
+  /** Dernier jour tourné. Une date calée d'avance n'a rien à trancher. */
+  today: string;
+  /** Début de gestion par client : il rattache les shootings d'avant au mois de démarrage. */
+  contractStartByClient: ReadonlyMap<string, string | null>;
+  /** Statut de facture par mois de période, par client. */
+  invoiceStatusesByClient: ReadonlyMap<string, Record<string, InvoiceStatus>>;
+}
+
+/**
+ * Les shootings non classés d'un lot qui mêle plusieurs clients.
+ *
+ * `isShootingUnclassified` juge un shooting dans le dossier de son client ;
+ * ce sont ces deux lectures — début de gestion, factures parties — qu'il
+ * fallait rebrancher chez chaque appelant. L'écran et la pastille de
+ * navigation posent exactement la même question sur des lots différents : le
+ * branchement est donc écrit ici une fois, et non recopié dans les deux.
+ *
+ * Générique, pour que l'appelant récupère ses propres lignes et non une forme
+ * appauvrie : l'écran a besoin de l'entrée entière pour la lister, la
+ * navigation n'en compte que le nombre.
+ */
+export function filterUnclassifiedShootings<T extends ClassifiableShooting & { clientId: string }>(
+  shootings: readonly T[],
+  books: ShootingBillingBooks,
+): T[] {
+  return shootings.filter((shooting) => isShootingUnclassified(shooting, {
+    today: books.today,
+    contractStartDate: books.contractStartByClient.get(shooting.clientId) ?? null,
+    invoiceStatuses: books.invoiceStatusesByClient.get(shooting.clientId) ?? {},
+  }));
+}

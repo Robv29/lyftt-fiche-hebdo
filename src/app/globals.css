@@ -133,6 +133,9 @@
  * compteur, elle se range juste avant lui.
  */
 .nav-dot { margin-left:auto; width:9px; height:9px; border-radius:99px; background:#f0862e; box-shadow:0 0 0 3px rgba(240,134,46,.22); }
+/* Décision en attente : rouge, comme le point porté par la ligne qu'elle
+   résume — l'orange, lui, dit une échéance qui approche. */
+.nav-dot.nav-dot-decision { background:var(--danger); box-shadow:0 0 0 3px rgba(229,72,77,.22); }
 /* Pastille et compteur ensemble : une seule marge automatique, sinon les
    deux se partagent l'espace libre et la pastille flotte au milieu. */
 .nav-item .nav-dot + b, .mobile-nav .nav-dot + b { margin-left:6px; }
