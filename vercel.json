@@ -15,6 +15,14 @@
     {
       "path": "/api/maintenance/fiches-non-envoyees",
       "schedule": "0 15 * * 5"
+    },
+    {
+      "path": "/api/maintenance/conseils-hebdo",
+      "schedule": "0 8 * * 1"
+    },
+    {
+      "path": "/api/maintenance/conseils-hebdo",
+      "schedule": "0 9 * * 1"
     }
   ]
 }

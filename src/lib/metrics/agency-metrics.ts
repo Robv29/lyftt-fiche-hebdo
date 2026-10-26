@@ -67,6 +67,15 @@ export type AgencyMetrics = {
   punctuality:ReturnType<typeof productionPunctuality>;
   ticketTotal:number; typeEntries:[TicketType,number][]; clientEntries:[string,number][]; donutGradient:string;
   signals:{tone:MetricsTone;icon:string;title:string;body:string}[];
+  /**
+   * Dossiers budget en alerte, par identifiant. Vide hors direction, comme la
+   * mesure elle-même.
+   *
+   * Le diagnostic hebdomadaire a besoin de nommer ce que la note reproche ;
+   * le compte seul le laisserait dire « quatre dossiers » sans dire lesquels.
+   * Aucun montant n'en sort — un identifiant n'est pas un euro.
+   */
+  budgetIssueClientIds:string[];
 };
 
 /**
@@ -79,8 +88,13 @@ export type AgencyMetrics = {
 async function budgetHealth(
   supabase: AgencySupabase,
   isAdmin: boolean,
-): Promise<{ withIssue: number; total: number; shootingsCategorised: number; shootingsTotal: number }> {
-  if (!isAdmin) return { withIssue: 0, total: 0, shootingsCategorised: 0, shootingsTotal: 0 };
+): Promise<{
+  withIssueClientIds: string[];
+  total: number;
+  shootingsCategorised: number;
+  shootingsTotal: number;
+}> {
+  if (!isAdmin) return { withIssueClientIds: [], total: 0, shootingsCategorised: 0, shootingsTotal: 0 };
 
   const today = todayInParis();
   const [{ data: clients }, { data: budgets }, { data: lines }, { data: invoices }] = await Promise.all([
@@ -125,7 +139,17 @@ async function budgetHealth(
     linesByClient.set(row.client_id as string, list);
   }
 
-  const withIssue = managed.filter((client) => {
+  /*
+   * Les **identifiants** des dossiers en défaut, et non leur seul nombre.
+   *
+   * Le diagnostic hebdomadaire doit nommer les dossiers à reprendre, et la
+   * règle du défaut — enveloppe, dates, rythme — vit ici, dans la seule lecture
+   * budgétaire du score. La recopier ailleurs aurait donné deux comptes pour le
+   * même mot, ce qui est précisément arrivé au RIB : le tableau de bord le
+   * transmet à `budgetSummary`, cette lecture ne le transmet pas, et l'alerte
+   * ne se déclenche donc jamais dans le score.
+   */
+  const withIssueClientIds = managed.filter((client) => {
     if (!client.contract_start_date) return true;
     const budget = budgetByClient.get(client.id as string);
     const summary = budgetSummary({
@@ -142,7 +166,7 @@ async function budgetHealth(
       today,
     });
     return summary.alerts.some((alert) => alert.level === "critique" || alert.level === "attention");
-  }).length;
+  }).map((client) => client.id as string);
 
   /*
    * Shootings en attente de tri. Tant qu'on ne sait pas si un shooting est
@@ -163,7 +187,7 @@ async function budgetHealth(
   const shootingsTotal = tally.included + tally.extra + tally.pending;
 
   return {
-    withIssue,
+    withIssueClientIds,
     total: managed.length,
     shootingsCategorised: tally.included + tally.extra,
     shootingsTotal,
@@ -408,7 +432,7 @@ export async function readAgencyMetrics(
     sentBeforeDeadlineRate: approved.length ? deadlineRate : null,
     correctionHours: correctionDelays.length ? averageCorrection : null,
     productionPunctuality: punctuality.percentage,
-    budgetsComplete: budget.total ? ratio(budget.total - budget.withIssue, budget.total) : null,
+    budgetsComplete: budget.total ? ratio(budget.total - budget.withIssueClientIds.length, budget.total) : null,
     shootingsCategorised: budget.shootingsTotal
       ? ratio(budget.shootingsCategorised, budget.shootingsTotal)
       : null,
@@ -462,6 +486,7 @@ export async function readAgencyMetrics(
     clientEntries,
     donutGradient,
     signals,
+    budgetIssueClientIds: budget.withIssueClientIds,
   };
 }
 

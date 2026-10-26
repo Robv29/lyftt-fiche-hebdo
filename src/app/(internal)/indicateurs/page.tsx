@@ -16,9 +16,11 @@ import {
 } from "@/lib/metrics/agency-metrics";
 import { Icon } from "@/components/Icon";
 import { ScoreRing } from "@/components/ScoreRing";
+import { readWeeklyAdvice } from "@/lib/internal/weekly-advice-read";
+import { WeeklyAdviceBody } from "../WeeklyAdviceBody";
 import Image from "next/image";
 
-const METRICS_VIEWS = ["overview", "validation", "returns", "satisfaction", "clients"] as const;
+const METRICS_VIEWS = ["overview", "validation", "returns", "satisfaction", "clients", "conseils"] as const;
 type MetricsView = typeof METRICS_VIEWS[number];
 type Tone = MetricsTone;
 
@@ -55,6 +57,19 @@ export default async function MetricsPage({
     withSatisfactionLogos: true,
   });
 
+  /*
+   * Les conseils de la semaine ne sont lus que sur leur onglet : ils ne
+   * dépendent pas de la période choisie — la tâche du lundi a figé leur
+   * fenêtre — et les charger sur les cinq autres onglets coûterait deux
+   * requêtes pour rien.
+   */
+  const advice = view === "conseils" && profile
+    ? await readWeeklyAdvice(supabase, profile.id).catch((error) => {
+        console.error("[conseils hebdo] lecture impossible", error);
+        return null;
+      })
+    : null;
+
   return (
     <div className="insights-page">
       <header className="insights-header">
@@ -73,6 +88,7 @@ export default async function MetricsPage({
       {view === "returns" ? <ReturnsView data={data}/> : null}
       {view === "satisfaction" ? <SatisfactionView data={data}/> : null}
       {view === "clients" ? <ClientsView data={data}/> : null}
+      {view === "conseils" ? <AdviceView advice={advice}/> : null}
     </div>
   );
 }
@@ -391,6 +407,7 @@ function MetricsMenu({ view, since }: { view:MetricsView; since:string }) {
     {id:"returns",label:"Retours",icon:"message"},
     {id:"satisfaction",label:"Satisfaction",icon:"spark"},
     {id:"clients",label:"Clients",icon:"users"},
+    {id:"conseils",label:"Conseils",icon:"spark"},
   ];
   return (
     <nav
@@ -400,6 +417,44 @@ function MetricsMenu({ view, since }: { view:MetricsView; since:string }) {
     >
       {items.map((item)=><Link key={item.id} href={`/indicateurs?vue=${item.id}&depuis=${since}`} aria-current={view===item.id?"page":undefined} className={view===item.id?"active":""}><Icon name={item.icon}/><span>{item.label}</span></Link>)}
     </nav>
+  );
+}
+
+/**
+ * Les conseils de la semaine, en entier.
+ *
+ * Le même corps que la pop-up, aux mêmes phrases : les recomposer ici aurait
+ * donné deux formulations du même chiffre, et c'est justement ce que la table
+ * de règles existe pour empêcher. Rien n'est recalculé — la tâche du lundi a
+ * figé le texte, et cet onglet le relit.
+ *
+ * Un onglet plutôt qu'une entrée de barre latérale : elle en compte déjà douze,
+ * et la barre mobile défile.
+ */
+function AdviceView({ advice }: { advice: Awaited<ReturnType<typeof readWeeklyAdvice>> }) {
+  if (!advice) {
+    return (
+      <div className="insights-view">
+        <article className="insights-card">
+          <EmptyMetric text="Les conseils de la semaine arrivent le lundi à 10 h."/>
+        </article>
+      </div>
+    );
+  }
+  return (
+    <div className="insights-view">
+      <article className="insights-card">
+        <div className="insights-panel-heading">
+          <div>
+            <p className="eyebrow">Semaine {advice.isoWeek}</p>
+            <h2 className="mt-1 font-semibold">Pour remonter la note cette semaine</h2>
+          </div>
+        </div>
+        <div className="px-5 pb-5">
+          <WeeklyAdviceBody advice={advice}/>
+        </div>
+      </article>
+    </div>
   );
 }
 

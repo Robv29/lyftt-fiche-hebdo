@@ -21,7 +21,10 @@ import { defaultMetricsSince, readAgencyMetrics, type AgencyMetrics } from "@/li
 import { ScoreRing } from "@/components/ScoreRing";
 import { captionSignatureFor } from "@/lib/domain/sheet-status";
 import { sheetShownForWeek, sheetsToCreate } from "@/lib/domain/week-expectation";
+import { readWeeklyAdvice } from "@/lib/internal/weekly-advice-read";
 import { ShootingReminders } from "./ShootingReminders";
+import { WeeklyAdviceCard } from "./WeeklyAdviceCard";
+import { WeeklyAdviceCompute } from "./WeeklyAdviceCompute";
 import { TrackingReportReminders, type TrackingReportReminderRow } from "./TrackingReportReminders";
 import { findTrackingProduct, trackingMonthLabel } from "@/lib/domain/monthly-tracking";
 
@@ -54,7 +57,22 @@ export default async function DashboardPage() {
   const metricsPromise = readAgencyMetrics(supabase, { since: defaultMetricsSince(), isAdmin, withSatisfactionLogos: false });
   metricsPromise.catch(() => {});
 
-  const [ticketsResult, sheetsResult, publicationsResult, clientsResult, preparationResult] = await Promise.all([
+  /*
+   * Conseils de la semaine, pour l'encart « Revoir ».
+   *
+   * Durci comme les lectures d'encart de la navigation : la tâche du lundi peut
+   * n'avoir rien écrit (première semaine, panne, semaine en cours démarrée
+   * avant la mise en service), et la vue d'ensemble doit s'afficher quand même.
+   * Sans ligne, l'encart n'existe pas — il n'y a rien à revoir.
+   */
+  const weeklyAdvicePromise = profile
+    ? readWeeklyAdvice(supabase, profile.id).catch((error) => {
+        console.error("[conseils hebdo] lecture impossible", error);
+        return null;
+      })
+    : Promise.resolve(null);
+
+  const [ticketsResult, sheetsResult, publicationsResult, clientsResult, preparationResult, weeklyAdvice] = await Promise.all([
     supabase.from("client_tickets").select("id, ticket_number, title, ticket_type, status, priority, due_at, created_at, clients ( name )").not("status", "in", "(closed,cancelled,rejected,approved_by_client)").order("created_at", { ascending: false }).limit(50),
     /*
      * Les envois déjà partis accompagnent chaque fiche : sans eux, l'écran
@@ -74,6 +92,7 @@ export default async function DashboardPage() {
       .select("id, client_id, status, clients ( post_signature ), weekly_sheet_items ( caption, hashtags, format, media_asset_id, media_external_url, is_cancelled )")
       .gte("period_start", range.nextStart)
       .lte("period_start", range.nextEnd),
+    weeklyAdvicePromise,
   ]);
 
   /*
@@ -485,6 +504,13 @@ export default async function DashboardPage() {
         */}
         <div className="grid min-w-0 content-start gap-4 xl:gap-3">
           <AgencyHealth metrics={metrics}/>
+          {/*
+            Les conseils juste sous le score : ils en sont l'explication. Rien
+            tant que la tâche du lundi n'a pas écrit sa ligne.
+          */}
+          {weeklyAdvice
+            ? <WeeklyAdviceCard advice={weeklyAdvice}/>
+            : profile?.role === "super_admin" && <WeeklyAdviceCompute/>}
           {/* Rien à afficher tant qu'aucun compte rendu n'est ouvert. */}
           <TrackingReportReminders rows={trackingReportRows}/>
           {/* Rien à afficher tant qu'aucun shooting n'arrive à échéance. */}

@@ -6,6 +6,8 @@ import { InternalShell } from "@/components/InternalShell";
 import { EDITORIAL_ROLES } from "@/lib/internal/authorization";
 import { PRODUCTION_LEAD_ROLES } from "@/lib/domain/production-board";
 import { countUnclassifiedShootings } from "@/lib/shootings/query";
+import { readWeeklyAdviceForPopup } from "@/lib/internal/weekly-advice-read";
+import { WeeklyAdvicePopup } from "./WeeklyAdvicePopup";
 
 /** §8 — La navigation porte la pastille des retours clients à traiter. */
 export default async function InternalLayout({
@@ -176,7 +178,29 @@ export default async function InternalLayout({
    * met toutes en erreur. Un compteur muet est un désagrément, un écran blanc
    * est une panne.
    */
-  const [{ count: trackingReports }, unclassifiedShootings] = await Promise.all([
+  /*
+   * Conseils de la semaine.
+   *
+   * Deux lectures d'une ligne chacune, moins coûteuses que n'importe laquelle
+   * des pastilles ci-dessus : la semaine ISO tape l'index d'unicité de
+   * `weekly_advice`, et le « déjà vu » tape une clé primaire. Le périmètre est
+   * tenu par la RLS, qui partage les lignes par audience ; le filtre de rôle
+   * ici n'évite qu'un aller-retour inutile pour les comptes que la politique
+   * laisserait de toute façon les mains vides — commercial, graphiste,
+   * monteur.
+   *
+   * Même durcissement que les pastilles, et pour la même raison : la coquille
+   * est rendue par tous les écrans internes. Une pop-up muette est un
+   * désagrément, un écran blanc est une panne.
+   */
+  const weeklyAdviceQuery = EDITORIAL_ROLES.includes(profile.role)
+    ? readWeeklyAdviceForPopup(supabase, profile.id).catch((error) => {
+        console.error("[conseils hebdo] lecture impossible", error);
+        return null;
+      })
+    : Promise.resolve(null);
+
+  const [{ count: trackingReports }, unclassifiedShootings, weeklyAdvice] = await Promise.all([
     trackingReportsQuery.then((result) => result, (error) => {
       console.error("[pastille comptes rendus] lecture impossible", error);
       return { count: 0 } as { count: number | null };
@@ -187,6 +211,7 @@ export default async function InternalLayout({
           return 0;
         })
       : Promise.resolve(0),
+    weeklyAdviceQuery,
   ]);
 
   const productionAlert = (dueTomorrow ?? 0) > 0
@@ -251,5 +276,19 @@ export default async function InternalLayout({
           : []),
       ];
 
-  return <InternalShell profile={{ name: profile.full_name, role: appRoleLabel(profile.role) }} links={links}>{children}</InternalShell>;
+  return (
+    <>
+      <InternalShell profile={{ name: profile.full_name, role: appRoleLabel(profile.role) }} links={links}>{children}</InternalShell>
+      {/*
+        Hors de la coquille : la pop-up se rend dans `<body>` par un portail, et
+        la placer dans `<main>` l'aurait mêlée à la cascade d'animations des
+        blocs de page pour rien.
+
+        Elle ne décide pas elle-même si elle doit s'ouvrir un jour : c'est
+        `seen`, lu en base, qui tranche. Elle décide seulement du moment, en
+        comparant l'heure de l'appareil à l'instant d'ouverture.
+      */}
+      {weeklyAdvice && !weeklyAdvice.seen && <WeeklyAdvicePopup advice={weeklyAdvice}/>}
+    </>
+  );
 }

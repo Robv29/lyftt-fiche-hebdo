@@ -249,6 +249,36 @@ export async function countUnclassifiedShootings(
   supabase: SupabaseClient,
   today: string = todayInParis(),
 ): Promise<number> {
+  try {
+    return (await readUnclassifiedShootings(supabase, today)).length;
+  } catch (error) {
+    /*
+     * Une alerte fausse coûte plus cher qu'une alerte manquée le temps d'un
+     * affichage : la pastille se tait. Le diagnostic hebdomadaire, lui, laisse
+     * l'erreur remonter — il écrirait « 0 shooting à classer » pour la semaine.
+     */
+    console.error("[pastille shootings] lecture impossible, pastille éteinte", error);
+    return 0;
+  }
+}
+
+/**
+ * Les shootings non classés, nommés.
+ *
+ * Extrait du compteur ci-dessus, et non recopié : le diagnostic hebdomadaire
+ * doit dire *lesquels* — « BCL PISCINE du 9 octobre » et non « trois
+ * shootings » —, et deux lectures de la même question auraient fini par
+ * répondre deux choses. La pastille n'en prend que le nombre.
+ *
+ * Ne renvoie **jamais** de montant : la ligne de budget porte
+ * `unit_price_cents`, la requête ne le demande pas. Le conseil est lisible par
+ * la direction seule de toute façon, mais un champ qu'on ne lit pas ne peut pas
+ * fuir.
+ */
+export async function readUnclassifiedShootings(
+  supabase: SupabaseClient,
+  today: string = todayInParis(),
+): Promise<{ clientId: string; serviceKey: string; performedOn: string }[]> {
   const { data: candidates, error: candidatesError } = await supabase
     .from("client_budget_lines")
     .select("id, client_id, service_key, performed_on")
@@ -256,11 +286,15 @@ export async function countUnclassifiedShootings(
     .is("forfait_included", null)
     .lte("performed_on", today);
 
+  /*
+   * Une lecture en échec n'est pas « rien à classer » : c'est à l'appelant de
+   * décider ce qu'il en fait. La pastille se tait, le diagnostic hebdomadaire
+   * échoue — sinon il figerait « 0 shooting à classer » pour la semaine.
+   */
   if (candidatesError) {
-    console.error("[pastille shootings] lignes de budget illisibles", candidatesError.message);
-    return 0;
+    throw new Error(`Lignes de budget illisibles : ${candidatesError.message}`);
   }
-  if (!candidates?.length) return 0;
+  if (!candidates?.length) return [];
 
   const lineIds = candidates.map((row) => row.id as string);
   const clientIds = [...new Set(candidates.map((row) => row.client_id as string))];
@@ -285,13 +319,11 @@ export async function countUnclassifiedShootings(
   /*
    * Une lecture manquante ne doit pas gonfler le compte : sans les factures,
    * aucune ligne ne paraîtrait figée et celles déjà facturées repasseraient
-   * « à classer ». Une alerte fausse coûte plus cher qu'une alerte manquée le
-   * temps d'un affichage — la pastille se tait.
+   * « à classer ». On lève plutôt que de rendre une liste fausse.
    */
   const unreadable = cancelledRead.error ?? clientsRead.error ?? invoicesRead.error;
   if (unreadable) {
-    console.error("[pastille shootings] dossier incomplet, pastille éteinte", unreadable.message);
-    return 0;
+    throw new Error(`Dossier shootings incomplet : ${unreadable.message}`);
   }
   const { data: cancelled } = cancelledRead;
   const { data: clients } = clientsRead;
@@ -321,5 +353,9 @@ export async function countUnclassifiedShootings(
         cancelled: cancelledLines.has(row.id as string),
       })),
     { today, contractStartByClient, invoiceStatusesByClient },
-  ).length;
+  ).map((shooting) => ({
+    clientId: shooting.clientId,
+    serviceKey: shooting.serviceKey,
+    performedOn: shooting.performedOn,
+  }));
 }
