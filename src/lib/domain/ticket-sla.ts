@@ -1,4 +1,5 @@
-import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
+import { fromZonedTime } from "date-fns-tz";
+import { PARIS_TIMEZONE, parisFields } from "./paris-time";
 
 /**
  * Le délai promis au client sur un retour.
@@ -21,19 +22,18 @@ import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
  * Vingt heures ouvrées ne mordait jamais — aucun retard sur l'historique.
  */
 export const TICKET_SLA_HOURS = 10;
-export const SLA_TIMEZONE = "Europe/Paris";
+export const SLA_TIMEZONE = PARIS_TIMEZONE;
 /** Journée de travail : 9 h – 18 h, soit neuf heures utiles. */
 export const WORK_START_HOUR = 9;
 export const WORK_END_HOUR = 18;
 
 const HOUR = 3_600_000;
 
-/** Champs civils d'un instant, lus dans le fuseau de l'agence. */
-function parisFields(date: Date): { day: string; hour: number; minute: number; weekday: number } {
-  const [day, clock, weekday] = formatInTimeZone(date, SLA_TIMEZONE, "yyyy-MM-dd|HH:mm|i").split("|");
-  const [hour, minute] = clock.split(":").map(Number);
-  return { day, hour, minute, weekday: Number(weekday) };
-}
+/*
+ * Les champs civils parisiens viennent de `paris-time` : l'alerte du vendredi
+ * pose la même question, et deux lectures du même fuseau finiraient par ne pas
+ * s'accorder sur le jour de la semaine.
+ */
 
 /** Instant correspondant à une heure civile parisienne (heure d'été comprise). */
 function parisInstant(day: string, hour: number, minute = 0): Date {

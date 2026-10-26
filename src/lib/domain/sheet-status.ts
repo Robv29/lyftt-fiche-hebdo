@@ -95,6 +95,26 @@ export function canEditSheetContent(status: SheetStatus): boolean {
 }
 
 /**
+ * Statuts d'avant l'envoi : le client n'a jamais rien reçu.
+ *
+ * `recompute_sheet_status()` refuse de les quitter (migration 20260803090300),
+ * et `computeSheetStatus` fait de même ci-dessus : une fiche n'en sort que par
+ * « Marquer comme envoyé ». C'est donc la frontière de l'envoi, et le planning,
+ * la revalidation et l'alerte du vendredi doivent la lire au même endroit —
+ * trois copies de ce triplet circulaient, et la première oubliée aurait suffi à
+ * faire passer une fiche jamais partie pour envoyée.
+ */
+export const PRE_SEND_SHEET_STATUSES: readonly SheetStatus[] = [
+  "draft",
+  "internal_review",
+  "ready_to_send",
+];
+
+export function isPreSendSheetStatus(status: string): boolean {
+  return (PRE_SEND_SHEET_STATUSES as readonly string[]).includes(status);
+}
+
+/**
  * Une modification de ce statut rend nécessaire une nouvelle validation.
  *
  * Le critère est simple : le client a-t-il déjà vu la fiche ? Si oui, ce qu'il
@@ -102,11 +122,7 @@ export function canEditSheetContent(status: SheetStatus): boolean {
  * porte plus sur le même contenu.
  */
 export function editRequiresRevalidation(status: SheetStatus): boolean {
-  return ![
-    "draft",
-    "internal_review",
-    "ready_to_send",
-  ].includes(status) && canEditSheetContent(status);
+  return !isPreSendSheetStatus(status) && canEditSheetContent(status);
 }
 
 /**

@@ -1,6 +1,7 @@
 import { clientFormula, type ClientFormula, type ClientFormulaRow } from "./client-formula";
 import { clientLifecycleForWeek, parseClientKind, type ClientLifecycle } from "./client-lifecycle";
 import { isoWeekIdentity, weeklyFormatsForCadence } from "./planning";
+import { isPreSendSheetStatus } from "./sheet-status";
 import type { MediaFormat } from "./types";
 
 /**
@@ -59,7 +60,7 @@ export function sheetShownForWeek(
   client: WeekExpectationRow | undefined,
   weekStart: string,
 ): boolean {
-  if (!["draft", "internal_review", "ready_to_send"].includes(status)) return true;
+  if (!isPreSendSheetStatus(status)) return true;
   return !client || weekLifecycle(client, weekStart).canProduce;
 }
 

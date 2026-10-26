@@ -82,7 +82,17 @@ export async function sendEmail(message: EmailMessage): Promise<EmailOutcome> {
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
       console.error("[resend] envoi refusé", response.status, detail.slice(0, 300));
-      return { sent: false, reason: "rejected", detail: `HTTP ${response.status}` };
+      /*
+       * 4xx : Resend a refusé le message, rien n'est parti. 5xx : l'issue est
+       * inconnue — le message a pu être accepté avant l'erreur — et se traite
+       * comme une coupure réseau, pour ne jamais renvoyer un doublon. Même
+       * règle que l'envoi groupé, ci-dessous.
+       */
+      return {
+        sent: false,
+        reason: response.status >= 500 ? "error" : "rejected",
+        detail: `HTTP ${response.status}`,
+      };
     }
 
     const payload = (await response.json()) as { id?: string };
