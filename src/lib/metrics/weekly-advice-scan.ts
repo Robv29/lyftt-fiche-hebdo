@@ -7,12 +7,10 @@ import { isServiceRequest, type TicketType } from "@/lib/domain/ticket-types";
 import type { MediaFormat, SheetStatus } from "@/lib/domain/types";
 import { captionSignatureFor } from "@/lib/domain/sheet-status";
 import {
-  ADVICE_AUDIENCES,
   adviceOpensAt,
   adviceWeek,
   weeklyAdvice,
   weeklyAdviceFacts,
-  type AdviceAudience,
   type AdviceClientRow,
   type AdviceItemRow,
   type WeeklyAdviceResult,
@@ -32,10 +30,10 @@ import { defaultMetricsSince, readAgencyMetrics } from "./agency-metrics";
  * lecture du score de l'agence, partagée par le tableau de bord et Indicateurs ;
  * en forker une seconde aurait donné deux notes à la même agence dès la
  * première règle corrigée d'un seul côté — ce qui est déjà arrivé dans cette
- * application. Elle est appelée deux fois, une par audience, parce que deux de
- * ses neuf mesures sont réservées à la direction et que les poids se
- * redistribuent sans elles : la note de l'équipe n'est pas celle de la
- * direction, et stocker une seule des deux mentirait à l'autre.
+ * application. Elle est appelée **une** fois, en `isAdmin`, parce que le
+ * diagnostic est désormais unique et complet : la note stockée doit être celle
+ * qui porte les deux mesures budgétaires, sans quoi les deux conseils tirés du
+ * budget annonceraient des points que la note affichée ne contient pas.
  */
 
 export interface WeeklyAdviceScan {
@@ -47,8 +45,8 @@ export interface WeeklyAdviceScan {
   opensAt: string;
   /** Fenêtre réellement analysée. */
   windowSince: string;
-  /** Un diagnostic par audience. */
-  byAudience: Record<AdviceAudience, WeeklyAdviceResult>;
+  /** Le diagnostic de la semaine. Un seul, complet, pour toute l'équipe. */
+  advice: WeeklyAdviceResult;
 }
 
 /** Une fiche et ses publications, telles que la requête les ramène. */
@@ -144,8 +142,7 @@ export async function scanWeeklyAdvice(
    * mémoire.
    */
   const [
-    directionMetrics,
-    teamMetrics,
+    metrics,
     clientRows,
     sentSheets,
     approvedSheets,
@@ -160,7 +157,6 @@ export async function scanWeeklyAdvice(
     unclassifiedShootings,
   ] = await Promise.all([
     readAgencyMetrics(supabase, { since: windowSince, isAdmin: true, withSatisfactionLogos: false }),
-    readAgencyMetrics(supabase, { since: windowSince, isAdmin: false, withSatisfactionLogos: false }),
     unwrap(supabase.from("clients").select(`id, ${CLIENT_FORMULA_COLUMNS}, is_active`).eq("is_active", true)),
     unwrap(supabase.from("weekly_sheets").select(SHEET_FIELDS).gte("sent_to_client_at", sinceTs)),
     unwrap(supabase.from("weekly_sheets").select(SHEET_FIELDS).gte("approved_at", sinceTs)),
@@ -285,23 +281,25 @@ export async function scanWeeklyAdvice(
   };
 
   /*
-   * Ce que chaque audience voit : sa note, ses écarts, et — pour la direction
-   * seule — les deux comptes tirés du budget. L'audience `equipe` reçoit des
-   * listes vides, si bien que ses deux règles budgétaires ne se déclenchent
-   * jamais : le filtre n'est pas seulement à l'affichage, il est dans la
-   * donnée stockée.
+   * Le diagnostic complet, et la note qui lui correspond.
+   *
+   * Les deux comptes tirés du budget entrent dans les faits, et les mesures
+   * budgétaires entrent dans la note : ce sont les deux faces de la même
+   * décision. Les servir sans elles rendrait les pastilles « +n pts » fausses ;
+   * garder la note sans eux cacherait deux écarts que la note reproche.
+   *
+   * Ce qui est stocké reste des comptes et des identifiants. Aucune colonne de
+   * prix n'est lue par une règle, et aucun nom de dossier n'entre dans une
+   * phrase : la résolution des noms est faite plus tard, sous la RLS de celui
+   * qui lit.
    */
-  const byAudience = Object.fromEntries(ADVICE_AUDIENCES.map((audience) => {
-    const metrics = audience === "direction" ? directionMetrics : teamMetrics;
-    const facts = weeklyAdviceFacts({
-      ...shared,
-      health: metrics.health,
-      actions: metrics.healthActions,
-      unclassifiedShootings: audience === "direction" ? unclassifiedShootings : [],
-      budgetIssueClientIds: audience === "direction" ? metrics.budgetIssueClientIds : [],
-    });
-    return [audience, weeklyAdvice(facts, audience)] as const;
-  })) as Record<AdviceAudience, WeeklyAdviceResult>;
+  const facts = weeklyAdviceFacts({
+    ...shared,
+    health: metrics.health,
+    actions: metrics.healthActions,
+    unclassifiedShootings,
+    budgetIssueClientIds: metrics.budgetIssueClientIds,
+  });
 
   return {
     isoYear: week.isoYear,
@@ -309,7 +307,7 @@ export async function scanWeeklyAdvice(
     weekStart: week.weekStart,
     opensAt: adviceOpensAt(week.weekStart).toISOString(),
     windowSince,
-    byAudience,
+    advice: weeklyAdvice(facts),
   };
 }
 

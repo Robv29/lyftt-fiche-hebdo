@@ -16,11 +16,12 @@ import { ALERT_HOUR } from "./weekly-sheet-alert";
  * semaine réclame, et ce qu'il faut changer aux textes et aux visuels pour que
  * le client demande moins de corrections.
  *
- * Deux moments, un seul calcul. Le lundi à 10 h, la tâche planifiée lit la
- * production et écrit une ligne par semaine ; à 14 h 30, la pop-up ouvre cette
- * ligne. Rien n'est recalculé entre les deux : ce que l'équipe lit l'après-midi
- * est exactement ce qui a été mesuré le matin, et deux personnes ne peuvent pas
- * lire deux diagnostics différents de la même semaine.
+ * Deux moments, un seul calcul, une seule ligne. Le lundi à 10 h, la tâche
+ * planifiée lit la production et écrit la ligne de la semaine ; à 14 h 30, la
+ * pop-up ouvre cette ligne, la même pour tout le monde. Rien n'est recalculé
+ * entre les deux : ce que l'équipe lit l'après-midi est exactement ce qui a été
+ * mesuré le matin, et deux personnes ne peuvent pas lire deux diagnostics
+ * différents de la même semaine.
  *
  * **Tout ce qui se décide vit dans ce fichier** — les heures, le plafond de
  * conseils, chaque seuil et chaque phrase. C'est ce qui rend vraie la promesse
@@ -106,27 +107,38 @@ export function adviceOpensAt(weekStart: string): Date {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Les deux audiences
+// 2. Une seule audience
 // ---------------------------------------------------------------------------
 
 /**
- * À qui s'adresse une ligne de diagnostic.
+ * À qui s'adresse la ligne de diagnostic : toute l'équipe interne.
  *
- * Le score n'est pas un nombre unique : deux de ses neuf mesures — dossiers
- * budget et shootings catégorisés — se calculent sur `client_budget_lines`,
- * table ouverte à la seule direction. Pour tout autre rôle elles valent `null`,
- * les poids se redistribuent (`healthScore`) et la note change. Une seule ligne
- * par semaine devrait donc soit mentir à l'un des deux publics, soit révéler à
- * l'autre un conseil budgétaire qu'il ne peut pas suivre.
+ * Il y a eu deux audiences, « equipe » et « direction ». Deux des neuf mesures
+ * du score — dossiers budget complets, shootings catégorisés — se calculent sur
+ * `client_budget_lines`, table ouverte à la seule direction : sans elles les
+ * poids se redistribuent (`healthScore`) et la note change — 81 pour l'équipe
+ * contre 78 pour la direction, sur les données du jour. Deux conseils ne
+ * partaient donc qu'à cette dernière. Le propriétaire a tranché l'inverse : **un seul diagnostic, le
+ * complet, pour tout le monde**, et donc la note qui va avec — celle que les
+ * conseils affichés peuvent effectivement faire bouger.
  *
- * D'où deux lignes par semaine, et la même note qu'affiche déjà le tableau de
- * bord de chacun. Le partage est au niveau de la ligne et non de la colonne :
- * tous les comptes de l'application sont un seul rôle Postgres,
- * `authenticated`, donc un `grant` par colonne n'y changerait rien.
+ * Ce qui est partagé, c'est le **conseil**, jamais la donnée. Les deux conseils
+ * budgétaires ne portent que des comptes — « n shootings tournés attendent leur
+ * classement », « n des m dossiers gérés sont en défaut sur leur fiche
+ * budget » — et des identifiants de dossiers résolus à l'affichage sous RLS.
+ * Aucun montant ne traverse : aucune règle ne lit `unit_price_cents`,
+ * `budget_cents` ni aucune autre colonne de prix, et le test « ne cite aucun
+ * montant » tient la phrase. Les **droits** ne bougent pas davantage : classer
+ * un shooting et ouvrir une fiche budget restent à la direction, le conseil dit
+ * seulement où le trou se trouve.
+ *
+ * La colonne `audience` survit avec cette unique valeur. Elle porte la moitié
+ * de la clé d'unicité `(iso_year, iso_week, audience)`, sur laquelle reposent la
+ * réservation du lundi et les deux écritures `onConflict` : la retirer aurait
+ * demandé de refaire l'index et de toucher les deux écritures pour ne rien
+ * gagner.
  */
-export type AdviceAudience = "equipe" | "direction";
-
-export const ADVICE_AUDIENCES: readonly AdviceAudience[] = ["equipe", "direction"];
+export const WEEKLY_ADVICE_AUDIENCE = "agence";
 
 // ---------------------------------------------------------------------------
 // 3. Ce que le diagnostic sait de la production
@@ -251,7 +263,7 @@ export interface WeeklyAdviceFacts {
   trackingReportsToFill: number;
   openServiceRequests: number;
 
-  // -- Direction seule -------------------------------------------------------
+  // -- Tirés du budget : des comptes, jamais un euro -------------------------
   /** Shootings tournés et non tranchés, encore classables. Sans montant. */
   unclassifiedShootings: readonly ShootingToClassify[];
   /** Dossiers budget en alerte. Un compte, jamais un euro. */
@@ -286,7 +298,6 @@ export const ADVICE_NOTHING_TO_SAY =
 
 export interface WeeklyAdviceItem {
   key: string;
-  audience: AdviceAudience;
   /** La phrase qui porte le chiffre. Jamais de nom de dossier dedans. */
   statement: string;
   /** Le seul geste à faire. Un, pas trois. */
@@ -356,7 +367,6 @@ interface AdviceFinding {
 
 interface AdviceRule {
   key: string;
-  audience: AdviceAudience;
   /** Où le chiffre se vérifie. Affiché en petit sous le conseil. */
   source: string;
   /**
@@ -419,7 +429,6 @@ export const ADVICE_RULES: readonly AdviceRule[] = [
   // -- Les écarts du score ---------------------------------------------------
   {
     key: "fiches-jamais-validees",
-    audience: "equipe",
     source: "Score · Validées sans correction · weekly_sheets.status",
     /*
      * Le plus gros morceau de l'écart, et il était mal nommé.
@@ -451,7 +460,6 @@ export const ADVICE_RULES: readonly AdviceRule[] = [
   },
   {
     key: "fiches-avec-correction",
-    audience: "equipe",
     source: "Score · Validées sans correction · client_tickets",
     measure: (facts) => {
       const tally = facts.approvedAfterCorrection;
@@ -472,7 +480,6 @@ export const ADVICE_RULES: readonly AdviceRule[] = [
   },
   {
     key: "fiches-en-retard",
-    audience: "equipe",
     source: "Score · Fiches envoyées avant l'échéance · weekly_sheets",
     /*
      * Deux chiffres pour un seul geste : l'échéance de validation manquée, et
@@ -499,7 +506,6 @@ export const ADVICE_RULES: readonly AdviceRule[] = [
   },
   {
     key: "commandes-internes",
-    audience: "equipe",
     source: "Score · Commandes internes dans les temps · production_requests",
     measure: (facts) => {
       const overdue = facts.overdueRequests;
@@ -523,7 +529,6 @@ export const ADVICE_RULES: readonly AdviceRule[] = [
   },
   {
     key: "retours-hors-delai",
-    audience: "equipe",
     source: `Score · Retours dans le délai de ${TICKET_SLA_HOURS} h ouvrées · ticket-sla`,
     /*
      * Le libellé dit le vrai seuil, lu dans `TICKET_SLA_HOURS`.
@@ -558,7 +563,6 @@ export const ADVICE_RULES: readonly AdviceRule[] = [
   // -- La semaine à venir ----------------------------------------------------
   {
     key: "semaine-sans-media",
-    audience: "equipe",
     source: "Semaine à venir · weekly_sheet_items.media_asset_id",
     measure: (facts) => {
       if (facts.nextWeekItemsWithoutMedia === 0) return null;
@@ -575,7 +579,6 @@ export const ADVICE_RULES: readonly AdviceRule[] = [
   },
   {
     key: "semaine-legendes-signature",
-    audience: "equipe",
     source: "Semaine à venir · hasWrittenCaption / post_signature",
     measure: (facts) => {
       if (facts.nextWeekCaptionsSignatureOnly === 0) return null;
@@ -589,7 +592,6 @@ export const ADVICE_RULES: readonly AdviceRule[] = [
   },
   {
     key: "semaine-clients-sans-fiche",
-    audience: "equipe",
     source: "Semaine à venir · weekExpectation / sheetsToCreate",
     measure: (facts) => {
       const tally = facts.nextWeekMissingSheets;
@@ -605,7 +607,6 @@ export const ADVICE_RULES: readonly AdviceRule[] = [
   },
   {
     key: "semaine-en-cours-sans-media",
-    audience: "equipe",
     source: "Semaine en cours · weekly_sheet_items.media_asset_id",
     measure: (facts) => {
       if (facts.currentWeekItemsWithoutMedia === 0) return null;
@@ -619,7 +620,6 @@ export const ADVICE_RULES: readonly AdviceRule[] = [
   },
   {
     key: "comptes-rendus",
-    audience: "equipe",
     source: "Suivi mensuel · client_tracking_reports",
     measure: (facts) => facts.trackingReportsToFill === 0 ? null : {
       volume: facts.trackingReportsToFill,
@@ -630,7 +630,6 @@ export const ADVICE_RULES: readonly AdviceRule[] = [
   },
   {
     key: "demandes-ouvertes",
-    audience: "equipe",
     source: "Demandes hors publication · isServiceRequest",
     measure: (facts) => facts.openServiceRequests === 0 ? null : {
       volume: facts.openServiceRequests,
@@ -643,7 +642,6 @@ export const ADVICE_RULES: readonly AdviceRule[] = [
   // -- Textes et visuels, pour moins de retours -------------------------------
   {
     key: "legendes-parties-signature",
-    audience: "equipe",
     source: "Textes · weekly_sheet_items.caption sur fiches parties",
     /*
      * Le motif de retour le plus simple à supprimer : la publication est partie
@@ -665,7 +663,6 @@ export const ADVICE_RULES: readonly AdviceRule[] = [
   },
   {
     key: "hashtags-sans-liste",
-    audience: "equipe",
     source: "Textes · clients.notes → pinnedHashtags / tickets hashtags",
     measure: (facts) => {
       const tickets = facts.hashtagTickets;
@@ -686,7 +683,6 @@ export const ADVICE_RULES: readonly AdviceRule[] = [
   },
   {
     key: "retours-texte",
-    audience: "equipe",
     source: "Textes · client_tickets.ticket_type = text_*",
     measure: (facts) => {
       const tally = facts.textTickets;
@@ -704,10 +700,9 @@ export const ADVICE_RULES: readonly AdviceRule[] = [
     },
   },
 
-  // -- Direction seule : deux comptes tirés du budget, sans un euro -----------
+  // -- Tirés du budget : deux comptes, et pas un euro ------------------------
   {
     key: "shootings-a-classer",
-    audience: "direction",
     source: "Score · Shootings catégorisés · isShootingUnclassified",
     /*
      * Deux chemins répondaient à « ce shooting est-il encore classable ? » : le
@@ -724,7 +719,12 @@ export const ADVICE_RULES: readonly AdviceRule[] = [
         volume: shootings.length,
         statement: `${count(shootings.length, "shooting tourné", "shootings tournés")} `
           + `${agree(shootings.length, "attend son classement", "attendent leur classement")}.`,
-        action: "Onglet Shootings : dites pour chacun s'il était compris au forfait ou vendu en plus.",
+        /*
+         * Troisième personne : ce conseil part à toute l'équipe, mais classer
+         * un shooting est une décision de facturation que la RLS réserve à la
+         * direction. Un impératif enverrait les autres sur un écran fermé.
+         */
+        action: "À classer par la direction : pour chaque shooting, compris au forfait ou vendu en plus.",
         clients: tallyOfShootings(shootings),
         gainFrom: "shootings",
       };
@@ -732,7 +732,6 @@ export const ADVICE_RULES: readonly AdviceRule[] = [
   },
   {
     key: "budgets-en-defaut",
-    audience: "direction",
     source: "Score · Dossiers budget complets · budgetSummary",
     measure: (facts) => {
       const tally = facts.budgetClientsWithIssue;
@@ -741,7 +740,8 @@ export const ADVICE_RULES: readonly AdviceRule[] = [
         volume: tally.total,
         statement: `${tally.total} des ${facts.managedClients} dossiers gérés sont en défaut sur leur fiche budget `
           + "— enveloppe dépassée, rythme intenable ou dates manquantes.",
-        action: "Reprenez ces fiches budget : date de contrat, enveloppe, rythme.",
+        // Même raison : la fiche budget n'est lisible que de la direction.
+        action: "Fiches budget à reprendre par la direction : date de contrat, enveloppe, rythme.",
         clients: tally,
         gainFrom: "budgets",
       };
@@ -789,16 +789,16 @@ function gainOf(facts: WeeklyAdviceFacts, key: string | undefined): number | nul
 }
 
 /**
- * Le diagnostic d'une audience : sa note, et au plus cinq conseils.
+ * Le diagnostic de la semaine : la note, et au plus cinq conseils.
  *
- * L'audience `direction` reçoit les conseils de l'équipe **et** les deux
- * conseils budgétaires, parce que c'est elle qui tranche ; l'audience `equipe`
- * ne voit jamais les seconds, et sa note est celle que `healthScore` produit
- * sans les mesures budgétaires.
+ * Toute la table des règles, sans filtre. La note rendue est celle de
+ * `facts.health`, et l'appelant doit la calculer **avec** les mesures
+ * budgétaires : c'est la seule façon qu'une pastille « +4 pts » posée sur un
+ * conseil budgétaire dise vrai. Un gain annoncé sur une mesure absente de la
+ * note affichée serait un mensonge arithmétique, pas un arrondi.
  */
-export function weeklyAdvice(facts: WeeklyAdviceFacts, audience: AdviceAudience): WeeklyAdviceResult {
+export function weeklyAdvice(facts: WeeklyAdviceFacts): WeeklyAdviceResult {
   const ranked = ADVICE_RULES
-    .filter((rule) => audience === "direction" || rule.audience === "equipe")
     .flatMap((rule, index) => {
       const finding = rule.measure(facts);
       if (!finding) return [];
@@ -806,7 +806,6 @@ export function weeklyAdvice(facts: WeeklyAdviceFacts, audience: AdviceAudience)
       return [{
         item: {
           key: rule.key,
-          audience: rule.audience,
           statement: finding.statement,
           action: finding.action,
           volume: finding.volume,

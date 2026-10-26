@@ -53,10 +53,17 @@ export function WeeklyAdviceBody({ advice }: { advice: WeeklyAdviceView }) {
           Les gains ne sont pas additionnés — les mesures déjà au-dessus de
           l'objectif ne sont pas écrêtées, et la somme promettrait plus que
           l'écart réel.
+
+          « de l'agence », et le mot compte. C'est la note complète, les deux
+          mesures budgétaires comprises, parce que ce sont elles que deux des
+          conseils de la table font bouger. L'encart « Santé de l'agence » du
+          tableau de bord, lui, reste borné à ce que chacun peut mesurer : un
+          rôle sans accès au budget y lit quelques points de plus — 81 contre 78
+          aujourd'hui — et sans ce mot il croirait à une erreur de calcul.
         */}
         {advice.score === null
           ? "Pas encore assez de données pour noter la semaine."
-          : `Note ${advice.score} / ${advice.target} visé`}
+          : `Note de l’agence ${advice.score} / ${advice.target} visé`}
         {" · "}
         mesuré depuis le {dayLabel(advice.windowSince)}
       </p>

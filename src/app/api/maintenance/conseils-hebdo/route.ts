@@ -3,6 +3,7 @@ import {
   ADVICE_OPEN_HOUR,
   ADVICE_OPEN_MINUTE,
   ADVICE_SCAN_HOUR,
+  WEEKLY_ADVICE_AUDIENCE,
   isAdviceScanWindow,
 } from "@/lib/domain/weekly-advice";
 import { cronAuthorizationError } from "@/lib/internal/cron-auth";
@@ -14,8 +15,9 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
  *
  * Lit la production réelle, calcule pourquoi la note n'est pas au maximum, ce
  * que la semaine à venir réclame et ce qu'il faut changer aux textes, puis
- * écrit une ligne par audience pour la semaine en cours. La pop-up de 14 h 30
- * ne fait que lire cette ligne.
+ * écrit **une** ligne pour la semaine en cours — le diagnostic complet, celui
+ * que toute l'équipe interne lit. La pop-up de 14 h 30 ne fait que lire cette
+ * ligne.
  *
  * ## Pourquoi une tâche planifiée, et non un calcul à la première ouverture
  *
@@ -164,30 +166,28 @@ async function handle(request: NextRequest) {
     lundi: scan.weekStart,
     ouverture: scan.opensAt,
     fenetre_depuis: scan.windowSince,
-    audiences: Object.fromEntries(Object.entries(scan.byAudience).map(([audience, result]) => [audience, {
-      note: result.score,
-      objectif: result.target,
-      rien_a_signaler: result.nothingToSay,
-      conseils: result.advices,
-      mesures: result.sample,
-    }])),
+    note: scan.advice.score,
+    objectif: scan.advice.target,
+    rien_a_signaler: scan.advice.nothingToSay,
+    conseils: scan.advice.advices,
+    mesures: scan.advice.sample,
   };
 
   if (preview.on) return NextResponse.json({ apercu: true, ...rendered });
 
-  const rows = Object.entries(scan.byAudience).map(([audience, result]) => ({
+  const row = {
     iso_year: scan.isoYear,
     iso_week: scan.isoWeek,
     week_start: scan.weekStart,
-    audience,
+    audience: WEEKLY_ADVICE_AUDIENCE,
     opens_at: scan.opensAt,
     window_since: scan.windowSince,
-    score: result.score,
-    target: result.target,
-    advices: result.advices,
-    sample: result.sample,
+    score: scan.advice.score,
+    target: scan.advice.target,
+    advices: scan.advice.advices,
+    sample: scan.advice.sample,
     computed_at: now.toISOString(),
-  }));
+  };
 
   /*
    * Réservation par l'unicité, et surtout : **pas d'écrasement**.
@@ -204,10 +204,10 @@ async function handle(request: NextRequest) {
    * n'achèterait rien et laisserait une ligne vide derrière une panne.
    */
   const { data: written, error } = recompute.on
-    ? await admin.from("weekly_advice").upsert(rows, { onConflict: "iso_year,iso_week,audience" }).select("audience")
+    ? await admin.from("weekly_advice").upsert([row], { onConflict: "iso_year,iso_week,audience" }).select("iso_week")
     : await admin.from("weekly_advice")
-        .upsert(rows, { onConflict: "iso_year,iso_week,audience", ignoreDuplicates: true })
-        .select("audience");
+        .upsert([row], { onConflict: "iso_year,iso_week,audience", ignoreDuplicates: true })
+        .select("iso_week");
 
   if (error) {
     console.error("[conseils hebdo] écriture impossible", error.message);
@@ -223,7 +223,7 @@ async function handle(request: NextRequest) {
 
   return NextResponse.json({
     ...rendered,
-    ecrit: (written ?? []).map((row) => row.audience),
+    ecrit: true,
     /*
      * Quand la pop-up s'ouvrira, dit dans la réponse.
      *

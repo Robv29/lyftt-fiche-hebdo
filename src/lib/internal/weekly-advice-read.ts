@@ -15,11 +15,11 @@ export type { WeeklyAdviceEntry, WeeklyAdviceView };
  * Lecture des conseils de la semaine, pour celui qui regarde.
  *
  * Soumise à RLS, et c'est tout le point. La politique de `weekly_advice`
- * partage les lignes par audience : un `super_admin` en voit deux, un
- * responsable de production ou un community manager une seule, un commercial
- * aucune. Il n'y a donc **aucun contrôle de rôle à écrire ici** — la base
- * répond déjà ce que la personne a le droit de lire, et une seconde barrière
- * recopiée dans le code aurait fini par diverger de la première.
+ * ouvre la ligne de la semaine aux trois rôles qui produisent — super_admin,
+ * responsable de production, community manager — et à eux seuls : un commercial
+ * n'en voit aucune. Il n'y a donc **aucun contrôle de rôle à écrire ici** — la
+ * base répond déjà ce que la personne a le droit de lire, et une seconde
+ * barrière recopiée dans le code aurait fini par diverger de la première.
  *
  * Les noms de clients sont résolus ici, et nulle part ailleurs : la ligne en
  * base ne porte que des identifiants, parce qu'un community manager ne doit pas
@@ -29,7 +29,7 @@ export type { WeeklyAdviceEntry, WeeklyAdviceView };
  */
 
 /** Une ligne de `weekly_advice`, telle que la requête la ramène. */
-const ADVICE_FIELDS = "iso_year, iso_week, week_start, audience, opens_at, window_since, score, target, advices";
+const ADVICE_FIELDS = "iso_year, iso_week, week_start, opens_at, window_since, score, target, advices";
 
 /**
  * Les conseils d'un conseil : objets, et rien de plus.
@@ -116,11 +116,22 @@ async function read(
   if (rows.length === 0) return null;
 
   /*
-   * Un `super_admin` reçoit les deux lignes de la semaine : la sienne est celle
-   * de la direction, qui porte deux conseils de plus. Les autres rôles n'en
-   * reçoivent qu'une, et le choix ne se pose pas.
+   * Une ligne par semaine, la même pour tout le monde : c'est l'unicité de
+   * `(iso_year, iso_week, audience)` avec une audience unique qui le garantit.
+   *
+   * Le tri par nombre de conseils ne sert qu'à la fenêtre où du code neuf tourne
+   * devant une base qui n'a pas encore reçu la migration de réconciliation :
+   * deux lignes y subsistent, l'ancienne « equipe » et l'ancienne
+   * « direction ». On sert alors celle qui porte le plus de conseils, donc la
+   * complète dès que les deux conseils tirés du budget pèsent assez pour entrer
+   * dans les cinq. À égalité — ce qui est le cas aujourd'hui, où ils pèsent 3 et
+   * 2 contre 36 pour le cinquième — les deux lignes portent les mêmes phrases et
+   * seule la note diffère de trois points ; chacune est juste pour les règles
+   * qu'elle porte. Après la migration, il n'y a plus qu'une ligne et ce tri ne
+   * décide plus rien.
    */
-  const row = rows.find((candidate) => candidate.audience === "direction") ?? rows[0];
+  const row = [...rows]
+    .sort((first, second) => asAdviceItems(second.advices).length - asAdviceItems(first.advices).length)[0];
   const seen = Boolean(viewRead.data);
   const items = asAdviceItems(row.advices);
 

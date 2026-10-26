@@ -192,7 +192,7 @@ describe("la semaine à venir", () => {
     expect(facts.nextWeekItemsWithoutMedia).toBe(2);
     expect(facts.nextWeekDrafts).toBe(1);
 
-    const advice = weeklyAdvice(facts, "equipe").advices.find((entry) => entry.key === "semaine-sans-media");
+    const advice = weeklyAdvice(facts).advices.find((entry) => entry.key === "semaine-sans-media");
     expect(advice?.statement).toBe(
       "Semaine 45 : 2 des 3 contenus n'ont pas de média, et 1 fiche est encore en brouillon.",
     );
@@ -265,7 +265,7 @@ describe("légendes réduites au bloc signature", () => {
         item("c2", { caption: signature, signature }),
       ],
     }));
-    const advice = weeklyAdvice(facts, "equipe").advices
+    const advice = weeklyAdvice(facts).advices
       .find((entry) => entry.key === "legendes-parties-signature");
     expect(advice?.statement).toBe(
       "3 publications sont parties chez le client avec le bloc signature pour seule légende.",
@@ -309,7 +309,7 @@ describe("écarts du score", () => {
     // Validée le 7, échéance le 6 : en retard.
     expect(facts.approvedLate).toBe(1);
 
-    const result = weeklyAdvice(facts, "equipe");
+    const result = weeklyAdvice(facts);
     const jamais = result.advices.find((entry) => entry.key === "fiches-jamais-validees");
     expect(jamais?.statement).toBe(
       "2 des 3 fiches envoyées n'ont jamais été validées, dont 1 attend un renvoi.",
@@ -332,7 +332,7 @@ describe("écarts du score", () => {
         open: true,
       }],
     }));
-    const advice = weeklyAdvice(facts, "equipe").advices.find((entry) => entry.key === "retours-hors-delai");
+    const advice = weeklyAdvice(facts).advices.find((entry) => entry.key === "retours-hors-delai");
     expect(advice?.statement).toContain(`${TICKET_SLA_HOURS} h ouvrées`);
     expect(advice?.statement).not.toContain("20 h");
   });
@@ -349,7 +349,7 @@ describe("écarts du score", () => {
     expect(facts.deliveredLateRequests).toBe(1);
     expect(facts.overdueRequests).toEqual([{ clientId: "c2", days: 14 }]);
 
-    const advice = weeklyAdvice(facts, "equipe").advices.find((entry) => entry.key === "commandes-internes");
+    const advice = weeklyAdvice(facts).advices.find((entry) => entry.key === "commandes-internes");
     expect(advice?.statement).toBe(
       "1 des 2 commandes internes livrées ont dépassé leur date, et 1 est encore en retard — jusqu'à 14 jours.",
     );
@@ -404,14 +404,14 @@ describe("textes et visuels", () => {
 
   it("ne parle des hashtags que quand un retour l'explique", () => {
     const sansRetour = weeklyAdviceFacts(rows({ clients: [client("c1")] }));
-    expect(weeklyAdvice(sansRetour, "equipe").advices.map((entry) => entry.key))
+    expect(weeklyAdvice(sansRetour).advices.map((entry) => entry.key))
       .not.toContain("hashtags-sans-liste");
 
     const avecRetour = weeklyAdviceFacts(rows({
       clients: [client("c1")],
       tickets: [ticket("t1", "c1", "hashtags")],
     }));
-    const advice = weeklyAdvice(avecRetour, "equipe").advices
+    const advice = weeklyAdvice(avecRetour).advices
       .find((entry) => entry.key === "hashtags-sans-liste");
     expect(advice?.statement).toBe(
       "1 des 1 dossiers gérés n'ont pas de liste de hashtags validée, "
@@ -420,7 +420,7 @@ describe("textes et visuels", () => {
   });
 });
 
-describe("partage par audience", () => {
+describe("les deux conseils tirés du budget", () => {
   const withBudget = () => weeklyAdviceFacts(rows({
     clients: [client("c1")],
     unclassifiedShootings: [
@@ -430,23 +430,56 @@ describe("partage par audience", () => {
     budgetIssueClientIds: ["c1", "c2", "c3"],
   }));
 
-  it("réserve les deux conseils budgétaires à la direction", () => {
-    const keys = weeklyAdvice(withBudget(), "direction").advices.map((entry) => entry.key);
+  /*
+   * Ils partaient à la direction seule ; le propriétaire les a ouverts à toute
+   * l'équipe. Il n'y a donc plus rien à filtrer — ce qui reste à éprouver, c'est
+   * que le partage ne fait pas sortir un euro, puisque c'est la seule raison qui
+   * les tenait fermés.
+   */
+  it("part à tout le monde : un seul diagnostic, le complet", () => {
+    const keys = weeklyAdvice(withBudget()).advices.map((entry) => entry.key);
     expect(keys).toContain("shootings-a-classer");
     expect(keys).toContain("budgets-en-defaut");
   });
 
-  it("ne les sert jamais à l'équipe, même si les faits les portent", () => {
-    const keys = weeklyAdvice(withBudget(), "equipe").advices.map((entry) => entry.key);
-    expect(keys).not.toContain("shootings-a-classer");
-    expect(keys).not.toContain("budgets-en-defaut");
-  });
-
-  it("ne cite aucun montant dans les conseils budgétaires", () => {
-    for (const advice of weeklyAdvice(withBudget(), "direction").advices) {
+  it("ne cite aucun montant, nulle part dans la ligne stockée", () => {
+    for (const advice of weeklyAdvice(withBudget()).advices) {
       expect(advice.statement).not.toMatch(/€|euro|cent/i);
       expect(advice.action).not.toMatch(/€|euro|cent/i);
+      // Y compris dans ce qui est sérialisé : identifiants et comptes, rien d'autre.
+      expect(JSON.stringify(advice)).not.toMatch(/€|euro|cent|price|montant|amount/i);
     }
+  });
+
+  /*
+   * La note et les pastilles doivent parler de la même chose.
+   *
+   * weeklyAdvice rend la note de `facts.health` : c'est à l'appelant de la
+   * calculer avec les mesures budgétaires, et c'est ce que fait désormais le
+   * scan (une seule lecture, en `isAdmin`). Servir ces deux conseils sur une
+   * note qui ne contient pas leurs mesures afficherait « +n pts » sur un gain
+   * que la note ne peut pas enregistrer.
+   */
+  it("rend la note des faits, et des pastilles adossées aux mêmes mesures", () => {
+    const facts = withBudget();
+    const result = weeklyAdvice(facts);
+    expect(result.score).toBe(facts.health.score);
+    for (const key of ["shootings-a-classer", "budgets-en-defaut"]) {
+      const advice = result.advices.find((entry) => entry.key === key);
+      expect(advice?.gain, `pastille de ${key}`).not.toBeNull();
+      expect(advice!.gain!).toBeGreaterThan(0);
+    }
+  });
+
+  it("ne porte que des identifiants de dossiers, jamais un nom", () => {
+    const advice = weeklyAdvice(withBudget()).advices
+      .find((entry) => entry.key === "budgets-en-defaut");
+    expect(advice?.clients).toEqual([
+      { clientId: "c1", count: 1 },
+      { clientId: "c2", count: 1 },
+      { clientId: "c3", count: 1 },
+    ]);
+    expect(advice?.clientCount).toBe(3);
   });
 });
 
@@ -487,28 +520,28 @@ describe("qualité des conseils", () => {
   }
 
   it("n'en affiche jamais plus de cinq, triés par volume expliqué", () => {
-    const result = weeklyAdvice(loaded(), "equipe");
+    const result = weeklyAdvice(loaded());
     expect(result.advices).toHaveLength(WEEKLY_ADVICE_LIMIT);
     const volumes = result.advices.map((entry) => entry.volume);
     expect([...volumes].sort((a, b) => b - a)).toEqual(volumes);
   });
 
   it("porte un chiffre dans chaque phrase et un seul geste dans chaque action", () => {
-    for (const advice of weeklyAdvice(loaded(), "equipe").advices) {
+    for (const advice of weeklyAdvice(loaded()).advices) {
       expect(advice.statement).toMatch(/\d/);
       expect(advice.action.length).toBeGreaterThan(10);
     }
   });
 
   it("ne stocke jamais de nom de dossier, seulement des identifiants", () => {
-    for (const advice of weeklyAdvice(loaded(), "direction").advices) {
+    for (const advice of weeklyAdvice(loaded()).advices) {
       expect(advice.clients.every((entry) => typeof entry.clientId === "string")).toBe(true);
       expect(JSON.stringify(advice.clients)).not.toContain("name");
     }
   });
 
   it("ne nomme que les premiers dossiers, mais annonce le total", () => {
-    const advice = weeklyAdvice(loaded(), "equipe").advices
+    const advice = weeklyAdvice(loaded()).advices
       .find((entry) => entry.key === "fiches-jamais-validees");
     expect(advice?.clients.length).toBeLessThanOrEqual(ADVICE_CLIENT_NAMES_LIMIT);
     expect(advice?.clientCount).toBe(5);
@@ -523,13 +556,13 @@ describe("qualité des conseils", () => {
       shootingsCategorised: 100,
       ticketsOnTime: 100,
     });
-    const result = weeklyAdvice(weeklyAdviceFacts(rows({ health: score, actions })), "direction");
+    const result = weeklyAdvice(weeklyAdviceFacts(rows({ health: score, actions })));
     expect(result.advices).toHaveLength(0);
     expect(result.nothingToSay).toBe(true);
   });
 
   it("garde les n de la semaine, que la purge effacera des lignes sources", () => {
-    const result = weeklyAdvice(loaded(), "equipe");
+    const result = weeklyAdvice(loaded());
     expect(result.sample.fiches_envoyees).toBe(12);
     expect(result.sample.fenetre_depuis).toBe("2026-07-28");
     expect(result.sample.semaine_preparee).toBe(45);
@@ -561,7 +594,7 @@ describe("table des règles", () => {
       trackingReportsToFill: 2,
       openServiceRequests: 3,
     }));
-    const advices = weeklyAdvice(facts, "equipe").advices;
+    const advices = weeklyAdvice(facts).advices;
     const phrase = (key: string) => {
       const entry = advices.find((candidate) => candidate.key === key);
       return `${entry?.statement ?? ""} ${entry?.action ?? ""}`;
@@ -583,10 +616,9 @@ describe("table des règles", () => {
     expect(new Set(keys).size).toBe(keys.length);
   });
 
-  it("déclare une audience connue pour chaque règle", () => {
+  it("dit où chaque chiffre se vérifie", () => {
     for (const rule of ADVICE_RULES) {
-      expect(["equipe", "direction"]).toContain(rule.audience);
-      expect(rule.source.length).toBeGreaterThan(0);
+      expect(rule.source.length, `règle ${rule.key}`).toBeGreaterThan(0);
     }
   });
 

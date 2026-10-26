@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient, getCurrentProfile } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { scanWeeklyAdvice } from "@/lib/metrics/weekly-advice-scan";
-import { ADVICE_AUDIENCES } from "@/lib/domain/weekly-advice";
+import { WEEKLY_ADVICE_AUDIENCE } from "@/lib/domain/weekly-advice";
 
 /**
  * « J'ai vu les conseils de cette semaine. »
@@ -97,26 +97,23 @@ export async function computeWeeklyAdviceNow(): Promise<{ ok: boolean; message: 
     return { ok: false, message: "Calcul impossible : une lecture a échoué. Réessayez dans un instant." };
   }
 
-  const rows = ADVICE_AUDIENCES.map((audience) => {
-    const result = scan.byAudience[audience];
-    return {
-      iso_year: scan.isoYear,
-      iso_week: scan.isoWeek,
-      week_start: scan.weekStart,
-      audience,
-      opens_at: scan.opensAt,
-      window_since: scan.windowSince,
-      score: result.score,
-      target: result.target,
-      advices: result.advices,
-      sample: result.sample,
-    };
-  });
+  const row = {
+    iso_year: scan.isoYear,
+    iso_week: scan.isoWeek,
+    week_start: scan.weekStart,
+    audience: WEEKLY_ADVICE_AUDIENCE,
+    opens_at: scan.opensAt,
+    window_since: scan.windowSince,
+    score: scan.advice.score,
+    target: scan.advice.target,
+    advices: scan.advice.advices,
+    sample: scan.advice.sample,
+  };
 
   const { data: written, error } = await admin
     .from("weekly_advice")
-    .upsert(rows, { onConflict: "iso_year,iso_week,audience", ignoreDuplicates: true })
-    .select("audience");
+    .upsert([row], { onConflict: "iso_year,iso_week,audience", ignoreDuplicates: true })
+    .select("iso_week");
 
   if (error) {
     console.error("[conseils hebdo] écriture impossible", error.message);

@@ -184,10 +184,10 @@ export default async function InternalLayout({
    * Deux lectures d'une ligne chacune, moins coûteuses que n'importe laquelle
    * des pastilles ci-dessus : la semaine ISO tape l'index d'unicité de
    * `weekly_advice`, et le « déjà vu » tape une clé primaire. Le périmètre est
-   * tenu par la RLS, qui partage les lignes par audience ; le filtre de rôle
-   * ici n'évite qu'un aller-retour inutile pour les comptes que la politique
-   * laisserait de toute façon les mains vides — commercial, graphiste,
-   * monteur.
+   * tenu par la RLS, qui ouvre la ligne de la semaine aux trois rôles qui
+   * produisent ; le filtre de rôle ici n'évite qu'un aller-retour inutile pour
+   * les comptes que la politique laisserait de toute façon les mains vides —
+   * commercial, graphiste, monteur.
    *
    * Même durcissement que les pastilles, et pour la même raison : la coquille
    * est rendue par tous les écrans internes. Une pop-up muette est un
