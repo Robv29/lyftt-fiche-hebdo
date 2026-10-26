@@ -54,13 +54,27 @@ export default async function NewSheetPage({
 
       <SheetBuilder
         clients={clients.map((c) => {
-          let settings: { defaultNetworks?: string[]; publicationWeekdays?: number[]; monthlyCadence?: { photo?: number; video?: number; story?: number; visual?: number }; recommendedHashtags?: string[] } = {};
+          let settings: { defaultNetworks?: string[]; publicationWeekdays?: number[]; monthlyCadence?: { photo?: number; video?: number; story?: number; visual?: number }; recommendedHashtags?: string[]; pinnedHashtags?: string[] } = {};
           try { settings = typeof c.notes === "string" ? JSON.parse(c.notes) : {}; } catch { settings = {}; }
           return {
             id: c.id,
             name: c.name,
             defaultNetworks: settings.defaultNetworks ?? ["instagram", "facebook"],
-            defaultHashtags: settings.recommendedHashtags ?? [],
+            /*
+             * Liste retenue depuis une correction client, quand il y en a une :
+             * c'est elle qui fait tenir « les mêmes que d'habitude » d'une
+             * semaine sur l'autre. À défaut, la bibliothèque du client.
+             */
+            defaultHashtags: settings.pinnedHashtags?.length
+              ? settings.pinnedHashtags
+              : settings.recommendedHashtags ?? [],
+            /*
+             * Seule cette branche sait d'où vient la liste : une fois les deux
+             * réunies dans `defaultHashtags`, le constructeur de fiche ne peut
+             * plus distinguer une liste validée d'une bibliothèque, et
+             * tronquait la première à huit hashtags.
+             */
+            hashtagsPinned: Boolean(settings.pinnedHashtags?.length),
             publicationWeekdays: settings.publicationWeekdays ?? [],
             monthlyCadence: settings.monthlyCadence ?? {},
             postSignature: c.post_signature ?? "",

@@ -42,6 +42,8 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
     brandProfile?: { clientType?: string; activity?: string; website?: string; city?: string; postalCode?: string; audience?: string; tone?: string; keywords?: string };
     customHashtags?: string[];
     recommendedHashtags?: string[];
+    /** Liste retenue depuis une correction client : elle sert de référence aux fiches. */
+    pinnedHashtags?: string[];
     publicationWeekdays?: number[];
     monthlyCadence?: { photo?: number; video?: number; story?: number; visual?: number };
     shootingPlan?: unknown;
@@ -59,7 +61,15 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
     ? settings.customHashtags
     : (settings.recommendedHashtags ?? []).slice(-5);
   const recentTags = [...new Set(sheets.flatMap(s=>s.weekly_sheet_items.flatMap(i=>i.hashtags)))];
-  const tags = (settings.recommendedHashtags?.length ? settings.recommendedHashtags : recentTags).slice(0,20);
+  /*
+   * Hashtags retenus après une correction du client : ce sont eux que le
+   * constructeur de fiche utilise désormais, donc ce sont eux qu'il faut
+   * montrer ici — l'encadrement doit voir ce qu'un community manager a fixé.
+   */
+  const pinnedTags = settings.pinnedHashtags ?? [];
+  const tags = (pinnedTags.length
+    ? pinnedTags
+    : settings.recommendedHashtags?.length ? settings.recommendedHashtags : recentTags).slice(0,20);
   const cadence = {
     photo:Number(settings.monthlyCadence?.photo ?? 0),
     video:Number(settings.monthlyCadence?.video ?? 0),
@@ -172,7 +182,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
           client n'a pas de fiches, ce qui est faux — on la retire.
         */}
         {!readOnly && !oneShot && <section className="card overflow-hidden"><div className="flex items-center justify-between border-b px-4 py-4 sm:px-6 sm:py-5"><div><p className="eyebrow">Historique</p><h2 className="mt-1 font-semibold">Fiches hebdomadaires</h2></div><Link href="/fiches" className="mobile-inline-btn min-h-11 shrink-0 px-2 text-xs font-semibold text-[#1468ff]">Tout voir</Link></div>{sheets.length ? <ul className="divide-y">{sheets.slice(0,6).map(s=><li key={s.id}><Link href={`/fiches/${s.id}`} className="grid grid-cols-[40px_1fr_auto] items-center gap-3 px-4 py-4 hover:bg-canvas sm:px-6"><span className="grid h-10 w-10 place-items-center rounded-xl bg-canvas text-xs font-bold">S{s.iso_week}</span><div className="min-w-0"><strong className="text-sm">Semaine {s.iso_week}</strong><p className="text-xs text-ink-faint">{s.weekly_sheet_items.length} contenu{s.weekly_sheet_items.length>1?"s":""}</p><span className="mt-1 inline-flex max-w-full rounded-full bg-canvas px-2 py-0.5 text-[10px] text-ink-soft sm:hidden">{sheetStatusLabel(s.status)}</span></div><span className="hidden items-center gap-2 sm:flex"><span className="badge bg-canvas text-ink-soft">{sheetStatusLabel(s.status)}</span><Icon name="arrow" className="h-4 w-4 text-ink-faint"/></span><Icon name="arrow" className="h-4 w-4 text-ink-faint sm:hidden"/></Link></li>)}</ul> : <p className="p-8 text-center text-sm text-ink-faint">Aucune fiche créée pour ce client.</p>}</section>}
-        {!oneShot && <section className="card p-6"><p className="eyebrow">Bibliothèque</p><h2 className="mt-1 font-semibold">Hashtags récents</h2>{tags.length ? <div className="mt-4 flex flex-wrap gap-2">{tags.map(t=><span key={t} className="rounded-lg bg-[#f0f3f7] px-2.5 py-1.5 text-xs text-ink-soft">{t}</span>)}</div> : <p className="mt-4 text-sm text-ink-faint">Aucun hashtag enregistré.</p>}</section>}
+        {!oneShot && <section className="card p-6"><p className="eyebrow">Bibliothèque</p><h2 className="mt-1 font-semibold">{pinnedTags.length ? "Hashtags retenus" : "Hashtags récents"}</h2>{pinnedTags.length ? <p className="mt-1 text-xs text-ink-faint">Liste fixée après une demande du client : les nouvelles fiches partent de celle-ci.</p> : null}{tags.length ? <div className="mt-4 flex flex-wrap gap-2">{tags.map(t=><span key={t} className="rounded-lg bg-[#f0f3f7] px-2.5 py-1.5 text-xs text-ink-soft">{t}</span>)}</div> : <p className="mt-4 text-sm text-ink-faint">Aucun hashtag enregistré.</p>}</section>}
       </div>
       <aside className="space-y-6">
         {!oneShot && <section className="card p-5"><p className="eyebrow">Validation</p><div className="mt-4 space-y-4 text-sm"><div className="flex gap-3"><Icon name="clock" className="mt-0.5 h-4 w-4 text-[#1468ff]"/><div><strong>Échéance client</strong><p className="text-ink-faint">Chaque {weekDays[client.validation_deadline_weekday-1]} à {String(client.validation_deadline_time).slice(0,5).replace(":","h")}</p></div></div><div className="flex gap-3"><Icon name="check" className="mt-0.5 h-4 w-4 text-[#1468ff]"/><div><strong>Mode de validation</strong><p className="text-ink-faint">{client.approval_policy === "tacit_allowed" ? "Validation tacite autorisée" : "Validation explicite requise"}</p></div></div></div></section>}

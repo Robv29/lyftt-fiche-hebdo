@@ -10,8 +10,15 @@ import { generateReviewToken } from "@/lib/domain/tokens";
 import { canTransition, contributorAssignment } from "@/lib/domain/workflow";
 import { checkExportBeforeSend } from "@/lib/domain/edge-cases";
 import { normalizeHashtags, sanitizeText } from "@/lib/security/sanitize";
-import type { TicketStatus } from "@/lib/domain/types";
-import { isServiceRequest, type TicketType } from "@/lib/domain/ticket-types";
+import type { TicketPriority, TicketStatus } from "@/lib/domain/types";
+import {
+  getTicketTypeDefinition,
+  isRequalifiableType,
+  isServiceRequest,
+  type TicketType,
+} from "@/lib/domain/ticket-types";
+import { requiresProduction, routeTicket } from "@/lib/domain/routing";
+import { captionSignatureFor } from "@/lib/domain/sheet-status";
 import { whatsappLink } from "@/lib/domain/templates";
 import { sheetCompletion } from "@/lib/domain/planning";
 import {
@@ -40,6 +47,7 @@ async function requireProfile() {
   return profile;
 }
 
+
 // ---------------------------------------------------------------------------
 // §2 — Génération d'un lien de consultation
 // ---------------------------------------------------------------------------
@@ -54,6 +62,7 @@ export async function generateReviewLink(
   const { data: sheet } = await supabase
     .from("weekly_sheets")
     .select(`id, current_version_id, status,
+      clients ( post_signature ),
       weekly_sheet_items ( caption, hashtags, format, media_asset_id, media_external_url, is_cancelled )`)
     .eq("id", sheetId)
     .maybeSingle();
@@ -67,7 +76,12 @@ export async function generateReviewLink(
     mediaAssetId: item.media_asset_id,
     mediaExternalUrl: item.media_external_url,
     isCancelled: item.is_cancelled,
-  })));
+  })), {
+    signature: captionSignatureFor(
+      sheet.status,
+      (sheet.clients as unknown as { post_signature: string | null } | null)?.post_signature,
+    ),
+  });
   if (completion.percentage < 100) {
     return { ok: false, message: `Complétez la fiche à 100 % avant de générer le lien client (${completion.percentage} % actuellement).` };
   }
@@ -836,6 +850,319 @@ export async function verifyExportBeforeSend(
     ok: true,
     warning: check.requiresConfirmation ? check.warning : undefined,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Faire tenir une correction de hashtags d'une semaine sur l'autre
+// ---------------------------------------------------------------------------
+
+/**
+ * Hashtags de référence du client, inscrits dans sa fiche.
+ *
+ * Corriger la liste d'une publication ne tenait pas : la fiche suivante tirait
+ * un autre sous-ensemble de la bibliothèque du client. La graine est désormais
+ * stable (`hashtagSeed`), mais la bibliothèque, elle, contient toujours les
+ * hashtags que le client a fait retirer — « #Rayban » est resté dans celle
+ * d'AUDIOPTIC, retiré en semaine 35 et revenu en 41, 43 et 45. C'est donc elle
+ * qu'il faut corriger, une fois.
+ *
+ * La liste validée est posée dans `notes.pinnedHashtags`, et non dans
+ * `notes.customHashtags` : ce dernier est contraint à exactement cinq hashtags,
+ * tous distincts des quinze hashtags métier, et sert d'*entrée* à la
+ * régénération de la bibliothèque — une liste validée de huit hashtags n'y
+ * entre pas, et ce qu'on y écrirait en ressortirait réétalé sur vingt. La clé
+ * dédiée porte la liste exacte, et le formulaire client ne la touche pas :
+ * `updateClient` fusionne ses réglages sur les notes existantes et n'écrit pas
+ * cette clé.
+ *
+ * **Qui peut écrire.** La RLS réserve l'écriture des clients à l'encadrement
+ * (`clients_write` = `is_staff_lead`), mais le formulaire client s'en écarte
+ * déjà : `updateClient` garde le trio éditorial — community manager compris —
+ * et écrit avec la clé service, qui contourne la RLS. Un community manager
+ * réécrit donc aujourd'hui la bibliothèque entière depuis la fiche client. Lui
+ * refuser ici la liste qu'il vient lui-même de valider aurait été une barrière
+ * de façade, et l'aurait laissé sans moyen de faire tenir sa propre correction.
+ * Même trio, donc — et jamais en silence : une confirmation à l'écran, une
+ * trace sur le ticket, et la liste visible sur la fiche client.
+ */
+export async function pinClientHashtags(formData: FormData): Promise<InternalActionResult> {
+  const profile = await requireProfile();
+  if (!EDITORIAL_ROLES.includes(profile.role)) {
+    return { ok: false, message: "Seul l’encadrement peut fixer les hashtags d’un client." };
+  }
+
+  const parsed = z.object({
+    ticketId: z.string().uuid(),
+    clientId: z.string().uuid(),
+    hashtags: z.string().max(1000),
+    confirmation: z.literal(DOUBLE_CONFIRMATION),
+  }).safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { ok: false, message: "Enregistrement non confirmé." };
+
+  const hashtags = normalizeHashtags(parsed.data.hashtags);
+  if (hashtags.length === 0) {
+    return { ok: false, message: "La liste est vide : il n’y a rien à retenir." };
+  }
+
+  /*
+   * Le `clientId` vient du formulaire : seul le ticket dit de quel client il
+   * s'agit. Sans ce recoupement, la liste validée sur une demande pouvait être
+   * écrite dans la fiche de n'importe quel autre client.
+   */
+  const scoped = await createSupabaseServerClient();
+  const { data: ticket } = await scoped
+    .from("client_tickets")
+    .select("id, client_id")
+    .eq("id", parsed.data.ticketId)
+    .maybeSingle();
+  if (!ticket || ticket.client_id !== parsed.data.clientId) {
+    return { ok: false, message: ACCESS_DENIED_MESSAGE };
+  }
+
+  /*
+   * Le client est relu sous RLS à son tour : voir le ticket ne veut pas dire
+   * avoir le client dans son périmètre — `can_access_ticket` ouvre aussi par
+   * affectation personnelle.
+   */
+  const clientId = ticket.client_id as string;
+  const { data: client } = await scoped
+    .from("clients")
+    .select("id, name")
+    .eq("id", clientId)
+    .maybeSingle();
+  if (!client) return { ok: false, message: ACCESS_DENIED_MESSAGE };
+
+  const admin = createSupabaseAdminClient();
+  const { data: current } = await admin
+    .from("clients")
+    .select("notes")
+    .eq("id", clientId)
+    .maybeSingle();
+  if (!current) return { ok: false, message: ACCESS_DENIED_MESSAGE };
+
+  // Les autres réglages du client sont conservés tels quels.
+  let notes: Record<string, unknown> = {};
+  try {
+    notes = typeof current.notes === "string" ? JSON.parse(current.notes) : {};
+  } catch {
+    notes = {};
+  }
+
+  const { error } = await admin
+    .from("clients")
+    .update({ notes: JSON.stringify({ ...notes, pinnedHashtags: hashtags }) })
+    .eq("id", clientId);
+  if (error) return { ok: false, message: `Hashtags non enregistrés : ${error.message}` };
+
+  // La trace sur le ticket fait partie de la promesse « jamais en silence » :
+  // son échec se dit, il ne se cache pas derrière un `ok: true`.
+  const { error: commentError } = await admin.from("client_ticket_comments").insert({
+    ticket_id: parsed.data.ticketId,
+    author_profile_id: profile.id,
+    author_type: "staff",
+    author_name: profile.full_name,
+    visibility: "internal",
+    body: `Hashtags de référence de ${client.name} fixés par ${profile.full_name} : ${hashtags.join(" ")}. Les prochaines fiches partiront de cette liste.`,
+  });
+
+  revalidatePath(`/retours/${parsed.data.ticketId}`);
+  revalidatePath(`/clients/${clientId}`);
+  if (commentError) {
+    return {
+      ok: true,
+      message: `${hashtags.length} hashtags retenus pour ${client.name}, mais la trace n’a pas pu être écrite sur la demande : ${commentError.message}`,
+    };
+  }
+  return {
+    ok: true,
+    message: `${hashtags.length} hashtags retenus pour ${client.name}. Les prochaines fiches partiront de cette liste.`,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Requalifier une demande mal typée
+// ---------------------------------------------------------------------------
+
+/**
+ * Le type choisi par le client, corrigé par l'encadrement.
+ *
+ * 55 demandes sur 96 arrivent en « modifier le texte », et une vingtaine
+ * parlent en réalité d'une image, d'une vidéo ou des hashtags. Le routage et
+ * l'écran de production lisent la catégorie du type : ces demandes restaient
+ * donc éditoriales, et l'écran du ticket n'offrait même pas de sélecteur pour
+ * les confier à quelqu'un — aucune n'a reçu ni graphiste ni monteur. Le portail
+ * ne présélectionne plus rien, mais un client peut encore se tromper : il faut
+ * pouvoir le rattraper ici.
+ *
+ * Les deux colonnes sont écrites ensemble. `category` est dénormalisée du type
+ * à la création, et c'est elle que l'écran de production filtre : ne changer
+ * que `ticket_type` laisserait la demande invisible de la production.
+ */
+export async function requalifyTicketType(
+  ticketId: string,
+  nextType: string,
+): Promise<InternalActionResult> {
+  const profile = await requireProfile();
+  if (!EDITORIAL_ROLES.includes(profile.role)) {
+    return { ok: false, message: "Seul l’encadrement peut requalifier une demande." };
+  }
+
+  const parsed = z.object({
+    ticketId: z.string().uuid(),
+    nextType: z.string().refine(isRequalifiableType, "Type de demande inconnu."),
+  }).safeParse({ ticketId, nextType });
+  if (!parsed.success) {
+    return { ok: false, message: parsed.error.issues[0]?.message ?? "Requalification invalide." };
+  }
+  const target = parsed.data.nextType as TicketType;
+
+  // Périmètre vérifié par une lecture RLS avant toute écriture par la clé service.
+  const scoped = await createSupabaseServerClient();
+  const { data: ticket } = await scoped
+    .from("client_tickets")
+    .select("id, ticket_type, status, priority, weekly_sheet_item_id, client_id")
+    .eq("id", parsed.data.ticketId)
+    .maybeSingle();
+  if (!ticket) return { ok: false, message: ACCESS_DENIED_MESSAGE };
+
+  const current = ticket.ticket_type as TicketType;
+  if (current === target) return { ok: false, message: "C’est déjà le type de cette demande." };
+  /*
+   * Une demande hors publication n'entre ni ne sort : son écran se résume à un
+   * bouton « c'est fait », et la basculer ferait apparaître ou disparaître tout
+   * le circuit de correction sous les pieds de la personne qui la traite.
+   */
+  if (isServiceRequest(current)) {
+    return {
+      ok: false,
+      message: "Une demande hors publication ne se requalifie pas : elle ne porte sur aucun contenu.",
+    };
+  }
+  /*
+   * Même porte que « Confié à » : requalifier conduit à désigner quelqu'un, et
+   * une demande que le domaine refuse de confier ne doit pas être requalifiée
+   * non plus. La liste écrite ici à la main oubliait `out_of_scope`.
+   */
+  const assignment = contributorAssignment(ticket.status as TicketStatus);
+  if (!assignment.allowed) return { ok: false, message: assignment.error };
+
+  const definition = getTicketTypeDefinition(target);
+  if (!ticket.weekly_sheet_item_id && !definition.sheetLevel) {
+    return {
+      ok: false,
+      message: "Ce type porte sur une publication précise, et cette demande n’en vise aucune.",
+    };
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { error } = await admin
+    .from("client_tickets")
+    .update({ ticket_type: target, category: definition.category })
+    .eq("id", parsed.data.ticketId);
+  if (error) return { ok: false, message: `Requalification impossible : ${error.message}` };
+
+  await admin.from("client_ticket_comments").insert({
+    ticket_id: parsed.data.ticketId,
+    author_profile_id: profile.id,
+    author_type: "staff",
+    author_name: profile.full_name,
+    visibility: "internal",
+    body: `Demande requalifiée par ${profile.full_name} : « ${getTicketTypeDefinition(current).label} » → « ${definition.label} ».`,
+  });
+
+  // Le routage est rejoué : c'est lui qui dit quel métier doit produire.
+  const proposed = await contributorFromRouting(admin, {
+    clientId: ticket.client_id as string,
+    type: target,
+    priority: (ticket.priority as TicketPriority) ?? "normal",
+  });
+
+  /*
+   * L'affectation emprunte la porte existante : elle retire le contributeur
+   * précédent, franchit les étapes jusqu'à « Affecté » et prévient la
+   * personne. Écrire la ligne d'affectation ici laissait la demande
+   * « Nouvelle », et l'écran de production refusait le dépôt du fichier —
+   * exactement le défaut corrigé en bd0355d.
+   */
+  let handedTo: string | null = null;
+  let handoverError: string | null = null;
+  if (proposed) {
+    const handed = await assignTicketContributor(parsed.data.ticketId, proposed.profileId);
+    if (handed.ok) handedTo = proposed.name ?? "la production";
+    else handoverError = handed.message ?? null;
+  }
+
+  revalidatePath(`/retours/${parsed.data.ticketId}`);
+  revalidatePath("/retours");
+  revalidatePath("/production");
+
+  if (!requiresProduction(target)) {
+    return {
+      ok: true,
+      message: `Demande requalifiée en « ${definition.label} ». Elle reste éditoriale : le community manager la traite.`,
+    };
+  }
+  if (handedTo) {
+    return { ok: true, message: `Demande requalifiée en « ${definition.label} » et confiée à ${handedTo}.` };
+  }
+  return {
+    ok: true,
+    message: handoverError
+      ? `Demande requalifiée en « ${definition.label} », mais elle n’a pas pu être confiée : ${handoverError}`
+      : `Demande requalifiée en « ${definition.label} ». Aucun profil ne porte le métier attendu : désignez la personne dans « Confié à ».`,
+  };
+}
+
+/**
+ * Rejoue le routage et **nomme** le contributeur qu'il désigne, sans rien écrire.
+ *
+ * `routeTicket` nomme un métier — graphiste pour un visuel, monteur pour un
+ * montage. On cherche la personne rattachée au client pour ce métier, à défaut
+ * un profil actif qui le porte. Aucun repli au-delà : `fallbackRolesFor` ne
+ * rabat que le responsable, et désigner d'office un dirigeant comme
+ * contributeur d'un visuel fausserait la charge de chacun. Faute de personne,
+ * le sélecteur « Confié à » prend le relais — c'est précisément ce que l'écran
+ * n'offrait pas aux demandes mal typées.
+ *
+ * L'écriture appartient à `assignTicketContributor` : elle seule retire le
+ * contributeur précédent, franchit les étapes jusqu'à « Affecté » et prévient
+ * la personne. Poser l'affectation ici laissait la demande au statut qu'elle
+ * avait, invisible de l'écran de production.
+ */
+async function contributorFromRouting(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  input: { clientId: string; type: TicketType; priority: TicketPriority },
+): Promise<{ profileId: string; name: string | null } | null> {
+  const routing = routeTicket(input.type, { priority: input.priority });
+
+  for (const target of routing.targets) {
+    if (target.assignmentRole !== "contributor") continue;
+
+    const { data: assigned } = await admin
+      .from("client_assignments")
+      .select("profile_id, profiles ( full_name )")
+      .eq("client_id", input.clientId)
+      .eq("role", target.role)
+      .limit(1);
+    let profileId = assigned?.[0]?.profile_id as string | undefined;
+    let name = (assigned?.[0]?.profiles as unknown as { full_name: string } | null)?.full_name;
+
+    if (!profileId) {
+      const { data: fallback } = await admin
+        .from("profiles")
+        .select("id, full_name")
+        .eq("role", target.role)
+        .eq("is_active", true)
+        .limit(1);
+      profileId = fallback?.[0]?.id as string | undefined;
+      name = fallback?.[0]?.full_name as string | undefined;
+    }
+    if (!profileId) continue;
+
+    return { profileId, name: name ?? null };
+  }
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------

@@ -8,6 +8,9 @@ import {
   rescheduleItems,
   planningBucketForPeriod,
   planningWeekRange,
+  hashtagSeed,
+  hashtagsForSlot,
+  hasWrittenCaption,
   selectHashtags,
   satisfactionPercentage,
   satisfactionSummary,
@@ -86,6 +89,91 @@ describe("planning hebdomadaire", () => {
     expect(fourWeeks.filter((format) => format === "story")).toHaveLength(0);
   });
 
+  /*
+   * FIX C — la frontière de « légende rédigée ».
+   *
+   * La signature du client est préremplie en bas de chaque légende à la
+   * création de la fiche. Une légende restée réduite à cette signature n'est
+   * pas un texte : 28 publications sont parties chez un client dans cet état
+   * parce que le verrou des 100 % se contentait d'une chaîne non vide.
+   */
+  const signature = "LYFTT · 05 61 00 00 00";
+
+  it("ne compte pas une légende réduite à la signature préremplie", () => {
+    expect(sheetCompletion([
+      { caption: `\n\n${signature}`, hashtags: ["#Local"], format: "photo", mediaAssetId: "media" },
+    ], { signature })).toEqual({ completed: 2, total: 3, percentage: 67 });
+  });
+
+  it("compte une légende rédigée au-dessus de la signature", () => {
+    expect(sheetCompletion([
+      { caption: `Notre terrasse ouvre samedi.\n\n${signature}`, hashtags: ["#Local"], format: "photo", mediaAssetId: "media" },
+    ], { signature })).toEqual({ completed: 3, total: 3, percentage: 100 });
+  });
+
+  /*
+   * Fiche déjà partie : l'appelant n'envoie pas la signature, et le calcul est
+   * celui d'avant, à l'octet près. Onze fiches envoyées ou validées — dont
+   * trois en cours de correction — retomberaient sinon sous les 100 %, et le
+   * verrou leur refuserait le renvoi de la correction au client.
+   */
+  it("retombe sur l’ancienne règle quand la signature n’est pas fournie", () => {
+    expect(sheetCompletion([
+      { caption: `\n\n${signature}`, hashtags: ["#Local"], format: "photo", mediaAssetId: "media" },
+    ])).toEqual({ completed: 3, total: 3, percentage: 100 });
+  });
+
+  it("ne change rien pour un client sans signature", () => {
+    expect(sheetCompletion([
+      { caption: "Un texte", hashtags: ["#Local"], format: "photo", mediaAssetId: "media" },
+    ], { signature: null })).toEqual({ completed: 3, total: 3, percentage: 100 });
+  });
+
+  it("laisse la story hors du calcul, signature ou non", () => {
+    expect(sheetCompletion([
+      { caption: `\n\n${signature}`, hashtags: "#Local", format: "story", mediaAssetId: "media" },
+    ], { signature })).toEqual({ completed: 2, total: 2, percentage: 100 });
+  });
+
+  /*
+   * `replace` ne retire que la première occurrence : une légende qui répète la
+   * signature contient autre chose qu'elle. Sémantique conservée en déplaçant
+   * la règle depuis le constructeur de fiche.
+   */
+  it("ne retire que la première occurrence de la signature", () => {
+    expect(hasWrittenCaption(`${signature} ${signature}`, signature)).toBe(true);
+    expect(hasWrittenCaption(`  ${signature}  `, signature)).toBe(false);
+    expect(hasWrittenCaption("", signature)).toBe(false);
+    expect(hasWrittenCaption(null, signature)).toBe(false);
+    // Signature vide ou absente : ancienne règle.
+    expect(hasWrittenCaption("   ", "")).toBe(false);
+    expect(hasWrittenCaption("Texte")).toBe(true);
+  });
+
+  /*
+   * FIX C bis — la signature du client a changé depuis la création de la fiche.
+   *
+   * La comparaison porte sur la signature *actuelle*, alors que la légende en
+   * porte une copie figée : retirer une ligne vide de la signature du client
+   * rouvrait le verrou des 100 % en silence sur toutes les fiches en cours.
+   * Variante relevée en production.
+   */
+  const pause = "__\n\nEt si vous faisiez une pause ?";
+
+  it("ne compte pas une légende réduite à une variante d’espacement de la signature", () => {
+    expect(hasWrittenCaption("__\nEt si vous faisiez une pause ?", pause)).toBe(false);
+    expect(hasWrittenCaption("__ Et si vous faisiez une pause ?", pause)).toBe(false);
+  });
+
+  /*
+   * Le rattrapage ne vaut que pour la signature entière : une vraie légende
+   * courte, même contenue dans le bloc, reste un texte écrit.
+   */
+  it("garde une légende courte qui se trouve figurer dans le bloc", () => {
+    expect(hasWrittenCaption("une pause ?", pause)).toBe(true);
+    expect(hasWrittenCaption(`Notre terrasse ouvre samedi.\n\n${pause}`, pause)).toBe(true);
+  });
+
   it("sélectionne des hashtags variés mais stables", () => {
     const tags = Array.from({ length: 20 }, (_, index) => `#Tag${index}`);
     const first = selectHashtags(tags, "client-33-0");
@@ -93,6 +181,75 @@ describe("planning hebdomadaire", () => {
     expect(first).toEqual(second);
     expect(first).toHaveLength(8);
     expect(selectHashtags(tags, "client-33-1")).not.toEqual(first);
+  });
+
+  /*
+   * FIX B — le tirage ne bouge plus d'une semaine sur l'autre.
+   *
+   * La graine contenait l'année et la semaine ISO : chaque fiche redistribuait
+   * un autre sous-ensemble de la bibliothèque, donc une liste corrigée à la
+   * main ne survivait pas à la semaine suivante. AUDIOPTIC a redemandé la même
+   * correction treize fois, et le hashtag retiré en semaine 35 revenait en 41,
+   * 43 et 45.
+   */
+  it("tire les mêmes hashtags pour un client et une place, semaine après semaine", () => {
+    const tags = Array.from({ length: 20 }, (_, index) => `#Tag${index}`);
+    const client = "370100d4-0870-4a1d-b71e-ad567490fef2";
+
+    expect(hashtagSeed(client, 0)).toBe(`${client}-0`);
+    // La semaine n'entre pas dans la graine : il n'y a qu'une liste par place.
+    expect(selectHashtags(tags, hashtagSeed(client, 0)))
+      .toEqual(selectHashtags(tags, hashtagSeed(client, 0)));
+    // Deux publications de la même semaine ne sont pas un copier-coller.
+    expect(selectHashtags(tags, hashtagSeed(client, 1)))
+      .not.toEqual(selectHashtags(tags, hashtagSeed(client, 0)));
+    // Deux clients ne reçoivent pas la même liste.
+    expect(selectHashtags(tags, hashtagSeed("autre-client", 0)))
+      .not.toEqual(selectHashtags(tags, hashtagSeed(client, 0)));
+  });
+
+  /*
+   * Liste retenue sur la fiche client : le tirage la rend telle quelle, dans un
+   * ordre stable. C'est ce qui fait tenir « les mêmes que d'habitude ».
+   */
+  it("rend intégralement une liste retenue de huit hashtags ou moins", () => {
+    const pinned = ["#Opticien", "#OpticienIndependant", "#Audioptic", "#Lunettes"];
+    const drawn = selectHashtags(pinned, hashtagSeed("client", 0));
+    expect([...drawn].sort()).toEqual([...pinned].sort());
+    expect(selectHashtags(pinned, hashtagSeed("client", 0))).toEqual(drawn);
+  });
+
+  /*
+   * FIX B bis — une liste retenue plus longue que le tirage.
+   *
+   * Le tirage s'arrête à huit, et pas au même endroit d'une place à l'autre :
+   * une liste de douze hashtags validée par le client revenait tronquée, et
+   * différemment sur chaque publication de la fiche. Une liste validée part
+   * telle quelle.
+   */
+  it("rend une liste retenue de douze hashtags entière, identique à chaque place", () => {
+    const pinned = Array.from({ length: 12 }, (_, index) => `#Retenu${index}`);
+    const slot0 = hashtagsForSlot(pinned, { clientId: "client", slotIndex: 0, pinned: true });
+    const slot1 = hashtagsForSlot(pinned, { clientId: "client", slotIndex: 1, pinned: true });
+
+    expect(slot0).toEqual(pinned);
+    expect(slot1).toEqual(pinned);
+  });
+
+  it("dédoublonne une liste retenue sans en changer l’ordre", () => {
+    expect(hashtagsForSlot(["#A", "", "#B", "#A"], { clientId: "client", slotIndex: 0, pinned: true }))
+      .toEqual(["#A", "#B"]);
+  });
+
+  it("tire toujours huit hashtags dans une bibliothèque non validée", () => {
+    const library = Array.from({ length: 20 }, (_, index) => `#Tag${index}`);
+    const slot0 = hashtagsForSlot(library, { clientId: "client", slotIndex: 0, pinned: false });
+
+    expect(slot0).toHaveLength(8);
+    // Le tirage d'avant, à l'identique : la graine ne bouge pas.
+    expect(slot0).toEqual(selectHashtags(library, hashtagSeed("client", 0)));
+    expect(hashtagsForSlot(library, { clientId: "client", slotIndex: 1, pinned: false }))
+      .not.toEqual(slot0);
   });
 });
 

@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/ui";
 import { resolveMediaUrl } from "@/lib/media/signed-url";
 import { todayInParis } from "@/lib/domain/client-lifecycle";
 import { contentBucketProgress, depositSummary, isoWeekIdentity, planningWeekRange, sheetCompletion, visualsValidationState, type BucketProgress } from "@/lib/domain/planning";
+import { captionSignatureFor } from "@/lib/domain/sheet-status";
 import { weekExpectation } from "@/lib/domain/week-expectation";
 import { bucketForFormat, CONTENT_BUCKETS, type ContentBucket } from "@/lib/domain/content-buckets";
 import { ProductionRequests, type ProductionRequestRow } from "./ProductionRequests";
@@ -95,7 +96,7 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
     supabase
       .from("weekly_sheets")
       .select(`id, topic, status, visuals_validated_at, visuals_validated_by_name,
-        clients ( id, name ),
+        clients ( id, name, post_signature ),
         weekly_sheet_items ( caption, hashtags, format, media_asset_id, media_external_url, is_cancelled )`)
       .eq("period_start", weekRange.currentStart),
     // Personnes à qui confier une commande : le menu « Confier à ».
@@ -322,9 +323,10 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
   interface OverviewSheetRow {
     id: string;
     topic: string | null;
+    status: string;
     visuals_validated_at: string | null;
     visuals_validated_by_name: string | null;
-    clients: { id: string; name: string } | null;
+    clients: { id: string; name: string; post_signature: string | null } | null;
     weekly_sheet_items: Array<{ caption: string | null; hashtags: string[] | null; format: MediaFormat; media_asset_id: string | null; media_external_url: string | null; is_cancelled: boolean }>;
   }
   const currentSheets = (rawCurrentSheets ?? []) as unknown as OverviewSheetRow[];
@@ -378,7 +380,14 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
         mediaExternalUrl: item.media_external_url,
         isCancelled: item.is_cancelled,
       }));
-      const deposit = depositSummary(items);
+      /*
+       * La signature ne compte que sur une fiche jamais partie : voir
+       * `captionSignatureFor`. Les trois volets — textes, fichiers,
+       * pourcentage — la lisent au même endroit, sinon la ligne afficherait
+       * « 83 % » et « Textes : prêts » côte à côte.
+       */
+      const completion = { signature: captionSignatureFor(sheet.status, sheet.clients?.post_signature) };
+      const deposit = depositSummary(items, completion);
       const visualsState = visualsValidationState(deposit, sheet.visuals_validated_at);
       return {
         clientId: client.id,
@@ -387,10 +396,10 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
         offWeek: false,
         topic: sheet.topic,
         // Fait : tout est là, et les visuels ont été regardés — quand il y en a.
-        done: sheetCompletion(items).percentage === 100 && visualsState !== "to_validate",
+        done: sheetCompletion(items, completion).percentage === 100 && visualsState !== "to_validate",
         href: `/fiches/${sheet.id}`,
         // Fichiers et textes comptés à part : l'un peut être livré sans l'autre.
-        progress: contentBucketProgress(items),
+        progress: contentBucketProgress(items, completion),
         deposit,
         sheetId: sheet.id,
         visuals: {

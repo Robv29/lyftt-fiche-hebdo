@@ -109,11 +109,66 @@ export interface CompletionItem {
   isCancelled?: boolean;
 }
 
+/**
+ * Lecture de la complétude : ce que l'appelant sait de la fiche en plus de ses
+ * contenus.
+ *
+ * `signature` — la phrase que le constructeur préremplit en bas de chaque
+ * légende. Fournie, une légende qui ne contient qu'elle n'est plus comptée
+ * comme rédigée. Omise, la règle est l'ancienne, à l'octet près : c'est ce qui
+ * permet de ne durcir que les fiches jamais parties.
+ */
+export interface CompletionOptions {
+  signature?: string | null;
+}
+
 function hasHashtags(value: CompletionItem["hashtags"]): boolean {
   return Array.isArray(value) ? value.length > 0 : Boolean(value?.trim());
 }
 
-export function sheetCompletion(items: CompletionItem[]): {
+/**
+ * Une légende est-elle rédigée ?
+ *
+ * La signature du client est posée d'office à la création de la fiche, pour que
+ * le community manager rédige au-dessus. Une légende restée réduite à cette
+ * signature n'est pas un texte : 160 publications actives sont dans cet état,
+ * et 28 sont parties chez un client parce que le verrou des 100 % se contentait
+ * d'une chaîne non vide. Le constructeur de fiche savait déjà faire la
+ * différence — seul, dans son coin. La règle vit donc ici, dans le domaine, et
+ * le planning, l'éditeur, la production et le verrou la lisent au même endroit.
+ *
+ * `replace` ne retire que la **première** occurrence, et c'est voulu : une
+ * légende qui répète la signature contient autre chose qu'elle.
+ */
+export function hasWrittenCaption(
+  caption: string | null | undefined,
+  signature?: string | null,
+): boolean {
+  const text = caption ?? "";
+  const mark = signature?.trim();
+  if (!mark) return text.trim().length > 0;
+  if (text.replace(mark, "").trim().length === 0) return false;
+
+  /*
+   * La comparaison porte sur la signature *actuelle* du client, alors que la
+   * légende en porte une copie figée à la création de la fiche. Changer un
+   * numéro de téléphone, une espace ou un retour à la ligne rouvrait donc le
+   * verrou des 100 % en silence sur toutes les fiches en cours.
+   *
+   * On ne rattrape que la variante d'espacement de la signature **entière** :
+   * espaces retirés de part et d'autre, une légende contenue dans le bloc et
+   * qui en fait au moins la moitié n'est pas un texte. Ce seuil protège une
+   * vraie légende courte qui se trouverait figurer dans le bloc.
+   */
+  const withoutSpaces = (value: string) => value.replace(/\s+/g, "");
+  const block = withoutSpaces(mark);
+  const bare = withoutSpaces(text);
+  if (block && block.includes(bare) && bare.length * 2 >= block.length) return false;
+
+  return true;
+}
+
+export function sheetCompletion(items: CompletionItem[], options?: CompletionOptions): {
   completed: number;
   total: number;
   percentage: number;
@@ -125,7 +180,7 @@ export function sheetCompletion(items: CompletionItem[]): {
     const needsCaption = requiresCaption(item.format);
     const needsMedia = requiresMedia(item.format);
     const total = 1 + (needsCaption ? 1 : 0) + (needsMedia ? 1 : 0);
-    const completed = Number(needsCaption && Boolean(item.caption?.trim()))
+    const completed = Number(needsCaption && hasWrittenCaption(item.caption, options?.signature))
       + Number(hasHashtags(item.hashtags))
       + Number(needsMedia && Boolean(item.mediaAssetId || item.mediaExternalUrl));
     return { completed: acc.completed + completed, total: acc.total + total };
@@ -151,14 +206,19 @@ function isFileReady(item: CompletionItem): boolean {
   return !requiresMedia(item.format) || Boolean(item.mediaAssetId || item.mediaExternalUrl);
 }
 
-/** Texte rédigé : légende quand le format en attend une, et hashtags. */
-function isTextReady(item: CompletionItem): boolean {
-  const captionOk = !requiresCaption(item.format) || Boolean(item.caption?.trim());
+/**
+ * Texte rédigé : légende quand le format en attend une, et hashtags.
+ *
+ * Même règle de légende que `sheetCompletion`, et la même option : le planning
+ * afficherait sinon « 83 % » et « Textes : prêts » sur la même ligne.
+ */
+function isTextReady(item: CompletionItem, options?: CompletionOptions): boolean {
+  const captionOk = !requiresCaption(item.format) || hasWrittenCaption(item.caption, options?.signature);
   return captionOk && hasHashtags(item.hashtags);
 }
 
-function isCompletionItemReady(item: CompletionItem): boolean {
-  return isFileReady(item) && isTextReady(item);
+function isCompletionItemReady(item: CompletionItem, options?: CompletionOptions): boolean {
+  return isFileReady(item) && isTextReady(item, options);
 }
 
 /**
@@ -168,12 +228,17 @@ function isCompletionItemReady(item: CompletionItem): boolean {
  * *quoi* manque, alors que « Vidéos : à compléter » se lit sans ouvrir la
  * fiche.
  */
-export function contentBucketStatuses(items: CompletionItem[]): Record<ContentBucket, BucketStatus> {
+export function contentBucketStatuses(
+  items: CompletionItem[],
+  options?: CompletionOptions,
+): Record<ContentBucket, BucketStatus> {
   const active = items.filter((item) => !item.isCancelled);
   const statuses = {} as Record<ContentBucket, BucketStatus>;
   for (const bucket of CONTENT_BUCKETS) {
     const bucketItems = active.filter((item) => bucketForFormat(item.format) === bucket.key);
-    statuses[bucket.key] = bucketItems.length === 0 ? "none" : bucketItems.every(isCompletionItemReady) ? "ready" : "pending";
+    statuses[bucket.key] = bucketItems.length === 0
+      ? "none"
+      : bucketItems.every((item) => isCompletionItemReady(item, options)) ? "ready" : "pending";
   }
   return statuses;
 }
@@ -194,7 +259,10 @@ export interface BucketProgress {
  * différentes — chacun se lit donc séparément. La règle de « prêt » reste la
  * même : les deux réunis.
  */
-export function contentBucketProgress(items: CompletionItem[]): Record<ContentBucket, BucketProgress> {
+export function contentBucketProgress(
+  items: CompletionItem[],
+  options?: CompletionOptions,
+): Record<ContentBucket, BucketProgress> {
   const active = items.filter((item) => !item.isCancelled);
   const progress = {} as Record<ContentBucket, BucketProgress>;
   for (const bucket of CONTENT_BUCKETS) {
@@ -207,7 +275,7 @@ export function contentBucketProgress(items: CompletionItem[]): Record<ContentBu
     const withFiles = bucketItems.filter((item) => requiresMedia(item.format));
     progress[bucket.key] = {
       files: withFiles.length === 0 ? "none" : withFiles.every(isFileReady) ? "ready" : "pending",
-      texts: bucketItems.every(isTextReady) ? "ready" : "pending",
+      texts: bucketItems.every((item) => isTextReady(item, options)) ? "ready" : "pending",
     };
   }
   return progress;
@@ -238,14 +306,14 @@ export function visualsValidationState(deposit: DepositSummary, validatedAt: str
 }
 
 /** Ce qui reste à déposer et à rédiger sur une fiche, compté à part. */
-export function depositSummary(items: CompletionItem[]): DepositSummary {
+export function depositSummary(items: CompletionItem[], options?: CompletionOptions): DepositSummary {
   const active = items.filter((item) => !item.isCancelled);
   const withFiles = active.filter((item) => requiresMedia(item.format));
   return {
     filesTotal: withFiles.length,
     filesMissing: withFiles.filter((item) => !isFileReady(item)).length,
     textsTotal: active.length,
-    textsMissing: active.filter((item) => !isTextReady(item)).length,
+    textsMissing: active.filter((item) => !isTextReady(item, options)).length,
   };
 }
 
@@ -345,6 +413,25 @@ function hashSeed(value: string): number {
   return hash >>> 0;
 }
 
+/**
+ * Graine du tirage de hashtags : le client, et la place de la publication dans
+ * la semaine. Rien de plus.
+ *
+ * L'année et la semaine ISO en faisaient partie, donc chaque semaine
+ * redistribuait un sous-ensemble différent de la bibliothèque du client : une
+ * liste corrigée à la main ne survivait pas à la fiche suivante, et le client
+ * redemandait la même correction — treize fois pour AUDIOPTIC, sur cinq
+ * semaines, et le hashtag qu'il avait fait retirer en semaine 35 revenait en
+ * 41, 43 et 45. Les clients ne demandent pas de la variété : ils demandent
+ * « les mêmes que d'habitude ».
+ *
+ * La place est conservée : les deux publications d'une même semaine ne sont pas
+ * un copier-coller l'une de l'autre.
+ */
+export function hashtagSeed(clientId: string, slotIndex: number): string {
+  return `${clientId}-${slotIndex}`;
+}
+
 /** Mélange déterministe : résultat varié, mais stable après rechargement de la fiche. */
 export function selectHashtags(tags: string[], seed: string, limit = 8): string[] {
   const unique = [...new Set(tags.filter(Boolean))];
@@ -358,6 +445,26 @@ export function selectHashtags(tags: string[], seed: string, limit = 8): string[
   }
 
   return shuffled.slice(0, Math.max(0, limit));
+}
+
+/**
+ * Hashtags d'une publication : la liste retenue telle quelle, sinon le tirage.
+ *
+ * Une liste que le client a validée part comme elle est. La couper à huit en
+ * reprendrait une partie — et pas la même d'une place à l'autre, puisque le
+ * tirage dépend de la place : une liste retenue de douze hashtags revenait
+ * tronquée différemment sur chaque publication de la fiche, et le client
+ * redemandait la correction qu'il venait d'obtenir.
+ *
+ * Le tirage garde son rôle sur la bibliothèque du client, qui compte vingt
+ * hashtags et n'a jamais été validée publication par publication.
+ */
+export function hashtagsForSlot(
+  tags: string[],
+  { clientId, slotIndex, pinned }: { clientId: string; slotIndex: number; pinned: boolean },
+): string[] {
+  if (pinned) return [...new Set(tags.filter(Boolean))];
+  return selectHashtags(tags, hashtagSeed(clientId, slotIndex));
 }
 
 /**

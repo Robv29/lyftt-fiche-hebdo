@@ -24,8 +24,23 @@ interface Props {
 }
 
 export function TicketForm({ item, pending, onSubmit, onCancel }: Props) {
-  const [type, setType] = useState<TicketType>(item ? "text_edit" : "publication_add");
-  const definition = getTicketTypeDefinition(type);
+  /*
+   * Rien de présélectionné sur une publication.
+   *
+   * « Modifier le texte » l'était, et 55 demandes sur 96 sont arrivées sous ce
+   * type — dont une vingtaine parlaient en fait d'une image, d'une vidéo ou des
+   * hashtags. Comme le routage lit la catégorie du type, aucune de celles-là
+   * n'a été confiée à un graphiste ou à un monteur. Le client choisit donc,
+   * explicitement.
+   *
+   * Sans publication ciblée, la liste ne contient qu'« Ajouter une
+   * publication » : un choix forcé entre une seule option n'apprend rien à
+   * personne, on garde la présélection.
+   */
+  const [type, setType] = useState<TicketType | "">(item ? "" : "publication_add");
+  const definition = type ? getTicketTypeDefinition(type) : null;
+  /** Hashtags que le client coche pour les retirer. */
+  const [droppedHashtags, setDroppedHashtags] = useState<string[]>([]);
 
   const availableGroups = groupedTicketTypes()
     .map((group) => ({
@@ -50,9 +65,14 @@ export function TicketForm({ item, pending, onSubmit, onCancel }: Props) {
           id={`type-${item?.id ?? "sheet"}`}
           name="ticketType"
           className="field"
+          required
           value={type}
-          onChange={(event) => setType(event.target.value as TicketType)}
+          onChange={(event) => {
+            setType(event.target.value as TicketType | "");
+            setDroppedHashtags([]);
+          }}
         >
+          {item && <option value="">— Que faut-il corriger ? —</option>}
           {availableGroups.map((group) => (
             <optgroup key={group.group} label={group.group}>
               {group.types.map((t) => (
@@ -65,7 +85,7 @@ export function TicketForm({ item, pending, onSubmit, onCancel }: Props) {
         </select>
       </div>
 
-      {definition.form === "text" && item && (
+      {definition?.form === "text" && item && (
         <>
           <div>
             <span className="label">Texte actuel</span>
@@ -87,7 +107,75 @@ export function TicketForm({ item, pending, onSubmit, onCancel }: Props) {
         </>
       )}
 
-      {definition.options && (
+      {/*
+        Les hashtags de la publication, cochables.
+        Le formulaire texte générique ne les montrait nulle part : pour en
+        retirer un, le client devait recopier la liste entière à la main, ce
+        qu'il faisait mal et redemandait la semaine suivante.
+      */}
+      {definition?.form === "hashtags" && item && (
+        <>
+          <div>
+            <span className="label">Hashtags actuels</span>
+            {item.hashtags.length === 0 ? (
+              <p className="rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink-faint">
+                Aucun hashtag sur cette publication.
+              </p>
+            ) : (
+              <>
+                <ul className="mt-1 flex flex-wrap gap-2">
+                  {item.hashtags.map((tag) => {
+                    const dropped = droppedHashtags.includes(tag);
+                    return (
+                      <li key={tag}>
+                        <label
+                          className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm ${
+                            dropped
+                              ? "border-state-changes bg-state-changes/10 text-state-changes line-through"
+                              : "border-line bg-surface text-ink-soft"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            name="removeHashtags"
+                            value={tag}
+                            className="h-4 w-4"
+                            checked={dropped}
+                            onChange={(event) =>
+                              setDroppedHashtags((current) =>
+                                event.target.checked
+                                  ? [...current, tag]
+                                  : current.filter((value) => value !== tag),
+                              )
+                            }
+                          />
+                          {tag}
+                        </label>
+                      </li>
+                    );
+                  })}
+                </ul>
+                <p className="mt-2 text-xs text-ink-faint">
+                  Cochez ceux à retirer. Les autres sont conservés.
+                </p>
+              </>
+            )}
+          </div>
+          <div>
+            <label className="label" htmlFor={`addHashtags-${item.id}`}>
+              Hashtags à ajouter <span className="font-normal text-ink-faint">(facultatif)</span>
+            </label>
+            <input
+              id={`addHashtags-${item.id}`}
+              name="addHashtags"
+              className="field"
+              placeholder="#ConcertLive #Terrasse"
+            />
+          </div>
+        </>
+      )}
+
+      {definition?.options && (
         <div>
           <label className="label" htmlFor={`option-${item?.id ?? "sheet"}`}>
             Précisez
@@ -107,7 +195,7 @@ export function TicketForm({ item, pending, onSubmit, onCancel }: Props) {
         </div>
       )}
 
-      {definition.form === "video" && (
+      {definition?.form === "video" && (
         <div>
           <label className="label" htmlFor={`timecode-${item?.id ?? "sheet"}`}>
             Moment concerné{" "}
@@ -137,7 +225,7 @@ export function TicketForm({ item, pending, onSubmit, onCancel }: Props) {
         />
       </div>
 
-      {definition.form === "text" && (
+      {definition?.form === "text" && (
         <div>
           <label className="label" htmlFor={`suggestion-${item?.id ?? "sheet"}`}>
             Proposition de nouveau texte{" "}
@@ -153,9 +241,9 @@ export function TicketForm({ item, pending, onSubmit, onCancel }: Props) {
         </div>
       )}
 
-      {(definition.form === "photo" ||
-        definition.form === "video" ||
-        definition.form === "graphic") && (
+      {(definition?.form === "photo" ||
+        definition?.form === "video" ||
+        definition?.form === "graphic") && (
         <div>
           <label className="label" htmlFor={`attachment-${item?.id ?? "sheet"}`}>
             Joindre un fichier{" "}
@@ -195,7 +283,7 @@ export function TicketForm({ item, pending, onSubmit, onCancel }: Props) {
       </div>
 
       <div className="flex flex-wrap gap-2">
-        <button type="submit" className="btn-primary" disabled={pending}>
+        <button type="submit" className="btn-primary" disabled={pending || !type}>
           {pending ? "Envoi…" : "Envoyer ma demande"}
         </button>
         <button type="button" className="btn-secondary" onClick={onCancel}>
@@ -206,7 +294,7 @@ export function TicketForm({ item, pending, onSubmit, onCancel }: Props) {
   );
 }
 
-function placeholderFor(type: TicketType): string {
+function placeholderFor(type: TicketType | ""): string {
   switch (type) {
     case "text_typo":
       return "Ex. « guingette » s'écrit « guinguette ».";
@@ -215,7 +303,7 @@ function placeholderFor(type: TicketType): string {
     case "text_tone":
       return "Ex. un ton un peu plus chaleureux, moins commercial.";
     case "hashtags":
-      return "Ex. retirer #AperoTime et ajouter #ConcertLive.";
+      return "Ex. ce sont les mêmes hashtags que d’habitude qu’il nous faut.";
     case "photo_replace":
       return "Ex. la photo est trop sombre, utiliser plutôt celle de la terrasse.";
     case "photo_retouch":

@@ -19,6 +19,7 @@ import { clientLifecycle, todayInParis as civilToday, parseClientKind } from "@/
 import { HEALTH_TARGET, healthTone, topHealthAction } from "@/lib/domain/health-score";
 import { defaultMetricsSince, readAgencyMetrics, type AgencyMetrics } from "@/lib/metrics/agency-metrics";
 import { ScoreRing } from "@/components/ScoreRing";
+import { captionSignatureFor } from "@/lib/domain/sheet-status";
 import { sheetShownForWeek, sheetsToCreate } from "@/lib/domain/week-expectation";
 import { ShootingReminders } from "./ShootingReminders";
 import { TrackingReportReminders, type TrackingReportReminderRow } from "./TrackingReportReminders";
@@ -70,7 +71,7 @@ export default async function DashboardPage() {
      * paraître avancée sans un seul média.
      */
     supabase.from("weekly_sheets")
-      .select("id, client_id, status, weekly_sheet_items ( caption, hashtags, format, media_asset_id, media_external_url, is_cancelled )")
+      .select("id, client_id, status, clients ( post_signature ), weekly_sheet_items ( caption, hashtags, format, media_asset_id, media_external_url, is_cancelled )")
       .gte("period_start", range.nextStart)
       .lte("period_start", range.nextEnd),
   ]);
@@ -106,8 +107,14 @@ export default async function DashboardPage() {
     id: string;
     client_id: string;
     status: string;
+    clients: { post_signature: string | null } | null;
     weekly_sheet_items: Array<{ caption: string | null; hashtags: string[] | null; format: string; media_asset_id: string | null; media_external_url: string | null; is_cancelled: boolean }>;
   }>).filter((sheet) => sheetShownForWeek(sheet.status, clientById.get(sheet.client_id), range.nextStart));
+  /*
+   * Une légende réduite à la signature préremplie n'est pas un texte rédigé :
+   * la fiche reste donc à préparer. La signature ne compte que sur une fiche
+   * jamais partie — voir `captionSignatureFor`.
+   */
   const incompleteSheets = nextWeekSheets.filter((sheet) => sheetCompletion(
     (sheet.weekly_sheet_items ?? []).map((item) => ({
       caption: item.caption,
@@ -117,6 +124,7 @@ export default async function DashboardPage() {
       mediaExternalUrl: item.media_external_url,
       isCancelled: item.is_cancelled,
     })),
+    { signature: captionSignatureFor(sheet.status, sheet.clients?.post_signature) },
   ).percentage < 100).length;
   const coveredClients = new Set(nextWeekSheets.map((sheet) => sheet.client_id));
   /*

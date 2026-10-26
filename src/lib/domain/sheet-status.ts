@@ -115,6 +115,32 @@ export function isPreSendSheetStatus(status: string): boolean {
 }
 
 /**
+ * La signature du client entre-t-elle dans le calcul de complétude ?
+ *
+ * Une légende réduite à la signature préremplie n'est pas un texte rédigé
+ * (`hasWrittenCaption`). Mais appliquer ce durcissement partout faisait
+ * retomber sous les 100 % onze fiches déjà envoyées ou validées : trois en
+ * cours de correction, à qui le verrou des 100 % aurait alors refusé le renvoi
+ * au client — dont une portant un lien encore vivant, qui aurait expiré — et
+ * cinq validées, dont l'historique se serait réécrit à l'écran. Leur histoire
+ * est écrite. Ce qui compte, c'est que la suivante ne parte pas avec une
+ * signature pour seul texte.
+ *
+ * La frontière est donc celle de l'envoi, et non `sent_to_client_at` : une
+ * fiche validée sans jamais avoir été envoyée a cette date à nul, et un test
+ * sur la date l'aurait perturbée quand même.
+ *
+ * Renvoie `null` dès que la fiche est partie : les appelants retombent à
+ * l'octet près sur l'ancien calcul.
+ */
+export function captionSignatureFor(
+  status: string,
+  signature: string | null | undefined,
+): string | null {
+  return isPreSendSheetStatus(status) ? (signature ?? null) : null;
+}
+
+/**
  * Une modification de ce statut rend nécessaire une nouvelle validation.
  *
  * Le critère est simple : le client a-t-il déjà vu la fiche ? Si oui, ce qu'il

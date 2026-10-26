@@ -9,7 +9,7 @@ import {
   sheetCompletion,
 } from "@/lib/domain/planning";
 import { sheetStatusLabel, type MediaFormat, type SheetStatus, type TicketPriority, type TicketStatus } from "@/lib/domain/types";
-import { isClientValidated, sheetTopicEditState, validationRate } from "@/lib/domain/sheet-status";
+import { captionSignatureFor, isClientValidated, sheetTopicEditState, validationRate } from "@/lib/domain/sheet-status";
 import { sheetShownForWeek, sheetsToCreate } from "@/lib/domain/week-expectation";
 import { isTicketOpen } from "@/lib/domain/workflow";
 import { PlanningTabs } from "./PlanningTabs";
@@ -38,7 +38,7 @@ interface PlanningSheet {
   period_start: string;
   period_end: string;
   status: string;
-  clients: { id: string; name: string } | null;
+  clients: { id: string; name: string; post_signature: string | null } | null;
   weekly_sheet_items: PlanningItem[];
   client_tickets: PlanningTicket[];
 }
@@ -54,8 +54,16 @@ function completionItems(sheet: PlanningSheet) {
   }));
 }
 
+/*
+ * La signature ne compte que sur une fiche jamais partie : voir
+ * `captionSignatureFor`. Les fiches déjà envoyées gardent leur pourcentage.
+ */
+function completionOptions(sheet: PlanningSheet) {
+  return { signature: captionSignatureFor(sheet.status, sheet.clients?.post_signature) };
+}
+
 function completionForSheet(sheet: PlanningSheet) {
-  return sheetCompletion(completionItems(sheet));
+  return sheetCompletion(completionItems(sheet), completionOptions(sheet));
 }
 
 function hasHighPriorityChange(sheet: PlanningSheet): boolean {
@@ -90,7 +98,7 @@ function sheetEntry(sheet: PlanningSheet): PlanningEntry {
      * découpage que la vue Production, pour ne pas avoir deux lectures du
      * même état selon l'écran.
      */
-    buckets: contentBucketStatuses(completionItems(sheet)),
+    buckets: contentBucketStatuses(completionItems(sheet), completionOptions(sheet)),
     topic: sheet.topic,
     topicState: sheetTopicEditState(sheet.status as SheetStatus),
   };
@@ -107,7 +115,7 @@ export default async function SheetsPage({ searchParams }: { searchParams: Promi
     supabase
       .from("weekly_sheets")
       .select(`id, iso_year, iso_week, period_start, period_end, status, topic,
-        clients ( id, name ),
+        clients ( id, name, post_signature ),
         weekly_sheet_items ( caption, hashtags, format, media_asset_id, media_external_url, is_cancelled ),
         client_tickets ( priority, status )`)
       .lte("period_start", range.nextEnd)

@@ -3,6 +3,7 @@ import {
   canApproveAll,
   canEditSheetContent,
   canEditSheetTopic,
+  captionSignatureFor,
   computeSheetStatus,
   editRequiresRevalidation,
   isClientValidated,
@@ -293,5 +294,40 @@ describe("sujet de la semaine", () => {
     expect(sheetTopicEditState("draft")).toBe("editable");
     expect(sheetTopicEditState("ready_to_send")).toBe("editable");
     expect(sheetTopicEditState("approved_by_client")).toBe("internal_notice");
+  });
+});
+
+describe("signature dans le calcul de complétude", () => {
+  const signature = "LYFTT · 05 61 00 00 00";
+
+  /*
+   * La règle ne durcit que les fiches jamais parties. Onze fiches déjà envoyées
+   * ou validées retomberaient sinon sous les 100 % : trois en cours de
+   * correction, à qui le verrou des 100 % refuserait alors le renvoi au client
+   * — dont une portant un lien encore vivant, qui expirerait — et cinq
+   * validées, dont l'historique se réécrirait à l'écran.
+   */
+  it("ne retient la signature que sur une fiche jamais partie", () => {
+    expect(captionSignatureFor("draft", signature)).toBe(signature);
+    expect(captionSignatureFor("internal_review", signature)).toBe(signature);
+    expect(captionSignatureFor("ready_to_send", signature)).toBe(signature);
+  });
+
+  it("l’oublie dès que la fiche est partie ou validée", () => {
+    for (const status of [
+      "sent_to_client",
+      "new_version_to_send",
+      "approved_by_client",
+      "partially_approved",
+      "awaiting_revalidation",
+      "tacitly_approved",
+    ]) {
+      expect(captionSignatureFor(status, signature)).toBeNull();
+    }
+  });
+
+  it("rend null pour un client sans signature", () => {
+    expect(captionSignatureFor("draft", null)).toBeNull();
+    expect(captionSignatureFor("draft", undefined)).toBeNull();
   });
 });

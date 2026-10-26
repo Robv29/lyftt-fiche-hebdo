@@ -21,7 +21,7 @@ import { planningHrefForBucket } from "../planning-tab";
 import { SheetTopic } from "../SheetTopic";
 import { resolveMediaUrl } from "@/lib/media/signed-url";
 import { resolveClientLogoUrl } from "@/lib/media/client-logo";
-import { canEditSheetContent, editRequiresRevalidation, isClientValidated, sheetTopicEditState } from "@/lib/domain/sheet-status";
+import { canEditSheetContent, captionSignatureFor, editRequiresRevalidation, isClientValidated, sheetTopicEditState } from "@/lib/domain/sheet-status";
 
 /** §21 — Onglet « Retours et validations » d'une fiche. */
 export default async function SheetDetailPage({
@@ -41,7 +41,7 @@ export default async function SheetDetailPage({
     .select(
       `id, iso_year, iso_week, period_start, period_end, status, topic, validation_deadline_at,
        sent_to_client_at, first_viewed_at, current_version_id,
-       clients ( id, name, logo_url, timezone, approval_policy ),
+       clients ( id, name, logo_url, timezone, approval_policy, post_signature ),
        profiles:community_manager_id ( full_name ),
        weekly_sheet_items ( id, position, scheduled_date, scheduled_time, format, caption, hashtags,
          media_asset_id, media_external_url, approval_status, is_cancelled, collaboration_handle,
@@ -65,6 +65,8 @@ export default async function SheetDetailPage({
     logo_url: string | null;
     timezone: string;
     approval_policy: string;
+    /** Phrase préremplie en bas des légendes : une légende qui n'a qu'elle n'est pas rédigée. */
+    post_signature: string | null;
   };
   const manager = sheet.profiles as unknown as { full_name: string } | null;
   const clientLogoUrl = await resolveClientLogoUrl(client.logo_url);
@@ -191,6 +193,11 @@ export default async function SheetDetailPage({
     return [item.id, resolved] as const;
   })));
 
+  /*
+   * La signature n'entre dans le calcul que sur une fiche jamais partie : voir
+   * `captionSignatureFor`. C'est ce pourcentage qui ouvre le lien client.
+   */
+  const captionSignature = captionSignatureFor(sheet.status, client.post_signature);
   const preparation = sheetCompletion(items.map((item) => ({
     caption: item.caption,
     hashtags: item.hashtags,
@@ -198,7 +205,7 @@ export default async function SheetDetailPage({
     mediaAssetId: item.media_asset_id,
     mediaExternalUrl: item.media_external_url,
     isCancelled: item.is_cancelled,
-  })));
+  })), { signature: captionSignature });
 
   const bucket = planningBucketForPeriod(sheet.period_start, sheet.period_end);
   // Retour sur l'onglet de la période de la fiche, et non « Cette semaine ».
@@ -288,6 +295,7 @@ export default async function SheetDetailPage({
                 sheetId={sheet.id}
                 clientId={client.id}
                 clientName={client.name}
+                captionSignature={captionSignature}
                 requiresRevalidation={editingRequiresRevalidation}
                 initialItems={items
                 .filter((item) => !item.is_cancelled)

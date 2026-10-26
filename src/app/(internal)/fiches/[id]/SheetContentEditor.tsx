@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { saveSheetContent, type SheetContentActionResult } from "./actions";
 import { Icon } from "@/components/Icon";
 import { MEDIA_FORMAT_LABELS, requiresCaption, requiresMedia, type MediaFormat } from "@/lib/domain/types";
+import { hasWrittenCaption } from "@/lib/domain/planning";
 import { CONTENT_BUCKETS, bucketForFormat, type ContentBucketDefinition } from "@/lib/domain/content-buckets";
 import { mediaFrameBackground, mediaFrameClass, supportsGallery } from "@/lib/domain/media-frame";
 import { PostPreview } from "@/components/PostPreview";
@@ -82,7 +83,19 @@ function hasMedia(item: EditorItem): boolean {
     || Boolean(item.mediaAssetId || item.mediaFileName || item.mediaExternalUrl);
 }
 
-export function SheetContentEditor({ sheetId, clientId, clientName, initialItems, requiresRevalidation = false }: { sheetId: string; clientId: string; clientName: string; initialItems: EditableSheetItem[]; requiresRevalidation?: boolean }) {
+export function SheetContentEditor({ sheetId, clientId, clientName, initialItems, captionSignature, requiresRevalidation = false }: {
+  sheetId: string;
+  clientId: string;
+  clientName: string;
+  initialItems: EditableSheetItem[];
+  /*
+   * Signature préremplie du client, quand la fiche n'est pas encore partie :
+   * une légende qui ne contient qu'elle n'est pas un texte rédigé. Sans ce
+   * champ, l'éditeur affichait 100 % pendant que le serveur refusait le lien.
+   */
+  captionSignature: string | null;
+  requiresRevalidation?: boolean;
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<SheetContentActionResult | null>(null);
@@ -191,7 +204,7 @@ export function SheetContentEditor({ sheetId, clientId, clientName, initialItems
     + Number(requiresCaption(item.format))
     + Number(requiresMedia(item.format)), 0);
   const completed = active.reduce((total, item) => total
-    + Number(requiresCaption(item.format) && Boolean(item.caption.trim()))
+    + Number(requiresCaption(item.format) && hasWrittenCaption(item.caption, captionSignature))
     + Number(Boolean(item.hashtags.trim()))
     + Number(requiresMedia(item.format) && hasMedia(item)), 0);
   const progress = requirements ? Math.round((completed / requirements) * 100) : 0;
@@ -270,7 +283,7 @@ export function SheetContentEditor({ sheetId, clientId, clientName, initialItems
   /** Une publication, dans le groupe de sa famille de contenu. */
   function renderItem(item: EditorItem, index: number, bucket: ContentBucketDefinition) {
         const mediaReady = !requiresMedia(item.format) || hasMedia(item);
-        const captionReady = !requiresCaption(item.format) || Boolean(item.caption.trim());
+        const captionReady = !requiresCaption(item.format) || hasWrittenCaption(item.caption, captionSignature);
         const itemReady = Boolean(captionReady && item.hashtags.trim() && mediaReady);
         return (
           <article key={item.id} className="card space-y-4 border-l-4 p-4 sm:p-5" style={{ borderLeftColor: bucket.accent }}>

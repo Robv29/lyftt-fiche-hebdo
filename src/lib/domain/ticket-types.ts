@@ -39,6 +39,7 @@ export type TicketType = (typeof TICKET_TYPES)[number];
 /** Formulaire à afficher au client selon le type choisi (§6). */
 export type TicketFormKind =
   | "text"
+  | "hashtags"
   | "photo"
   | "graphic"
   | "video"
@@ -116,12 +117,22 @@ export const TICKET_TYPE_DEFINITIONS: Record<TicketType, TicketTypeDefinition> =
     category: "editorial",
     form: "text",
   },
+  /*
+   * Formulaire propre, et non le formulaire texte générique.
+   *
+   * Le client y voyait toute la légende en lecture seule et un champ libre
+   * « proposition de nouveau texte » : les hashtags de la publication
+   * n'apparaissaient nulle part. Il lui fallait donc les recopier à la main
+   * pour en retirer un — d'où « retirer tous les # et remplacer par… », puis la
+   * même demande la semaine suivante. Il doit pouvoir cocher ce qui saute, pas
+   * réécrire la liste.
+   */
   hashtags: {
     type: "hashtags",
     label: "Modifier les hashtags",
     group: "Texte",
     category: "editorial",
-    form: "text",
+    form: "hashtags",
   },
   photo_replace: {
     type: "photo_replace",
@@ -330,6 +341,41 @@ export function isTicketType(value: string): value is TicketType {
  */
 export function isClientRequestableType(value: string): value is TicketType {
   return isTicketType(value) && value !== "weekly_wish";
+}
+
+/**
+ * Types sur lesquels l'encadrement peut requalifier un ticket.
+ *
+ * Les clients se trompent : 55 demandes sur 96 arrivent en « modifier le
+ * texte », et une vingtaine parlent en réalité d'une image, d'une vidéo ou des
+ * hashtags. Comme le routage et l'écran de production lisent la catégorie du
+ * type, ces demandes mal typées restaient éditoriales : l'écran du ticket
+ * n'offrait aucun moyen de les confier à quelqu'un, et aucune n'a reçu de
+ * graphiste ni de monteur.
+ *
+ * Les demandes hors publication en sont exclues dans les deux sens : elles ont
+ * leur propre écran — un seul bouton « c'est fait » — et basculer un ticket
+ * vers l'une d'elles ferait disparaître tout le circuit de correction sous les
+ * pieds de la personne qui le traite.
+ */
+export function isRequalifiableType(value: string): value is TicketType {
+  return isTicketType(value) && !isServiceRequest(value);
+}
+
+/**
+ * La correction porte-t-elle sur les hashtags ?
+ *
+ * Le type le dit quand il est juste. Quand il ne l'est pas — et c'est le cas le
+ * plus fréquent — un `#` dans la proposition du client le trahit : treize des
+ * demandes typées « modifier le texte » étaient des demandes de hashtags.
+ */
+export function isHashtagCorrection(input: {
+  type: TicketType;
+  clientSuggestion?: string | null;
+}): boolean {
+  if (input.type === "hashtags") return true;
+  if (TICKET_TYPE_DEFINITIONS[input.type].category !== "editorial") return false;
+  return (input.clientSuggestion ?? "").includes("#");
 }
 
 /**

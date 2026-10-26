@@ -24,7 +24,7 @@ import {
   itemRequestability,
   requestChangeAfterApproval,
 } from "@/lib/domain/edge-cases";
-import { isMeaningful, sanitizeText } from "@/lib/security/sanitize";
+import { isMeaningful, normalizeHashtags, sanitizeText } from "@/lib/security/sanitize";
 import {
   ATTACHMENT_MAX_BYTES,
   checkAttachment,
@@ -279,6 +279,12 @@ async function recordApproval(
 // Création d'un ticket
 // ---------------------------------------------------------------------------
 
+/*
+ * Plafond des hashtags ajoutés en une demande. Le champ est libre et public :
+ * sans borne, une seule demande pouvait proposer une liste illisible.
+ */
+const HASHTAG_ADD_LIMIT = 15;
+
 const createTicketSchema = z.object({
   itemId: z.string().uuid().nullable(),
   ticketType: z.string().refine(isClientRequestableType, "Type de demande inconnu"),
@@ -287,6 +293,9 @@ const createTicketSchema = z.object({
   selection: z.string().trim().max(1000).optional(),
   timecode: z.string().trim().max(20).optional(),
   option: z.string().trim().max(60).optional(),
+  /** Hashtags cochés pour être retirés, et ajouts saisis librement. */
+  removeHashtags: z.array(z.string().trim().max(80)).max(40).optional(),
+  addHashtags: z.string().trim().max(300).optional(),
   clientName: z.string().trim().max(120).optional(),
   clientEmail: z.string().trim().email().max(180).optional().or(z.literal("")),
   confirmDuplicate: z.string().optional(),
@@ -318,6 +327,8 @@ export async function createTicket(
     selection: formData.get("selection") ?? undefined,
     timecode: formData.get("timecode") ?? undefined,
     option: formData.get("option") ?? undefined,
+    removeHashtags: formData.getAll("removeHashtags").map(String),
+    addHashtags: formData.get("addHashtags") ?? undefined,
     clientName: formData.get("clientName") ?? undefined,
     clientEmail: formData.get("clientEmail") ?? undefined,
     confirmDuplicate: formData.get("confirmDuplicate") ?? undefined,
@@ -430,6 +441,28 @@ export async function createTicket(
   if (input.timecode) details.timecode = input.timecode;
   if (input.selection) details.selection = sanitizeText(input.selection, 1000);
   if (notice) details.notice = notice;
+
+  /*
+   * Demande de hashtags : ce que le client a coché, et la liste qui en résulte.
+   *
+   * Les retraits sont filtrés sur les hashtags réellement portés par la
+   * publication — le formulaire est public, et une requête forgée ne doit rien
+   * pouvoir inventer. Les ajouts passent par la normalisation habituelle.
+   *
+   * La liste résultante est posée ici, prête à être reprise d'un geste côté
+   * agence : c'est elle qui manquait, et c'est pour cela que les clients
+   * redemandaient la même correction de semaine en semaine.
+   */
+  if (definition.form === "hashtags" && item) {
+    const removed = item.hashtags.filter((tag) => (input.removeHashtags ?? []).includes(tag));
+    const added = normalizeHashtags(input.addHashtags ?? "").slice(0, HASHTAG_ADD_LIMIT);
+    if (removed.length) details.hashtagsRemoved = removed;
+    if (added.length) details.hashtagsAdded = added;
+    if (removed.length || added.length) {
+      const kept = item.hashtags.filter((tag) => !removed.includes(tag));
+      details.hashtagsProposed = [...new Set([...kept, ...added])];
+    }
+  }
 
   const title = item
     ? `${definition.label} — ${formatItemLabel(item.scheduledDate)}`

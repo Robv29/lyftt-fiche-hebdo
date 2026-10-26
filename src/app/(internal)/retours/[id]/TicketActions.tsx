@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
-import { addTicketComment, correctAndValidateWithoutClient, prepareCorrectionForClient, resolveServiceRequest, sendCorrectionToClient, transitionTicket, validateWithoutClient, type InternalActionResult } from "@/lib/internal/actions";
+import { addTicketComment, correctAndValidateWithoutClient, pinClientHashtags, prepareCorrectionForClient, resolveServiceRequest, sendCorrectionToClient, transitionTicket, validateWithoutClient, type InternalActionResult } from "@/lib/internal/actions";
 import { isServiceRequestOverdue, serviceRequestAgeInDays, serviceRequestAlertDays, type TicketType } from "@/lib/domain/ticket-types";
 import { Icon } from "@/components/Icon";
 import { deliverTicketMedia } from "../../production/actions";
@@ -9,8 +9,12 @@ import { uploadMediaDirect } from "@/lib/media/direct-upload";
 
 interface Transition { to:string; label:string; requiresReason:boolean }
 
-export function TicketActions({ ticketId, ticketNumber, sheetId, clientId, item, category, status, clientName, transitions, serviceRequest, ticketType, submittedAt, resolvedAt, staffValidation }: {
+export function TicketActions({ ticketId, ticketNumber, sheetId, clientId, item, category, status, clientName, transitions, serviceRequest, ticketType, submittedAt, resolvedAt, staffValidation, hashtagCorrection, proposedHashtags }: {
   ticketId:string; ticketNumber:string; sheetId:string; clientId:string; category:string; status:string; clientName:string;
+  /** La demande porte sur les hashtags — par son type, ou par le « # » de la proposition client. */
+  hashtagCorrection:boolean;
+  /** Liste résultant de ce que le client a coché dans le formulaire des hashtags. */
+  proposedHashtags:string[];
   /** Correction validée par l'agence, sans renvoi au client : qui et quand. */
   staffValidation:{ byName:string; at:string } | null;
   item:{
@@ -157,7 +161,46 @@ export function TicketActions({ ticketId, ticketNumber, sheetId, clientId, item,
         {!item && <><input type="hidden" name="caption" value=""/><input type="hidden" name="hashtags" value=""/></>}
         {item && <>
           <div><label className="label" htmlFor="correctedCaption">Texte corrigé</label><textarea id="correctedCaption" name="caption" rows={7} className="field" defaultValue={item.caption}/></div>
-          <div><label className="label" htmlFor="correctedHashtags">Hashtags corrigés</label><textarea id="correctedHashtags" name="hashtags" rows={2} className="field" defaultValue={item.hashtags.join(" ")}/></div>
+          <div>
+            <label className="label" htmlFor="correctedHashtags">Hashtags corrigés</label>
+            {/* La liste cochée par le client, quand il en a coché une : c'est elle qu'il attend, pas celle d'aujourd'hui. */}
+            <textarea id="correctedHashtags" name="hashtags" rows={2} className="field" defaultValue={(proposedHashtags.length ? proposedHashtags : item.hashtags).join(" ")}/>
+            {proposedHashtags.length > 0 && <p className="mt-1 text-[11px] text-ink-faint">Liste demandée par le client, reprise telle quelle.</p>}
+            {/*
+              Corriger la publication ne suffisait pas : la fiche suivante
+              repartait de la bibliothèque du client, qui contient toujours les
+              hashtags qu'il a fait retirer. AUDIOPTIC a redemandé la même
+              correction treize fois. Un geste, ici, pour que la liste devienne
+              sa référence — jamais en silence, et tracé sur le ticket.
+            */}
+            {hashtagCorrection && (
+              <div className="mt-3 rounded-xl border border-[#cfe0ff] bg-[#f4f8ff] p-3">
+                <p className="text-xs leading-relaxed text-ink-soft">
+                  Ce sont les hashtags habituels de {clientName} ? Retenez-les dans sa fiche :
+                  les prochaines fiches partiront de cette liste au lieu d’en retirer une autre
+                  chaque semaine.
+                </p>
+                <button
+                  type="button"
+                  className="btn-secondary mt-2"
+                  disabled={pending}
+                  onClick={()=>{
+                    const form = correctionFormRef.current;
+                    if (!form) return;
+                    const list = String(new FormData(form).get("hashtags") ?? "").trim();
+                    if (!list) { setFeedback({ ok:false, message:"La liste est vide : il n’y a rien à retenir." }); return; }
+                    if (!window.confirm(`Retenir ces hashtags comme référence de ${clientName} ?\n\n${list}\n\nLes prochaines fiches partiront de cette liste. L’historique du ticket en gardera la trace.`)) return;
+                    const data = new FormData();
+                    data.set("ticketId", ticketId); data.set("clientId", clientId);
+                    data.set("hashtags", list); data.set("confirmation", "double");
+                    run(()=>pinClientHashtags(data));
+                  }}
+                >
+                  <Icon name="check" className="h-4 w-4"/>Retenir ces hashtags pour {clientName}
+                </button>
+              </div>
+            )}
+          </div>
           <div><label className="label" htmlFor="correctedDate">Date de publication</label><input id="correctedDate" name="scheduledDate" type="date" className="field" defaultValue={item.scheduledDate}/></div>
         </>}
         {["graphic","video"].includes(category) && <div className="rounded-2xl border border-line bg-canvas p-4">

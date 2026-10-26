@@ -11,10 +11,12 @@ import {
   itemApprovalStatusLabel
 } from "@/lib/domain/types";
 import { TicketActions } from "./TicketActions";
-import { isServiceRequest } from "@/lib/domain/ticket-types";
+import { isHashtagCorrection, isServiceRequest } from "@/lib/domain/ticket-types";
 import { resolveMediaUrl } from "@/lib/media/signed-url";
 import { requiresProduction } from "@/lib/domain/routing";
 import { AssignContributor } from "./AssignContributor";
+import { RequalifyTicketType } from "./RequalifyTicketType";
+import { EDITORIAL_ROLES } from "@/lib/internal/authorization";
 
 /** §9 / §12 — Vue détail d'un ticket, avec comparatif du texte. */
 export default async function TicketDetailPage({
@@ -94,6 +96,16 @@ export default async function TicketDetailPage({
   const definition = getTicketTypeDefinition(ticket.ticket_type);
   const transitions = availableTransitions(ticket.status, profile.role);
   const details = (ticket.details ?? {}) as Record<string, string>;
+  /*
+   * Ce que le client a coché dans le formulaire des hashtags : les tags
+   * retirés, les ajouts, et la liste qui en résulte. Même objet `details`, lu à
+   * part parce que ces trois clés portent des listes et non du texte.
+   */
+  const hashtagDetails = (ticket.details ?? {}) as {
+    hashtagsRemoved?: string[];
+    hashtagsAdded?: string[];
+    hashtagsProposed?: string[];
+  };
 
   // §12 — comparatif entre le texte actuel et la proposition du client.
   /*
@@ -111,6 +123,15 @@ export default async function TicketDetailPage({
     : { data: [] };
   const contributor = assignments.find((assignment) => assignment.assignment_role === "contributor");
   const assignment = contributorAssignment(ticket.status);
+
+  /*
+   * Requalification : réservée à l'encadrement éditorial, et sans objet sur une
+   * demande hors publication (son écran se résume à « c'est fait ») ou déjà
+   * clôturée.
+   */
+  const canRequalify = EDITORIAL_ROLES.includes(profile.role)
+    && !isServiceRequest(ticket.ticket_type)
+    && !["closed", "cancelled", "rejected", "approved_by_client"].includes(ticket.status);
 
   const showDiff = Boolean(item && ticket.client_suggestion);
   const segments = showDiff ? diffWords(item!.caption, ticket.client_suggestion!) : [];
@@ -178,6 +199,26 @@ export default async function TicketDetailPage({
               </p>
             )}
 
+            {Boolean(hashtagDetails.hashtagsRemoved?.length || hashtagDetails.hashtagsAdded?.length) && (
+              <dl className="mt-3 space-y-1 border-t border-line pt-3 text-sm">
+                {hashtagDetails.hashtagsRemoved?.length ? (
+                  <Detail label="Hashtags à retirer">
+                    {hashtagDetails.hashtagsRemoved.join(" ")}
+                  </Detail>
+                ) : null}
+                {hashtagDetails.hashtagsAdded?.length ? (
+                  <Detail label="Hashtags à ajouter">
+                    {hashtagDetails.hashtagsAdded.join(" ")}
+                  </Detail>
+                ) : null}
+                {hashtagDetails.hashtagsProposed?.length ? (
+                  <Detail label="Liste demandée">
+                    {hashtagDetails.hashtagsProposed.join(" ")}
+                  </Detail>
+                ) : null}
+              </dl>
+            )}
+
             {attachments.length > 0 && (
               <ul className="mt-3 space-y-1 border-t border-line pt-3 text-sm">
                 {attachments.map((attachment) => (
@@ -186,6 +227,18 @@ export default async function TicketDetailPage({
                   </li>
                 ))}
               </ul>
+            )}
+            {/*
+              Le type vient du client, qui se trompe souvent. Tant que la
+              demande est ouverte, l'encadrement peut la remettre dans la bonne
+              famille : c'est ce qui fait apparaître « Confié à » ci-dessous.
+            */}
+            {canRequalify && (
+              <RequalifyTicketType
+                ticketId={ticket.id}
+                currentType={ticket.ticket_type}
+                hasItem={Boolean(item)}
+              />
             )}
             {needsProduction && (
               <AssignContributor
@@ -308,6 +361,11 @@ export default async function TicketDetailPage({
               const last = rows.sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
               return last ? { byName: last.validated_by_name, at: last.created_at } : null;
             })()}
+            hashtagCorrection={isHashtagCorrection({
+              type: ticket.ticket_type,
+              clientSuggestion: ticket.client_suggestion,
+            })}
+            proposedHashtags={hashtagDetails.hashtagsProposed ?? []}
             item={item ? {
               id:item.id,
               caption:item.caption,

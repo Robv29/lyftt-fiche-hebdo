@@ -6,8 +6,9 @@ import { createSheet, type SheetActionResult } from "./actions";
 import { isoWeekStart } from "@/lib/domain/deadline";
 import {
   expectsContentThisWeek,
+  hashtagsForSlot,
+  hasWrittenCaption,
   isoWeekIdentity,
-  selectHashtags,
   publicationDatesForWeek,
   weeklyFormatsForCadence,
   type MonthlyCadence,
@@ -33,6 +34,8 @@ interface ClientPreset {
   name: string;
   defaultNetworks: string[];
   defaultHashtags: string[];
+  /** La liste ci-dessus a-t-elle été validée par le client, ou est-ce sa bibliothèque ? */
+  hashtagsPinned: boolean;
   publicationWeekdays: number[];
   monthlyCadence: MonthlyCadence;
   /** Phrase répétée en fin de chaque publication, préremplie dans le texte. */
@@ -99,12 +102,6 @@ function signatureBlock(signature: string): string {
   return trimmed ? `\n\n${trimmed}` : "";
 }
 
-/** La signature préremplie seule ne compte pas comme un texte rédigé. */
-function hasWrittenCaption(caption: string, signature: string): boolean {
-  const written = caption.replace(signature.trim(), "").trim();
-  return written.length > 0;
-}
-
 function publicationTypeForFormat(format: MediaFormat): PublicationType {
   switch (format) {
     case "reels": return "reel";
@@ -162,7 +159,16 @@ function createDraftItems(client: ClientPreset, isoYear: number, isoWeek: number
     // au-dessus, et reste libre de la retirer publication par publication.
     // Une story n'ayant pas de texte, elle n'a pas de signature non plus.
     caption: requiresCaption(format) ? signatureBlock(client.postSignature) : "",
-    hashtags: selectHashtags(client.defaultHashtags, `${client.id}-${isoYear}-${isoWeek}-${index}`).join(" "),
+    /*
+     * Liste validée rendue entière, bibliothèque tirée sans la semaine : même
+     * client, même place, mêmes hashtags d'une semaine sur l'autre. Voir
+     * `hashtagsForSlot`.
+     */
+    hashtags: hashtagsForSlot(client.defaultHashtags, {
+      clientId: client.id,
+      slotIndex: index,
+      pinned: client.hashtagsPinned,
+    }).join(" "),
     ...EMPTY_MEDIA,
   }));
 }
@@ -512,7 +518,11 @@ export function SheetBuilder({
       scheduledTime: "18:00",
       format: "photo",
       caption: signatureBlock(client.postSignature),
-      hashtags: selectHashtags(client.defaultHashtags, `${client.id}-${isoYear}-${isoWeek}-${currentItems.length}`).join(" "),
+      hashtags: hashtagsForSlot(client.defaultHashtags, {
+        clientId: client.id,
+        slotIndex: currentItems.length,
+        pinned: client.hashtagsPinned,
+      }).join(" "),
       ...EMPTY_MEDIA,
     }]);
   };
