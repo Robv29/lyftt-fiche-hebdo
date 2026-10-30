@@ -19,14 +19,19 @@ function dayLabel(day: string): string {
 }
 
 /**
- * Retard de la semaine en cours.
+ * Retard des sept derniers jours.
  *
- * `items` ne contient que des jours déjà passés dans la semaine du calendrier
- * réel — la sélection se fait côté serveur (`page.tsx`), pas ici. Tout ce qui
- * arrive dans ce composant est donc en retard, par construction : pas besoin
- * de le redire ligne par ligne.
+ * `items` ne contient que du retard réel : la sélection se fait côté serveur
+ * par la règle partagée (`src/lib/domain/late-publications.ts`), la même que
+ * celle de la pop-up de la coquille. Tout ce qui arrive ici est donc en retard
+ * **et cochable**, par construction : pas besoin de le redire ligne par ligne.
+ *
+ * `awaitingApproval` compte le retard dont la case est grisée faute de
+ * validation client. Il est dit, jamais détaillé : le geste n'est pas de
+ * cocher, et il n'entre pas dans la pastille — un compteur qu'on ne peut pas
+ * faire baisser depuis cet écran s'apprend à ignorer.
  */
-export function UnpublishedWeekPanel({ items }: { items: UnpublishedItem[] }) {
+export function UnpublishedWeekPanel({ items, awaitingApproval = 0 }: { items: UnpublishedItem[]; awaitingApproval?: number }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -95,7 +100,7 @@ export function UnpublishedWeekPanel({ items }: { items: UnpublishedItem[] }) {
             >
               <header className="flex shrink-0 items-center justify-between gap-4 border-b bg-white/90 px-4 py-4 backdrop-blur-xl sm:px-7">
                 <div className="min-w-0">
-                  <p className="eyebrow">Cette semaine, en retard</p>
+                  <p className="eyebrow">Ces 7 derniers jours, en retard</p>
                   <h2 id="unpublished-week-title" className="mt-1 truncate text-lg font-semibold">
                     {items.length} publication{items.length > 1 ? "s" : ""} non publiée{items.length > 1 ? "s" : ""}
                   </h2>
@@ -110,7 +115,13 @@ export function UnpublishedWeekPanel({ items }: { items: UnpublishedItem[] }) {
 
               <div className="flex-1 space-y-6 overflow-y-auto p-4 sm:p-7">
                 {groups.length === 0 && (
-                  <p className="text-center text-sm text-ink-faint">Rien en retard cette semaine.</p>
+                  <p className="text-center text-sm text-ink-faint">Rien en retard ces sept derniers jours.</p>
+                )}
+                {awaitingApproval > 0 && (
+                  <p className="text-xs text-ink-faint">
+                    {awaitingApproval} autre{awaitingApproval > 1 ? "s" : ""} attend{awaitingApproval > 1 ? "ent" : ""} encore
+                    la validation du client : la case publication reste fermée.
+                  </p>
                 )}
                 {groups.map(([day, dayItems]) => (
                   <section key={day} className="space-y-2">

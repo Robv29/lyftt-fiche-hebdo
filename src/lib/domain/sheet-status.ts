@@ -37,7 +37,7 @@ export function computeSheetStatus(input: SheetAggregationInput): SheetStatus {
   const count = (...statuses: ItemApprovalStatus[]) =>
     active.filter((item) => statuses.includes(item.approvalStatus)).length;
 
-  const approved = count("approved", "approved_after_fix");
+  const approved = count(...ITEM_APPROVED_STATUSES);
   const requested = count("changes_requested");
   const corrected = count("corrected", "resent");
   const openTickets = input.ticketStatuses.filter(isTicketOpen).length;
@@ -51,6 +51,24 @@ export function computeSheetStatus(input: SheetAggregationInput): SheetStatus {
   }
   if (approved > 0) return "partially_approved";
   return "sent_to_client";
+}
+
+/**
+ * Un contenu validé par le client, au sens de la case à cocher.
+ *
+ * C'est exactement le test que fait l'écran Publications pour ouvrir la case
+ * « Confirmer la publication » (`locked = !approved && !done`) : hors de ces
+ * deux statuts, la case est grisée. L'alerte de retard doit lire la même
+ * frontière que le verrou, sinon elle réclame un geste que l'écran refuse —
+ * c'est 72 contenus sur 140 qu'elle aurait nommés pour rien.
+ */
+export const ITEM_APPROVED_STATUSES: readonly ItemApprovalStatus[] = [
+  "approved",
+  "approved_after_fix",
+];
+
+export function isItemApprovedByClient(status: ItemApprovalStatus): boolean {
+  return ITEM_APPROVED_STATUSES.includes(status);
 }
 
 /**
@@ -231,9 +249,7 @@ export function isSheetFullyApproved(input: {
   const active = input.items.filter((item) => !item.isCancelled);
   const allApproved =
     active.length > 0 &&
-    active.every((item) =>
-      ["approved", "approved_after_fix"].includes(item.approvalStatus),
-    );
+    active.every((item) => isItemApprovedByClient(item.approvalStatus));
 
   return allApproved
     ? { approved: true, reason: "all_items_approved" }

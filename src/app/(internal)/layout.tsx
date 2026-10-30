@@ -7,7 +7,9 @@ import { EDITORIAL_ROLES } from "@/lib/internal/authorization";
 import { PRODUCTION_LEAD_ROLES } from "@/lib/domain/production-board";
 import { countUnclassifiedShootings } from "@/lib/shootings/query";
 import { readWeeklyAdviceForPopup } from "@/lib/internal/weekly-advice-read";
+import { readLatePublications } from "@/lib/internal/late-publications-read";
 import { WeeklyAdvicePopup } from "./WeeklyAdvicePopup";
+import { LatePublicationsPopup } from "./LatePublicationsPopup";
 
 /** §8 — La navigation porte la pastille des retours clients à traiter. */
 export default async function InternalLayout({
@@ -200,7 +202,31 @@ export default async function InternalLayout({
       })
     : Promise.resolve(null);
 
-  const [{ count: trackingReports }, unclassifiedShootings, weeklyAdvice] = await Promise.all([
+  /*
+   * Publications en retard.
+   *
+   * Dans la coquille, et non sur le seul écran Publications : le propriétaire
+   * demande l'alerte « dans publication », mais celui qui n'ouvre jamais cet
+   * onglet est précisément celui qu'il faut prévenir. C'est le même
+   * déplacement que la pastille des shootings, montée dans la navigation parce
+   * qu'« elle ne se voyait qu'en ouvrant l'onglet ».
+   *
+   * Bornée à `EDITORIAL_ROLES` parce que ce sont exactement les trois rôles
+   * que `weekly_sheet_items_write` autorise à cocher. Réclamer à un graphiste
+   * ou à un commercial un geste que la base lui refuse, c'est la fenêtre qu'on
+   * apprend à ignorer.
+   *
+   * Même durcissement que les pastilles : une lecture qui lève ici met en
+   * erreur tous les écrans internes.
+   */
+  const latePublicationsQuery = EDITORIAL_ROLES.includes(profile.role)
+    ? readLatePublications(supabase).catch((error) => {
+        console.error("[publications en retard] lecture impossible", error);
+        return null;
+      })
+    : Promise.resolve(null);
+
+  const [{ count: trackingReports }, unclassifiedShootings, weeklyAdvice, latePublications] = await Promise.all([
     trackingReportsQuery.then((result) => result, (error) => {
       console.error("[pastille comptes rendus] lecture impossible", error);
       return { count: 0 } as { count: number | null };
@@ -212,6 +238,7 @@ export default async function InternalLayout({
         })
       : Promise.resolve(0),
     weeklyAdviceQuery,
+    latePublicationsQuery,
   ]);
 
   const productionAlert = (dueTomorrow ?? 0) > 0
@@ -288,7 +315,37 @@ export default async function InternalLayout({
         `seen`, lu en base, qui tranche. Elle décide seulement du moment, en
         comparant l'heure de l'appareil à l'instant d'ouverture.
       */}
-      {weeklyAdvice && !weeklyAdvice.seen && <WeeklyAdvicePopup advice={weeklyAdvice}/>}
+      {/*
+        Une seule modale à la fois, et les conseils gagnent.
+
+        Trois raisons. Les conseils ne s'ouvrent qu'une fois par personne et par
+        semaine, et s'éteignent par une ligne « déjà vu » : étouffés, ils sont
+        perdus jusqu'au lundi suivant, alors que l'alerte de retard revient au
+        chargement suivant. La collision ne dure qu'une après-midi par semaine.
+        Et surtout, deux fenêtres de ce motif ouvertes ensemble laisseraient la
+        page **non défilable** : chacune sauvegarde puis restaure
+        `document.body.style.overflow`, donc la seconde capturerait la valeur
+        déjà passée à `"hidden"` et la restaurerait en sortant — avec, en prime,
+        deux pièges à focus sur le même écouteur `keydown`.
+
+        L'enchaînement se règle seul, sans machinerie : fermer les conseils
+        enregistre « vu » puis rafraîchit, la coquille se re-rend, `seen` passe
+        à vrai, et l'alerte de retard s'ouvre juste après.
+
+        Les deux îles sont montées ensemble : s'effacer l'une l'autre rendait
+        l'alerte de retard muette tout le lundi matin — précisément la matinée
+        où sa fenêtre porte le week-end. L'alerte s'ouvre donc tout de suite et
+        se retire juste avant l'instant des conseils, qui prennent la place à
+        14 h 30. Et l'île reste dans l'arbre même sans retard : la démonter
+        quand le compte retombe à zéro la ferait resurgir au compte suivant,
+        par-dessus la checklist en cours.
+      */}
+      {weeklyAdvice && !weeklyAdvice.seen ? <WeeklyAdvicePopup advice={weeklyAdvice}/> : null}
+      {latePublications
+        ? <LatePublicationsPopup
+            view={latePublications}
+            yieldAt={weeklyAdvice && !weeklyAdvice.seen ? weeklyAdvice.opensAt : null}/>
+        : null}
     </>
   );
 }

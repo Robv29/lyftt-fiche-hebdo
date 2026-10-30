@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { denyCommercial } from "@/lib/internal/authorization";
 import { resolveMediaUrl } from "@/lib/media/signed-url";
-import { addDays, format, startOfISOWeek } from "date-fns";
+import { addDays, format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { readLatePublications } from "@/lib/internal/late-publications-read";
+import { isItemApprovedByClient } from "@/lib/domain/sheet-status";
 import { ITEM_APPROVAL_STATUS_LABELS, MEDIA_FORMAT_LABELS, SOCIAL_NETWORK_LABELS, SOCIAL_NETWORKS, type ItemApprovalStatus, type MediaFormat, type SocialNetwork } from "@/lib/domain/types";
 import { PublicationChecklist, type DailyPublication } from "./PublicationChecklist";
 import { UnpublishedWeekPanel, type UnpublishedItem } from "./UnpublishedWeekPanel";
@@ -52,7 +54,7 @@ export default async function PublicationsPage({ searchParams }:{ searchParams:P
     })));
 
     const formatValue=row.format as MediaFormat;
-    return { id:row.id, scheduledDate:row.scheduled_date, clientName:sheet?.clients?.name??"Client", scheduledTime:row.scheduled_time, format:formatValue, formatLabel:MEDIA_FORMAT_LABELS[formatValue], networks:(row.networks??[]).map((network:SocialNetwork)=>SOCIAL_NETWORK_LABELS[network]), plannedNetworks, publishedNetworks:((row.published_networks??[]) as SocialNetwork[]), caption:row.caption, hashtags:row.hashtags??[], approvalLabel:ITEM_APPROVAL_STATUS_LABELS[row.approval_status as ItemApprovalStatus], approved:["approved","approved_after_fix"].includes(row.approval_status), publishedAt:row.published_at, mediaDownloadedAt:row.media_downloaded_at, contentCopiedAt:row.content_copied_at, mediaUrl:signed?.url??row.media_external_url??null, mediaFileName:media?.file_name??null, mediaKind:media?.kind??null, mediaRequired:formatValue!=="texte_seul", gallery, collaborationHandle:(row.collaboration_handle as string|null)?.trim()||null, collaborationDoneAt:row.collaboration_done_at as string|null, reprogrammedFrom:(row.reprogrammed_from as string|null)??null };
+    return { id:row.id, scheduledDate:row.scheduled_date, clientName:sheet?.clients?.name??"Client", scheduledTime:row.scheduled_time, format:formatValue, formatLabel:MEDIA_FORMAT_LABELS[formatValue], networks:(row.networks??[]).map((network:SocialNetwork)=>SOCIAL_NETWORK_LABELS[network]), plannedNetworks, publishedNetworks:((row.published_networks??[]) as SocialNetwork[]), caption:row.caption, hashtags:row.hashtags??[], approvalLabel:ITEM_APPROVAL_STATUS_LABELS[row.approval_status as ItemApprovalStatus], approved:isItemApprovedByClient(row.approval_status as ItemApprovalStatus), publishedAt:row.published_at, mediaDownloadedAt:row.media_downloaded_at, contentCopiedAt:row.content_copied_at, mediaUrl:signed?.url??row.media_external_url??null, mediaFileName:media?.file_name??null, mediaKind:media?.kind??null, mediaRequired:formatValue!=="texte_seul", gallery, collaborationHandle:(row.collaboration_handle as string|null)?.trim()||null, collaborationDoneAt:row.collaboration_done_at as string|null, reprogrammedFrom:(row.reprogrammed_from as string|null)??null };
   }));
   /*
    * Prochaine date qui porte du contenu. L'écran reste centré sur le jour
@@ -80,33 +82,33 @@ export default async function PublicationsPage({ searchParams }:{ searchParams:P
   const selectedDayLabel=format(day,"EEEE d MMMM yyyy",{locale:fr});
 
   /*
-   * Alerte de retard, pas inventaire général : seuls les jours de la semaine
-   * en cours qui sont déjà passés comptent. Le jour affiché peut être
-   * n'importe quelle date parcourue dans la checklist ; la semaine et
-   * « aujourd'hui » restent celles du calendrier réel, sans quoi naviguer
-   * changerait ce que l'alerte considère comme en retard.
+   * Alerte de retard, pas inventaire général — et la même règle que la pop-up
+   * de la coquille, lue au même endroit (`late-publications.ts`).
+   *
+   * Cette lecture avait sa propre version du prédicat, sans aucun filtre de
+   * statut de fiche : elle annonçait 37 contenus en retard là où 10 seulement
+   * étaient pertinents, les 27 autres appartenant à des fiches en brouillon que
+   * le client n'a jamais reçues. Sa fenêtre — la semaine ISO en cours — la
+   * rendait de surcroît aveugle tous les lundis : rien n'y est à la fois
+   * « cette semaine » et « avant aujourd'hui ».
+   *
+   * Le jour affiché n'entre pas dans le calcul : « aujourd'hui » reste celui du
+   * calendrier réel, sans quoi naviguer dans la checklist changerait ce qui est
+   * en retard.
    */
-  const realToday=todayInParis();
-  const currentWeekStart=format(startOfISOWeek(new Date(`${realToday}T12:00:00`)),"yyyy-MM-dd");
-  const { data:unpublishedRows }=await supabase
-    .from("weekly_sheet_items")
-    .select("id, scheduled_date, scheduled_time, format, weekly_sheets!inner ( clients ( name ) )")
-    .gte("scheduled_date",currentWeekStart)
-    .lt("scheduled_date",realToday)
-    .eq("is_cancelled",false)
-    .is("published_at",null)
-    .order("scheduled_date",{ascending:true})
-    .order("scheduled_time",{ascending:true});
-  const unpublishedItems:UnpublishedItem[]=(unpublishedRows??[]).map((row)=>{
-    const sheet=row.weekly_sheets as unknown as { clients:{name:string}|null }|null;
-    return {
-      id:row.id,
-      scheduledDate:row.scheduled_date,
-      scheduledTime:row.scheduled_time,
-      clientName:sheet?.clients?.name??"Client",
-      formatLabel:MEDIA_FORMAT_LABELS[row.format as MediaFormat],
-    };
+  // Durci comme les lectures d'encart : l'alerte ne doit pas emporter l'écran
+  // vers lequel elle renvoie.
+  const lateView=await readLatePublications(supabase).catch((error)=>{
+    console.error("[publications en retard] lecture impossible", error);
+    return null;
   });
+  const unpublishedItems:UnpublishedItem[]=(lateView?.late ?? []).map((item)=>({
+    id:item.id,
+    scheduledDate:item.scheduledDate,
+    scheduledTime:item.scheduledTime,
+    clientName:item.clientName,
+    formatLabel:MEDIA_FORMAT_LABELS[item.format],
+  }));
 
   return <div className="space-y-7">
     <header className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
@@ -114,7 +116,7 @@ export default async function PublicationsPage({ searchParams }:{ searchParams:P
         <p className="eyebrow">Checklist quotidienne</p>
         <div className="mt-1 flex flex-wrap items-center gap-3">
           <h1 className="page-title">Publications</h1>
-          <UnpublishedWeekPanel items={unpublishedItems}/>
+          <UnpublishedWeekPanel items={unpublishedItems} awaitingApproval={lateView?.awaitingApproval ?? 0}/>
         </div>
         <p className="mt-2 text-sm text-ink-soft">
           <time dateTime={date} className="capitalize">{selectedDayLabel}</time> · texte, hashtags et médias prêts à poster.
