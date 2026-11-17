@@ -91,9 +91,13 @@ const LYFTT_HASHTAG_PRESETS: Record<LyfttClientType, readonly string[]> = {
    * ailleurs, la ville se met dans les hashtags propres du dossier.
    */
   boite_de_nuit: [
-    "#BoiteDeNuit", "#Club", "#Clubbing", "#Discotheque", "#SoireeReussie",
-    "#Dancefloor", "#DJSet", "#MusiqueElectro", "#Nightlife", "#SortirCeSoir",
-    "#AmbianceDeFolie", "#WeekEnd", "#Cocktails", "#EntreAmis", "#Programmation",
+    "#BoiteDeNuit", "#Club", "#Clubbing", "#Dancefloor", "#DJSet",
+    "#MusiqueElectro", "#Nightlife", "#SortirCeSoir", "#Programmation",
+    // La cible : les étudiants. Six places prises sur les tournures vagues
+    // — « ambiance de folie », « soirée réussie », « entre amis » — qui ne
+    // disent ni à qui l'on parle ni ce qui se passe ce soir-là.
+    "#SoireeEtudiante", "#SoireeEtudiants", "#VieEtudiante", "#Etudiants",
+    "#StudentParty", "#StudentNight",
   ],
   boucherie: [
     "#Boucherie", "#BoucherieArtisanale", "#ArtisanBoucher", "#MetiersDeBouche", "#ViandeFrancaise",
