@@ -6,6 +6,7 @@
 export const LYFTT_CLIENT_TYPE_IDS = [
   "restaurant",
   "bar",
+  "boite_de_nuit",
   "boucherie",
   "commerce",
   "cuisiniste",
@@ -28,6 +29,7 @@ export const LYFTT_CLIENT_TYPES: ReadonlyArray<{
 }> = [
   { id: "restaurant", label: "Restaurant & brasserie", examples: "restaurant, brasserie, traiteur" },
   { id: "bar", label: "Bar & lieu de convivialité", examples: "bar, cave, afterwork" },
+  { id: "boite_de_nuit", label: "Boîte de nuit & club", examples: "discothèque, club, soirée" },
   { id: "boucherie", label: "Boucherie & métiers de bouche", examples: "boucherie, charcuterie, épicerie fine" },
   { id: "commerce", label: "Commerce local", examples: "boutique, concept store, commerce de proximité" },
   { id: "cuisiniste", label: "Cuisine & aménagement", examples: "cuisiniste, agencement, intérieur" },
@@ -82,6 +84,16 @@ const LYFTT_HASHTAG_PRESETS: Record<LyfttClientType, readonly string[]> = {
     "#Bar", "#Brasserie", "#AmbianceConviviale", "#Afterwork", "#Convivialite",
     "#SortirCeSoir", "#Biere", "#BonnesAdresses", "#Apero", "#Cocktails",
     "#Vins", "#VieLocale", "#CommerceLocal", "#SoireeReussie", "#EntreAmis",
+  ],
+  /*
+   * Une soirée se raconte par ce qui s'y passe — l'affiche, l'invité, la
+   * piste — et jamais par le lieu : la règle de ce fichier vaut ici comme
+   * ailleurs, la ville se met dans les hashtags propres du dossier.
+   */
+  boite_de_nuit: [
+    "#BoiteDeNuit", "#Club", "#Clubbing", "#Discotheque", "#SoireeReussie",
+    "#Dancefloor", "#DJSet", "#MusiqueElectro", "#Nightlife", "#SortirCeSoir",
+    "#AmbianceDeFolie", "#WeekEnd", "#Cocktails", "#EntreAmis", "#Programmation",
   ],
   boucherie: [
     "#Boucherie", "#BoucherieArtisanale", "#ArtisanBoucher", "#MetiersDeBouche", "#ViandeFrancaise",
