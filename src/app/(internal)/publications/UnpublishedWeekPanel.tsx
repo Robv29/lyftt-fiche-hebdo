@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 import { Icon } from "@/components/Icon";
@@ -30,6 +31,23 @@ function dayLabel(day: string): string {
  * validation client. Il est dit, jamais détaillé : le geste n'est pas de
  * cocher, et il n'entre pas dans la pastille — un compteur qu'on ne peut pas
  * faire baisser depuis cet écran s'apprend à ignorer.
+ *
+ * Les mots sont ceux de la pop-up : « à confirmer », et non « non publiées ».
+ * Sur 195 contenus cochés, 154 l'ont été le jour même et le plus grand écart
+ * observé est de trois jours : ce qui manque à une ligne de cette liste est la
+ * coche, presque jamais le post. Deux encarts qui montrent la même règle
+ * doivent la nommer pareil, sinon on croit lire deux choses.
+ *
+ * Ici les lignes restent des liens, et c'est suffisant : la checklist du jour
+ * est à un clic, sur l'écran même. La pop-up, elle, s'ouvre n'importe où — elle
+ * porte donc le bouton de confirmation.
+ *
+ * Mais ce sont des `<Link>`, et c'était un `<a href>` nu. L'App Router
+ * n'intercepte pas un `<a>` nu : le clic rechargeait la page entière, la
+ * coquille se remontait, et l'alerte de retard se reposait par-dessus la
+ * checklist qu'on venait d'ouvrir pour cocher — l'exact contraire du geste
+ * demandé. Une navigation côté client ne remonte pas la coquille ; le tiroir se
+ * ferme de lui-même au clic, ce que le rechargement faisait à sa place.
  */
 export function UnpublishedWeekPanel({ items, awaitingApproval = 0 }: { items: UnpublishedItem[]; awaitingApproval?: number }) {
   const [open, setOpen] = useState(false);
@@ -76,7 +94,7 @@ export function UnpublishedWeekPanel({ items, awaitingApproval = 0 }: { items: U
         className="btn-secondary relative sm:w-auto"
         onClick={() => setOpen(true)}
       >
-        <Icon name="warning" className="h-4 w-4"/>Non publié
+        <Icon name="warning" className="h-4 w-4"/>À confirmer
         {items.length > 0 && (
           <span className="badge bg-state-changes text-white">{items.length}</span>
         )}
@@ -100,9 +118,9 @@ export function UnpublishedWeekPanel({ items, awaitingApproval = 0 }: { items: U
             >
               <header className="flex shrink-0 items-center justify-between gap-4 border-b bg-white/90 px-4 py-4 backdrop-blur-xl sm:px-7">
                 <div className="min-w-0">
-                  <p className="eyebrow">Ces 7 derniers jours, en retard</p>
+                  <p className="eyebrow">Retard des sept derniers jours</p>
                   <h2 id="unpublished-week-title" className="mt-1 truncate text-lg font-semibold">
-                    {items.length} publication{items.length > 1 ? "s" : ""} non publiée{items.length > 1 ? "s" : ""}
+                    {items.length} publication{items.length > 1 ? "s" : ""} à confirmer
                   </h2>
                 </div>
                 <button
@@ -114,13 +132,16 @@ export function UnpublishedWeekPanel({ items, awaitingApproval = 0 }: { items: U
               </header>
 
               <div className="flex-1 space-y-6 overflow-y-auto p-4 sm:p-7">
+                {/*
+                  « Rien en retard » serait faux quand il reste du retard que
+                  la validation du client empêche de cocher : la phrase dit
+                  alors ce qu'elle sait — il n'y a rien à cocher.
+                */}
                 {groups.length === 0 && (
-                  <p className="text-center text-sm text-ink-faint">Rien en retard ces sept derniers jours.</p>
-                )}
-                {awaitingApproval > 0 && (
-                  <p className="text-xs text-ink-faint">
-                    {awaitingApproval} autre{awaitingApproval > 1 ? "s" : ""} attend{awaitingApproval > 1 ? "ent" : ""} encore
-                    la validation du client : la case publication reste fermée.
+                  <p className="text-center text-sm text-ink-faint">
+                    {awaitingApproval > 0
+                      ? "Rien à cocher ces sept derniers jours."
+                      : "Rien en retard ces sept derniers jours."}
                   </p>
                 )}
                 {groups.map(([day, dayItems]) => (
@@ -129,8 +150,9 @@ export function UnpublishedWeekPanel({ items, awaitingApproval = 0 }: { items: U
                     <ul className="space-y-2">
                       {dayItems.map((item) => (
                         <li key={item.id}>
-                          <a
+                          <Link
                             href={`/publications?date=${item.scheduledDate}`}
+                            onClick={() => setOpen(false)}
                             className="group flex items-center justify-between gap-3 rounded-2xl border border-line bg-canvas px-4 py-3 text-sm hover:border-[#c9dcf0] hover:bg-[#f7fafe]"
                           >
                             <span className="min-w-0">
@@ -140,12 +162,24 @@ export function UnpublishedWeekPanel({ items, awaitingApproval = 0 }: { items: U
                               </span>
                             </span>
                             <Icon name="arrow" className="h-4 w-4 shrink-0 text-ink-faint transition-transform group-hover:translate-x-0.5"/>
-                          </a>
+                          </Link>
                         </li>
                       ))}
                     </ul>
                   </section>
                 ))}
+                {/*
+                  Le compte secondaire passe sous la liste, comme dans la
+                  fenêtre d'alerte : au-dessus, il se lisait avant ce sur quoi
+                  on peut agir. « Autres » ne se dit que s'il y a un premier.
+                */}
+                {awaitingApproval > 0 && (
+                  <p className="border-t border-line pt-3 text-xs text-ink-faint">
+                    {awaitingApproval}{groups.length > 0 ? ` autre${awaitingApproval > 1 ? "s" : ""}` : ""} publication{awaitingApproval > 1 ? "s" : ""} en
+                    retard attend{awaitingApproval > 1 ? "ent" : ""} la validation du client :
+                    elle{awaitingApproval > 1 ? "s ne se cochent" : " ne se coche"} pas tant qu’il n’a pas répondu.
+                  </p>
+                )}
               </div>
             </div>
           </div>

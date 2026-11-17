@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { LatePublicationsView } from "@/lib/domain/late-publications";
+import { hasLatePublications, type LatePublicationsView } from "@/lib/domain/late-publications";
 import { LatePublicationsDialog } from "./LatePublicationsDialog";
 
 /**
@@ -11,27 +11,31 @@ import { LatePublicationsDialog } from "./LatePublicationsDialog";
  *
  * Pas de ligne « déjà vu » en base, pas de `localStorage`, rien. Tant qu'une
  * publication validée reste non cochée, la fenêtre s'ouvre à chaque
- * chargement — on ne l'éteint pas d'un clic, on l'éteint en cochant. C'est
- * l'inverse exact des conseils du lundi, qui s'éteignent par une ligne
- * `weekly_advice_views` une fois lus.
+ * chargement — on ne l'éteint pas d'un clic, on l'éteint en cochant, et depuis
+ * la refonte on la coche sans quitter la fenêtre. C'est l'inverse exact des
+ * conseils du lundi, qui s'éteignent par une ligne `weekly_advice_views` une
+ * fois lus.
  *
  * `useState(true)` et non `false` + effet : il n'y a aucun instant à attendre,
  * et la route par l'effet ferait clignoter l'écran avant l'ouverture.
  *
  * ## Pourquoi elle ne peut pas boucler
  *
- * Trois propriétés, et non une précaution :
+ * Confirmer une publication depuis la fenêtre appelle une action serveur qui
+ * revalide `/publications` : la route courante est donc re-rendue, coquille
+ * comprise, à chaque coche. Deux propriétés — et non une précaution — font que
+ * la fenêtre ne s'en trouve ni rouverte ni remontée :
  *
- * 1. `close()` ne fait que `setOpen(false)` — aucune action serveur, aucun
- *    `router.refresh()`. `WeeklyAdvicePopup` a dû ajouter un drapeau `closed`
- *    précisément parce qu'il rafraîchit après avoir enregistré ; ici il n'y a
- *    rien à enregistrer, donc rien à rafraîchir ;
- * 2. l'île garde sa place dans l'arbre, donc React conserve `open === false` à
- *    travers les re-rendus du parent — y compris celui que provoque
- *    `revalidatePath("/publications")` quand quelqu'un coche une publication
- *    en dessous ;
- * 3. elle ne reçoit **aucune `key` dérivée des données** — l'inverse de
+ * 1. l'état d'ouverture est un **état initial**, lu une seule fois au montage.
+ *    Un re-rendu du parent ne le recalcule pas, et React le conserve puisque
+ *    l'île garde sa place dans l'arbre ;
+ * 2. elle ne reçoit **aucune `key` dérivée des données** — l'inverse de
  *    `<PublicationChecklist key={date}>`, où le remontage est l'intention.
+ *
+ * C'est aussi pourquoi le compte retombé à zéro ne la démonte pas d'autorité :
+ * la fenêtre tient sa propre liste, la voit rétrécir et se retire d'elle-même
+ * quand il ne reste rien. L'arracher à mi-chemin lui ferait perdre le mot de
+ * confirmation qu'elle vient d'afficher.
  *
  * Elle ne se rouvre donc que sur un vrai montage : un chargement complet, F5,
  * une entrée dans l'application. Ce qui est la demande.
@@ -43,11 +47,11 @@ export function LatePublicationsPopup(
   { view, yieldAt = null }: { view: LatePublicationsView; yieldAt?: string | null },
 ) {
   /*
-   * L'état d'ouverture se déduit des données au montage : une île montée sans
-   * retard garde `open === false` et ne peut plus s'ouvrir sans un vrai
-   * chargement, même si le compte revient pendant qu'on coche.
+   * L'état d'ouverture se déduit des données au montage, par la règle partagée :
+   * une île montée sans retard garde `open === false` et ne peut plus s'ouvrir
+   * sans un vrai chargement, même si du retard apparaît pendant qu'on coche.
    */
-  const [open, setOpen] = useState(view.late.length > 0);
+  const [open, setOpen] = useState(() => hasLatePublications(view));
   const yieldsAtMs = yieldAt ? new Date(yieldAt).getTime() - YIELD_MARGIN_MS : null;
   const [yielded, setYielded] = useState(() => yieldsAtMs !== null && Date.now() >= yieldsAtMs);
 
@@ -70,7 +74,6 @@ export function LatePublicationsPopup(
     return () => window.clearTimeout(timer);
   }, [yieldsAtMs]);
 
-  if (view.late.length === 0) return null;
   if (!open || yielded) return null;
 
   return <LatePublicationsDialog view={view} onClose={() => setOpen(false)}/>;

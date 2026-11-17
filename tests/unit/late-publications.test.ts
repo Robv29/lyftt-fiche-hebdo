@@ -24,6 +24,8 @@ function row(overrides: Partial<LatePublicationRow> = {}): LatePublicationRow {
     publishedAt: null,
     isCancelled: false,
     alertEnabled: true,
+    collaborationHandle: null,
+    collaborationDoneAt: null,
     ...overrides,
   };
 }
@@ -88,7 +90,6 @@ describe("latePublications", () => {
   it("ne dit rien quand il n'y a rien", () => {
     const result = view([]);
     expect(result.late).toEqual([]);
-    expect(result.today).toEqual([]);
     expect(result.awaitingApproval).toBe(0);
     expect(hasLatePublications(result)).toBe(false);
   });
@@ -99,12 +100,21 @@ describe("latePublications", () => {
     expect(hasLatePublications(result)).toBe(true);
   });
 
-  it("ne compte pas le jour même, mais le rappelle", () => {
+  it("ne compte pas le jour même, et ne le rapporte nulle part", () => {
+    /*
+     * Le jour n'est pas fini — 397 des 402 contenus actifs sont programmés à
+     * 18 h. La vue ne le rapporte pas du tout : un troisième compte dans une
+     * fenêtre qui réclame un geste ne fait que diluer celui qu'on réclame.
+     */
     const result = view([row({ scheduledDate: TODAY })]);
     expect(result.late).toEqual([]);
-    expect(result.today).toHaveLength(1);
-    // Le jour n'est pas fini : la fenêtre ne s'ouvre pas pour ça.
+    expect(result.awaitingApproval).toBe(0);
     expect(hasLatePublications(result)).toBe(false);
+    expect(Object.keys(result).sort()).toEqual(["awaitingApproval", "late", "since", "until"]);
+  });
+
+  it("écarte aussi une date à venir, même si la requête l'a laissée passer", () => {
+    expect(view([row({ scheduledDate: "2026-11-05" })]).late).toEqual([]);
   });
 
   it("ne compte pas un contenu déjà coché publié", () => {
@@ -153,7 +163,27 @@ describe("latePublications", () => {
   it("n'attribue pas au retard une attente de validation datée d'aujourd'hui", () => {
     const result = view([row({ scheduledDate: TODAY, approvalStatus: "pending" })]);
     expect(result.awaitingApproval).toBe(0);
-    expect(result.today).toEqual([]);
+  });
+
+  it("nomme le compte partenaire dont l'invitation reste due", () => {
+    /*
+     * `setPublicationPublished` refuse de confirmer une publication en
+     * collaboration dont l'invitation n'est pas notée. La ligne le dit, pour ne
+     * pas offrir une coche que le serveur rejettera : 12 des 402 contenus
+     * actifs sont dans ce cas.
+     */
+    const result = view([row({ collaborationHandle: " @partenaire " })]);
+    expect(result.late[0].pendingCollaboration).toBe("@partenaire");
+  });
+
+  it("ne réclame rien quand l'invitation est notée envoyée, ni quand il n'y en a pas", () => {
+    expect(view([row({
+      collaborationHandle: "@partenaire",
+      collaborationDoneAt: "2026-10-28T09:00:00Z",
+    })]).late[0].pendingCollaboration).toBeNull();
+    expect(view([row()]).late[0].pendingCollaboration).toBeNull();
+    // Un champ vide n'est pas une collaboration.
+    expect(view([row({ collaborationHandle: "   " })]).late[0].pendingCollaboration).toBeNull();
   });
 
   it("ignore ce qui précède la fenêtre et ce qui lui est postérieur", () => {
@@ -208,8 +238,8 @@ describe("latePublications", () => {
   it("reproduit le partage mesuré du 30 octobre 2026", () => {
     /*
      * Fenêtre du 23 au 29 octobre, fiches parties, dossiers alertés :
-     * 13 contenus, dont 5 cochables et 8 en attente de validation client ;
-     * et 5 contenus datés du jour, dont 2 cochables.
+     * 13 contenus, dont 5 cochables et 8 en attente de validation client. Les
+     * 5 contenus datés du jour même n'entrent dans aucun des deux comptes.
      */
     const rows = [
       ...Array.from({ length: 5 }, (_, index) =>
@@ -224,7 +254,6 @@ describe("latePublications", () => {
     const result = view(rows);
     expect(result.late).toHaveLength(5);
     expect(result.awaitingApproval).toBe(8);
-    expect(result.today).toHaveLength(2);
     expect(hasLatePublications(result)).toBe(true);
   });
 });

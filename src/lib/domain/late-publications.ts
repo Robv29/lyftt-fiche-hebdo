@@ -13,7 +13,9 @@ import type { ItemApprovalStatus, MediaFormat, SheetStatus } from "./types";
  *   la semaine est saisi, la fiche n'est jamais envoyée, et les dates passent
  *   sans que rien ne soit publiable. C'est de loin la première source de fausse
  *   alerte, et c'est ce qui fait dire 37 à la pastille de l'écran là où 10
- *   seulement sont pertinents ;
+ *   seulement sont pertinents. Mesure du 17 novembre 2026 : les 33 contenus non
+ *   cochés de la fenêtre appartiennent *tous* à des fiches en brouillon, et
+ *   l'alerte reste donc fermée — c'est exactement ce qu'on lui demande ;
  * - **le contenu doit être validé par le client** — sinon la case « Confirmer
  *   la publication » est grisée (`locked` dans `PublicationChecklist`). Nommer
  *   ces contenus, c'est réclamer un geste que l'écran refuse. Ils sont comptés
@@ -23,11 +25,20 @@ import type { ItemApprovalStatus, MediaFormat, SheetStatus } from "./types";
  *   raison que l'alerte du vendredi : LYFTT est l'agence elle-même et « aneto »
  *   un compte d'essai, deux dossiers en brouillon permanent.
  *
- * **Le jour même n'est pas une faute.** 527 des 533 contenus actifs sont
+ * **Ce qui manque est la coche, pas le post.** Sur 195 contenus cochés,
+ * 154 l'ont été le jour même de leur programmation, l'écart moyen est de
+ * 0,33 jour et le plus grand écart jamais observé est de trois jours. Une ligne
+ * encore vide après quatre jours n'est donc presque jamais un post oublié :
+ * c'est une case oubliée. Toute la fenêtre est écrite dans ces termes — on
+ * demande une confirmation, on n'instruit pas un manquement.
+ *
+ * **Le jour même n'est pas une faute.** 397 des 402 contenus actifs sont
  * programmés à 18 h : un contenu daté d'aujourd'hui n'est pas en retard, la
- * journée n'est pas finie. Il entre dans `today` — une ligne de rappel dans une
- * fenêtre déjà ouverte — et jamais dans le compte ni dans le déclenchement.
- * Sinon la pop-up s'ouvrirait à 00 h 01 chaque matin pour le programme du jour.
+ * journée n'est pas finie. Il n'entre donc ni dans le compte, ni dans le
+ * déclenchement, ni dans la fenêtre — la pop-up s'ouvrirait sinon à 00 h 01
+ * chaque matin pour le programme du jour. La vue ne le rapporte pas non plus :
+ * un troisième compte dans une fenêtre qui réclame un geste ne fait que diluer
+ * celui qu'on réclame, et l'écran Publications dit déjà la progression du jour.
  *
  * Aucun calcul de date ne passe par `weekly_sheets.period_start` ni par la
  * semaine ISO de la fiche : 9 contenus sont datés hors de la semaine de leur
@@ -43,10 +54,10 @@ import type { ItemApprovalStatus, MediaFormat, SheetStatus } from "./types";
  * aujourd'hui » —, et ce n'est pas une hypothèse : le lundi 26 octobre, trois
  * contenus du vendredi 23 étaient réellement en retard et invisibles.
  *
- * Et elle reste videable. Tout le retard, sans borne, fait 68 contenus
- * remontant au 13 août : une fenêtre qu'on ne peut jamais ramener à zéro
- * s'apprend à ignorer, et emporte avec elle les alertes qui comptent — c'est
- * l'argument déjà écrit dans la coquille pour réserver la pastille des
+ * Et elle reste videable. Tout le retard, sans borne, fait 80 contenus
+ * cochables remontant au 13 août : une fenêtre qu'on ne peut jamais ramener à
+ * zéro s'apprend à ignorer, et emporte avec elle les alertes qui comptent —
+ * c'est l'argument déjà écrit dans la coquille pour réserver la pastille des
  * shootings à ceux qui peuvent trancher.
  */
 export const LATE_WINDOW_DAYS = 7;
@@ -122,6 +133,10 @@ export interface LatePublicationRow {
   isCancelled: boolean;
   /** `clients.weekly_sheet_alert` — faux : le dossier n'entre pas dans l'alerte. */
   alertEnabled: boolean;
+  /** Compte partenaire à inviter en collaboration, nul s'il n'y en a pas. */
+  collaborationHandle: string | null;
+  /** Instant où l'invitation a été notée envoyée. */
+  collaborationDoneAt: string | null;
 }
 
 export interface LatePublicationEntry {
@@ -130,6 +145,16 @@ export interface LatePublicationEntry {
   scheduledTime: string | null;
   clientName: string;
   format: MediaFormat;
+  /**
+   * Compte partenaire dont l'invitation reste due, sinon nul.
+   *
+   * `setPublicationPublished` **refuse** de confirmer une publication en
+   * collaboration dont l'invitation n'est pas notée : une invitation s'envoie à
+   * la création du post, oubliée elle ne se rattrape pas. 12 des 402 contenus
+   * actifs sont dans ce cas. La fenêtre le lit donc avec la ligne, pour dire le
+   * geste au lieu d'offrir une coche que le serveur rejettera.
+   */
+  pendingCollaboration: string | null;
 }
 
 export interface LatePublicationsView extends LatePublicationWindow {
@@ -140,17 +165,17 @@ export interface LatePublicationsView extends LatePublicationWindow {
    * Comptés, jamais nommés — le geste n'est pas le même.
    */
   awaitingApproval: number;
-  /** Programmées aujourd'hui, pas encore postées. Un rappel, pas une faute. */
-  today: LatePublicationEntry[];
 }
 
 function entry(row: LatePublicationRow): LatePublicationEntry {
+  const handle = row.collaborationHandle?.trim() || null;
   return {
     id: row.id,
     scheduledDate: row.scheduledDate,
     scheduledTime: row.scheduledTime,
     clientName: row.clientName,
     format: row.format,
+    pendingCollaboration: handle && !row.collaborationDoneAt ? handle : null,
   };
 }
 
@@ -164,10 +189,12 @@ function byDateThenClient(first: LatePublicationEntry, second: LatePublicationEn
 /**
  * Les publications en retard, pour une date civile parisienne.
  *
- * @param input.rows contenus dont `scheduledDate` tombe dans la fenêtre ou
- * aujourd'hui. La requête borne la fenêtre ; la règle, elle, revérifie tout —
- * y compris `publishedAt` et `isCancelled` — pour qu'un appelant ne puisse pas
- * la contourner en oubliant un filtre.
+ * @param input.rows contenus dont `scheduledDate` tombe dans la fenêtre. La
+ * requête borne la fenêtre ; la règle, elle, revérifie tout — y compris
+ * `publishedAt`, `isCancelled` et les deux bornes de date — pour qu'un appelant
+ * ne puisse pas la contourner en oubliant un filtre. Un contenu daté
+ * d'aujourd'hui ou de demain est donc écarté ici aussi, et pas seulement par la
+ * requête.
  */
 export function latePublications(input: {
   rows: readonly LatePublicationRow[];
@@ -178,7 +205,6 @@ export function latePublications(input: {
   const window = latePublicationWindow(input.today, input.windowDays);
 
   const late: LatePublicationEntry[] = [];
-  const today: LatePublicationEntry[] = [];
   let awaitingApproval = 0;
 
   for (const row of input.rows) {
@@ -186,33 +212,27 @@ export function latePublications(input: {
     if (row.isCancelled) continue;
     if (!row.alertEnabled) continue;
     if (!sheetReachedClient(row.sheetStatus)) continue;
-
-    const isToday = row.scheduledDate === input.today;
-    const isLate = row.scheduledDate >= window.since && row.scheduledDate <= window.until;
-    if (!isToday && !isLate) continue;
+    if (row.scheduledDate < window.since || row.scheduledDate > window.until) continue;
 
     if (!isItemApprovedByClient(row.approvalStatus)) {
-      // Le jour même en attente de validation n'est ni un retard ni un rappel :
-      // la journée n'est pas finie et la case serait grisée de toute façon.
-      if (isLate) awaitingApproval += 1;
+      awaitingApproval += 1;
       continue;
     }
 
-    (isToday ? today : late).push(entry(row));
+    late.push(entry(row));
   }
 
   late.sort(byDateThenClient);
-  today.sort(byDateThenClient);
 
-  return { ...window, late, awaitingApproval, today };
+  return { ...window, late, awaitingApproval };
 }
 
 /**
  * La pop-up doit-elle s'ouvrir ?
  *
- * Le compte seul décide : ni `awaitingApproval`, qui ne se coche pas, ni
- * `today`, qui n'est pas encore en retard. Les deux n'apparaissent qu'à
- * l'intérieur d'une fenêtre ouverte pour autre chose.
+ * Le compte des cochables seul décide : `awaitingApproval` ne se coche pas
+ * depuis la fenêtre, et n'y apparaît qu'en une ligne, à l'intérieur d'une
+ * fenêtre ouverte pour autre chose.
  */
 export function hasLatePublications(view: LatePublicationsView): boolean {
   return view.late.length > 0;

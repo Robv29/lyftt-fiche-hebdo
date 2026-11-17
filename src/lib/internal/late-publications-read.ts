@@ -35,20 +35,28 @@ export type { LatePublicationsView };
  * pastille de l'écran disait 37 là où 10 étaient pertinents, précisément parce
  * qu'elle portait sa propre version du prédicat.
  *
- * Coût mesuré sur les données réelles : `Index Scan` sur l'index ci-dessus,
- * 59 lignes, 109 buffers, 1,0 ms — l'ordre de grandeur des pastilles que la
- * coquille lit déjà, et moins que le bloc des six compteurs de production.
+ * Coût mesuré sur les données réelles le 17 novembre 2026 : `Index Scan` sur
+ * l'index ci-dessus (`Index Cond` sur les deux bornes de date **et** sur
+ * `published_at is null`), 33 lignes, 107 buffers, 5,9 ms dont 7 ms de
+ * planification — l'ordre de grandeur des pastilles que la coquille lit déjà,
+ * et moins que le bloc des six compteurs de production.
  */
 
 /**
- * Borne dure. Huit jours de contenus font une soixantaine de lignes
+ * Borne dure. Sept jours de contenus font une trentaine de lignes
  * aujourd'hui ; le plafond protège d'une semaine pathologique sans jamais
  * mordre sur une semaine normale.
  */
 const READ_LIMIT = 150;
 
+/*
+ * `collaboration_handle` et `collaboration_done_at` sont lus sur la même
+ * ligne — aucune jointure, aucun coût de plus. Ils ne servent pas à filtrer :
+ * ils disent à la fenêtre pourquoi `setPublicationPublished` refuserait la
+ * coche, pour qu'elle annonce le geste au lieu d'offrir un bouton qui échoue.
+ */
 const FIELDS =
-  "id, scheduled_date, scheduled_time, format, approval_status, published_at, is_cancelled, weekly_sheets!inner ( status, clients!inner ( name, weekly_sheet_alert ) )";
+  "id, scheduled_date, scheduled_time, format, approval_status, published_at, is_cancelled, collaboration_handle, collaboration_done_at, weekly_sheets!inner ( status, clients!inner ( name, weekly_sheet_alert ) )";
 
 type SheetJoin = { status: SheetStatus; clients: { name: string; weekly_sheet_alert: boolean | null } | null } | null;
 
@@ -63,9 +71,9 @@ export async function readLatePublications(
     .from("weekly_sheet_items")
     .select(FIELDS)
     .gte("scheduled_date", window.since)
-    // Jusqu'à aujourd'hui inclus : le jour même ne compte pas dans le retard,
-    // mais la fenêtre ouverte le rappelle en une ligne.
-    .lte("scheduled_date", today)
+    // Hier au plus tard : le jour même n'est pas en retard, et la fenêtre ne le
+    // rapporte plus — un troisième compte dilue le geste qu'elle réclame.
+    .lte("scheduled_date", window.until)
     .eq("is_cancelled", false)
     .is("published_at", null)
     .order("scheduled_date", { ascending: true })
@@ -94,6 +102,8 @@ export async function readLatePublications(
       publishedAt: (row.published_at as string | null) ?? null,
       isCancelled: Boolean(row.is_cancelled),
       alertEnabled: sheet?.clients?.weekly_sheet_alert !== false,
+      collaborationHandle: (row.collaboration_handle as string | null) ?? null,
+      collaborationDoneAt: (row.collaboration_done_at as string | null) ?? null,
     };
   });
 
