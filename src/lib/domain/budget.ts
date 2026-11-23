@@ -129,6 +129,20 @@ export const SERVICE_CATALOGUE: readonly ServiceDefinition[] = [
     description: "Site une page clé en main.",
   },
   {
+    /*
+     * Visuel vendu à l'unité, hors production hebdomadaire : une affiche, un
+     * menu, une annonce. Même travail que le visuel mensuel, donc même tarif —
+     * l'écart se ferait voir sur la carte, pas sur la facture.
+     */
+    key: "creation_visuel",
+    label: "Création de visuel",
+    category: "entree",
+    billing: "ponctuel",
+    unitPriceCents: 15_000,
+    unitLabel: "le visuel",
+    description: "Visuel à l'unité : affiche, menu, annonce. Design, colorimétrie, déclinaisons.",
+  },
+  {
     key: "accompagnement",
     label: "Accompagnement stratégique personnalisé",
     category: "entree",
