@@ -21,6 +21,7 @@ import {
   findService,
   hasTypedPrice,
   isCustomService,
+  requiresTypedLabel,
   isShootingLine,
   MANAGEMENT_MONTH_KEY,
   SHOOTING_FORFAIT_KEY,
@@ -309,12 +310,13 @@ export async function addBudgetLine(formData: FormData): Promise<BudgetActionRes
    * sous le nom générique du catalogue, illisible dans six mois.
    */
   const custom = hasTypedPrice(service.key);
+  const typedLabel = requiresTypedLabel(service.key);
   const customLabel = parsed.data.customLabel ? sanitizeText(parsed.data.customLabel, 120) : "";
-  if (custom && !customLabel) {
+  if (typedLabel && !customLabel) {
     return { ok: false, message: "Décrivez la prestation sur mesure." };
   }
   if (custom && parsed.data.customPriceEuros === undefined) {
-    return { ok: false, message: "Indiquez le prix de la prestation sur mesure." };
+    return { ok: false, message: `Indiquez le prix : ${service.label.toLocaleLowerCase("fr")} se tarife à l’ajout.` };
   }
   const customPriceCents = Math.round((parsed.data.customPriceEuros ?? 0) * 100);
 
@@ -379,7 +381,12 @@ export async function addBudgetLine(formData: FormData): Promise<BudgetActionRes
      * Libellé et prix figés à l'ajout : une révision tarifaire ne doit pas
      * réécrire une addition déjà établie avec le client.
      */
-    label: custom ? customLabel : service.label,
+    /*
+     * Le libellé saisi a la main ; à défaut, celui de la carte. Un visuel à
+     * l'unité n'a qu'un prix à fixer — « Création de visuel » suffit à le
+     * nommer, et « Affiche d'ouverture » le dit mieux si on le précise.
+     */
+    label: customLabel || service.label,
     billing: service.billing,
     unit_price_cents: custom ? customPriceCents : included ? 0 : service.unitPriceCents,
     quantity: parsed.data.quantity,

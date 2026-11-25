@@ -79,6 +79,21 @@ export function isCustomService(serviceKey: string): boolean {
  * client pourtant suivi.
  */
 export function hasTypedPrice(serviceKey: string): boolean {
+  return isCustomService(serviceKey) || isTrackingService(serviceKey) || serviceKey === CREATION_VISUEL_KEY;
+}
+
+/**
+ * Prestation du catalogue dont seul le prix se saisit.
+ *
+ * Un visuel à l'unité n'a pas de tarif unique — une affiche n'est pas un menu
+ * — mais il a un nom, et le redemander à chaque ajout ferait retaper
+ * « Création de visuel » indéfiniment. Le libellé reste donc celui de la
+ * carte, et se précise si on le souhaite.
+ */
+export const CREATION_VISUEL_KEY = "creation_visuel";
+
+/** Le libellé vient-il de la saisie, et non du catalogue ? */
+export function requiresTypedLabel(serviceKey: string): boolean {
   return isCustomService(serviceKey) || isTrackingService(serviceKey);
 }
 
@@ -131,16 +146,18 @@ export const SERVICE_CATALOGUE: readonly ServiceDefinition[] = [
   {
     /*
      * Visuel vendu à l'unité, hors production hebdomadaire : une affiche, un
-     * menu, une annonce. Même travail que le visuel mensuel, donc même tarif —
-     * l'écart se ferait voir sur la carte, pas sur la facture.
+     * menu, une annonce. Tarif libre : la charge n'a rien de commun d'un
+     * visuel à l'autre, et un tarif de carte se serait figé sur la ligne sans
+     * qu'on puisse le corriger.
      */
-    key: "creation_visuel",
+    key: CREATION_VISUEL_KEY,
     label: "Création de visuel",
     category: "entree",
     billing: "ponctuel",
-    unitPriceCents: 15_000,
+    // Prix saisi à l'ajout : ce zéro n'est qu'un défaut de formulaire.
+    unitPriceCents: 0,
     unitLabel: "le visuel",
-    description: "Visuel à l'unité : affiche, menu, annonce. Design, colorimétrie, déclinaisons.",
+    description: "Visuel à l'unité : affiche, menu, annonce. Prix libre, à fixer à l'ajout.",
   },
   {
     key: "accompagnement",

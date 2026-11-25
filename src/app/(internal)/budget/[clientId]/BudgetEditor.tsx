@@ -10,6 +10,7 @@ import {
   awaitsShootingDecision,
   hasTypedPrice,
   isCustomService,
+  requiresTypedLabel,
   isRecurringMonthly,
   classifyShootings,
   formatEuros,
@@ -128,6 +129,7 @@ export function BudgetEditor({
    * gestion RS », eux, restent attachés à la seule prestation libre.
    */
   const custom = hasTypedPrice(serviceKey);
+  const typedLabel = requiresTypedLabel(serviceKey);
   const freeForm = isCustomService(serviceKey);
   const tracking = isTrackingService(serviceKey);
   const trackingProduct = findTrackingProduct(serviceKey);
@@ -504,21 +506,26 @@ export function BudgetEditor({
                 <>
                   <div className="sm:col-span-2">
                     <label className="label" htmlFor="customLabel">
-                      {tracking ? "Libellé sur l’addition" : "Description de la prestation"}
+                      {tracking
+                        ? "Libellé sur l’addition"
+                        : typedLabel ? "Description de la prestation" : "Précision sur l’addition (facultatif)"}
                     </label>
                     <input
                       id="customLabel"
                       name="customLabel"
                       maxLength={120}
-                      required
+                      required={typedLabel}
                       className="field"
                       placeholder={tracking
                         ? `${trackingProduct?.label ?? ""} — Meta et Google Ads`
-                        : "Captation d’un événement, refonte d’un visuel…"}
+                        : typedLabel
+                          ? "Captation d’un événement, refonte d’un visuel…"
+                          : "Affiche d’ouverture, menu de Noël…"}
                     />
                     <p className="mt-1 text-xs text-ink-faint">
-                      C’est ce libellé qui figurera sur l’addition du client : écrivez-le pour être
-                      relu dans six mois.
+                      {typedLabel
+                        ? "C’est ce libellé qui figurera sur l’addition du client : écrivez-le pour être relu dans six mois."
+                        : `Sans précision, la ligne s’appelle « ${service.label} » sur l’addition.`}
                     </p>
                   </div>
 
